@@ -1,0 +1,57 @@
+generator client {
+  provider = "prisma-client-js"
+}
+datasource db {
+  provider = "postgresql"
+  url = env("DATABASE_URL")
+  directUrl = env("MIGRATION_DATABASE_URL")
+}
+model Tenant {
+  id String @id @default(uuid()) @db.Uuid
+  name String @db.VarChar(160)
+  employeeLimit Int @map("employee_limit")
+  status String @default("active") @db.VarChar(20)
+  billingMode String @default("free") @map("billing_mode") @db.VarChar(20)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  employees Employee[]
+  auditEvents AuditEvent[]
+  outboxEvents OutboxEvent[]
+  @@map("tenants")
+}
+model Employee {
+  id String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  employeeNumber String @map("employee_number") @db.VarChar(40)
+  name String @db.VarChar(160)
+  status String @default("draft") @db.VarChar(20)
+  version Int @default(1)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  @@unique([tenantId, id])
+  @@unique([tenantId, employeeNumber])
+  @@index([tenantId, status])
+  @@map("employees")
+}
+model AuditEvent {
+  id String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  actorId String @map("actor_id") @db.Uuid
+  action String @db.VarChar(100)
+  resourceId String @map("resource_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  @@index([tenantId, createdAt])
+  @@map("audit_events")
+}
+model OutboxEvent {
+  id String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  type String @db.VarChar(100)
+  aggregateId String @map("aggregate_id") @db.Uuid
+  aggregateVersion Int @map("aggregate_version")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  @@unique([tenantId, aggregateId, aggregateVersion, type])
+  @@index([tenantId, createdAt])
+  @@map("outbox_events")
+}

@@ -1,0 +1,58 @@
+name: CI
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    name: Verify foundation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
+        env:
+          POSTGRES_USER: kinto_admin
+          POSTGRES_PASSWORD: kinto-ci-admin-only
+          POSTGRES_DB: kinto_test
+        ports:
+          - 5432:5432
+        options: --health-cmd "pg_isready -U kinto_admin -d kinto_test" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://kinto_app:kinto-ci-runtime-only@127.0.0.1:5432/kinto_test
+      MIGRATION_DATABASE_URL: postgresql://kinto_admin:kinto-ci-admin-only@127.0.0.1:5432/kinto_test
+      API_PORT: '4000'
+      API_HOST: 127.0.0.1
+      API_URL: http://127.0.0.1:4000
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version-file: .nvmrc
+      - run: npm install --global pnpm@10.28.2
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm audit --audit-level=high
+      - run: pnpm db:generate
+      - run: pnpm db:migrate
+      - run: pnpm db:bootstrap
+      - run: pnpm verify
+      - run: pnpm test:integration
+      - name: Verify migration replay
+        run: pnpm db:migrate
+      - run: pnpm build
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: test-evidence
+          path: |
+            coverage/
+            playwright-report/
+            test-results/
+          retention-days: 14
