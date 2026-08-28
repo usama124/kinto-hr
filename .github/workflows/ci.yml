@@ -51,10 +51,12 @@ jobs:
       - run: pnpm verify
       - run: pnpm test:integration
       - run: pnpm test:migrations
+      - run: pnpm test:recovery
+        env:
+          RECOVERY_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
       - name: Verify migration replay
         run: pnpm db:migrate
       - run: pnpm build
-      - run: pnpm worker:check
       - run: pnpm test:worker:runtime
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test:e2e

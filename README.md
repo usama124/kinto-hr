@@ -12,6 +12,7 @@ An HR SaaS for Pakistan: employee management, ZKTeco K50 attendance and payroll,
 - PostgreSQL/Prisma migration with forced row-level security and a separate restricted application role.
 - Internal employee draft/activation persistence primitives with serialized capacity allocation, transactional audit and durable outbox writes.
 - Separate BullMQ/Redis worker with durable delivery state, tenant-scoped processing, duplicate receipts prevented, bounded retries and audited local replay.
+- Expiring worker heartbeats, private operational health/Prometheus metrics, and a repeatable synthetic PostgreSQL backup/restore drill.
 - Unit/API, real PostgreSQL and desktop/mobile browser regression suites; coverage gates and GitHub Actions CI.
 - The complete [implementation roadmap](docs/implementation/README.md) and six phase specifications.
 
@@ -56,19 +57,21 @@ Keep the test database running and export the `.env` settings as above. Stop any
 pnpm verify
 pnpm test:integration
 pnpm test:migrations
+pnpm test:recovery
 pnpm db:migrate
 pnpm build
-pnpm worker:check
 pnpm test:worker:runtime
 pnpm exec playwright install chromium
 pnpm test:e2e
 ```
 
-`pnpm verify:full` combines the checks, database/Redis tests, isolated migration upgrade test, builds, worker runtime tests and browser suite after dependencies/services/browser setup. `pnpm verify` includes formatting, lint, TypeScript, unit/API coverage and planning-document links. Integration tests require explicit `kinto_test*` URLs and fail rather than silently skip when services are unavailable. Migration verification creates and removes only its own generated local test database. Never point tests at production.
+`pnpm verify:full` combines the checks, database/Redis tests, isolated migration/restore drills, builds, worker/monitor runtime tests and browser suite after dependencies/services/browser setup. `pnpm verify` includes formatting, lint, TypeScript, unit/API coverage and planning-document links. Integration tests require explicit `kinto_test*` URLs and fail rather than silently skip when services are unavailable. Migration/recovery verification creates and removes only its own generated local test databases. Recovery uses PostgreSQL tools inside `RECOVERY_POSTGRES_CONTAINER` (default `kinto-hr-postgres-1`) and verifies that it matches the local database cluster. Never point tests at production.
 
 The integration suite covers missing context, cross-tenant reads/writes, pooled transactions/rollback, competing final-seat activations, event-write failure, stale activation, suspended tenants, runtime-role safety and immutable audit permissions. Browser tests cover real readiness, route navigation, mobile overflow, error/retry and invalid health responses. Test evidence is uploaded by CI.
 
 Worker integration tests cover rollback of partial effects, duplicate delivery, restricted dispatcher/worker permissions, company isolation/concurrency, retry/dead-letter handling, audited replay and recovery of a missing Redis job. The built worker is tested without inherited module lookup paths, including startup failure and graceful shutdown.
+
+With a worker running, `pnpm worker:check` reports operational alerts and exits nonzero for missing workers, dependency failure, dead deliveries or work at least five minutes overdue. After a build, `pnpm worker:monitor` exposes `/metrics` and `/health/ready` only on `127.0.0.1:9464`. It is not a public customer API. See the [operating guide](docs/operations/foundation.md) for thresholds, recovery boundaries and remaining staging gates.
 
 Coverage gates apply to the implemented contracts, domain rules and API/worker configuration: 90% statements/functions/lines and 85% branches. Database behavior is verified against PostgreSQL, not counted as mock-based coverage. Extend existing suites with a regression case whenever a defect is fixed. No finite suite guarantees a bug-free product.
 
@@ -90,4 +93,4 @@ Actions and dependencies are pinned. Run `pnpm audit --audit-level=high` when ch
 - `docs/implementation`: specification baseline and progress records.
 - `docs/operations`: local runbook and proposed staging controls.
 
-Next: complete recovery/operating evidence and P01-02 OIDC sessions and verified memberships before exposing employee APIs. Staging provisioning and remote CI success remain unverified. Real K50/firmware validation, independently reviewed Pakistan payroll rules, hosting/privacy and commercial approvals remain external release gates. The source code in this foundation must not be used to process live HR or payroll data.
+Next: P01-02 OIDC/MFA, secure sessions, verified memberships and scoped company administration before exposing employee APIs. Local database restore and worker monitoring are implemented; scheduled encrypted backups/PITR, private-file recovery, alert notification delivery, staging provisioning and remote CI success remain unverified. Foundation/Phase 1 is not complete: company policies, immutable entitlements and full employee/compensation/import workflows are still pending. Real K50/firmware validation, independently reviewed Pakistan payroll rules, hosting/privacy and commercial approvals remain external release gates. Do not use this preview for live HR/payroll data.

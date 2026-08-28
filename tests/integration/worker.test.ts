@@ -14,6 +14,13 @@ import {
 import { startWorker } from '../../apps/worker/src/runtime';
 import { workerConfig } from '../../apps/worker/src/config';
 import { replayOutbox } from '../../scripts/lib/replay-outbox';
+import {
+  activeWorkers,
+  publishHeartbeat,
+  removeHeartbeat,
+  readHealth,
+  healthAlerts,
+} from '../../apps/worker/src/health';
 
 if (existsSync('.env')) process.loadEnvFile('.env');
 const config = workerConfig(process.env);
@@ -360,5 +367,27 @@ describe('durable outbox worker with real PostgreSQL and Redis', () => {
       await admin.consumerReceipt.count({ where: { eventId: ref.eventId } }),
     ).toBe(1);
     expect((await delivery(ref)).attempts).toBe(1);
+  });
+
+  it('tracks live workers and excludes expired crash heartbeats without exposing tenant data', async () => {
+    runtime = await startWorker({
+      ...config,
+      WORKER_QUEUE: `kinto-test-${randomUUID()}`,
+      WORKER_POLL_MS: 100,
+    });
+    await expect.poll(() => activeWorkers(runtime!.queue)).toBe(1);
+    const instance = randomUUID();
+    await publishHeartbeat(runtime.queue, instance, 60000);
+    expect(await activeWorkers(runtime.queue)).toBe(2);
+    await publishHeartbeat(runtime.queue, instance, -1); // simulate an expired lease after process death
+    expect(await activeWorkers(runtime.queue)).toBe(1);
+    await removeHeartbeat(runtime.queue, instance);
+    const ref = await activation();
+    await expect
+      .poll(async () => (await delivery(ref)).status)
+      .toBe('completed');
+    const health = await readHealth(dispatcher, runtime.queue);
+    expect(healthAlerts(health)).toEqual([]);
+    expect(health.activeWorkers).toBe(1);
   });
 });

@@ -42,6 +42,22 @@ export function workerConfig(env: NodeJS.ProcessEnv) {
   return config;
 }
 
+const monitorSchema = schema
+  .pick({ DISPATCHER_DATABASE_URL: true, REDIS_URL: true, WORKER_QUEUE: true })
+  .extend({
+    WORKER_MONITOR_PORT: z.coerce
+      .number()
+      .int()
+      .min(1024)
+      .max(65535)
+      .default(9464),
+  });
+export function monitorConfig(env: NodeJS.ProcessEnv) {
+  const result = monitorSchema.safeParse(env);
+  if (!result.success) throw new Error('Invalid monitor configuration');
+  return result.data;
+}
+
 export function redisConnection(value: string) {
   const url = new URL(value);
   return {

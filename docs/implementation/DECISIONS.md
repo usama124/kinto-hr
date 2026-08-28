@@ -48,6 +48,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 28 August 2026 — local recovery and worker monitoring
+
+Engineering continued P01-01 with a repeatable real PostgreSQL archive/restore exercise on two generated synthetic databases and a loopback-only worker metrics/health process. The drill deliberately does not target the working database, restore an arbitrary archive, or claim fresh-cluster/PITR/file recovery. Worker availability is now measured by expiring Redis-time instance heartbeats rather than inferred from reachable dependencies. The monitor uses only dispatcher credentials, emits aggregate metrics without tenant labels, and fails operational readiness for missing workers, dead jobs, unavailable dependencies or work five minutes overdue. No hosting, backup retention, paid services, alert recipients or production RPO/RTO were selected. See [evidence](../evidence/phase-01/recovery-monitoring.md); P01-02 authorization is next and foundation remains incomplete.
+
 ### 28 August 2026 — restricted foundation worker implementation
 
 Engineering implemented the next P01-01 slice under the owner's instruction to continue foundation work: BullMQ 5.81.4 with digest-pinned Redis 7.4.11, a separate TypeScript runtime, PostgreSQL delivery/receipt persistence and narrowly privileged metadata dispatch functions. Redis job IDs are an optimization; database receipts protect replay after queue removal. A NOLOGIN role enumerates only delivery metadata rather than granting the ordinary worker cross-tenant business access. The initial worker is a receipt-only activation observer; future business handlers require their own authorization/entitlement checks and envelope fields. Local operator replay requires database credentials and a reason, and is not a public/authenticated business API. See [implementation evidence](../evidence/phase-01/worker.md). Hosting, identity and production operational approval remain unresolved; the staging description provisions nothing.

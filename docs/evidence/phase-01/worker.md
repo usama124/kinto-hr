@@ -50,3 +50,5 @@ The consumer registry intentionally supports only the foundation observer. The f
 PostgreSQL failure can prevent recording an attempt; durable handler retry limits do not impose a global infrastructure-reconnection cap. Queue recovery is tested through removal/redispatch and duplicate delivery after completion; this is not a live production disaster-recovery exercise.
 
 Still outstanding: OIDC/MFA and membership permissions; protected company/policy administration; immutable plans/entitlements; full employee/compensation workflows; imports/private files; actual database/file restore evidence; operational metrics/alerts; approved staging and security review. The staging description is a document, not deployed infrastructure. GitHub Actions execution must be verified after pushing; previous runs were blocked by the account billing issue, not evidence of test execution.
+
+Subsequent update: the [recovery/monitoring increment](recovery-monitoring.md) adds local database restore evidence, worker leases and private metrics. File/PITR/deployed recovery and alert notification delivery remain outstanding; the earlier 72-test count above describes this worker slice only.
