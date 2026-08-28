@@ -24,6 +24,10 @@ Implement OIDC sessions, membership selection, MFA enforcement, invitations and 
 
 Implement transactional audit events, tenant-scoped repositories, RLS and safe database role provisioning. Add legal-entity and branch setup with Pakistan/PKR/Asia-Karachi defaults, configurable province/territory and one legal entity per tenant. A legal-entity identity change is audited; deleting an entity with business records is disallowed.
 
+Introduce the central Company Policies administration boundary with typed domain versions, effective dates, permission checks, preview/publish actions and audit. Initial Phase 1 settings cover implemented organization defaults; Phase 2 supplies timing, leave and absence-settlement validators/screens, and Phase 3 supplies supported payroll-policy settings. Do not expose a working toggle for an unimplemented module or accept arbitrary rules/scripts. Settings apply company-wide with no hidden employee/branch override. Employee-specific salary agreements and explicit company-defined shift assignments remain separate data, not policy bypasses.
+
+Policy acceptance: tenant A cannot read/change tenant B's settings; unauthorized employees/HR cannot publish policy changes; version conflicts fail; one published effective version is selected for each domain/date. Verify the same policy applies to two branches/employees and that a later publication preserves earlier version references. Later phase tests extend this to attendance, quota and finalized payroll history.
+
 Acceptance: tenant A cannot list/read/change tenant B by changing path IDs, files, filters, cursors or job IDs. Missing tenant context denies access. An existing session loses access after membership revocation. HR/manager cannot see bank details or salaries. Last-owner removal fails. Payroll self-approval restrictions are represented in permissions even though payroll is not implemented yet.
 
 ## P01-03 — plan and entitlement foundation
@@ -46,6 +50,10 @@ Required activation fields: unique tenant employee number, display/legal name as
 
 Basic onboarding/offboarding checklists have assignee, due date, completed timestamp and actor. Offboarding revokes linked employee access at the approved effective time, preserves payroll records, and creates a final-settlement task for Phase 3. Asset clearance integration is later Phase 5.
 
+Compensation capture is part of employee onboarding, not postponed to the payroll engine. An authorized company/HR user with explicit compensation read/write permissions can enter PKR monthly basic salary, typed fixed recurring allowances/deductions and an effective date, then add dated increment/revision entries with a reason. Store agreements and component versions separately from the public employee profile; Phase 3 reuses these same records. Reject overlapping effective intervals and retain previous rates. An employee may be saved before compensation is supplied, but show payroll setup as incomplete and never treat missing salary as zero. Ordinary HR/manager membership alone does not grant salary access; an owner may explicitly assign payroll permissions to the designated HR staff. No calculation, statutory validation claim or salary payment is enabled in Phase 1.
+
+Compensation acceptance: authorized HR can add salary in the employee creation flow and later add an increment; unauthorized profile/API/export reads reveal no amounts; future increments preserve past versions; missing salary remains visibly incomplete. Phase 3 must test mid-period proration and finalized-run immutability against this history.
+
 Acceptance: future assignment changes do not overwrite past records; overlapping employment/assignment intervals fail; identical employee numbers in different tenants are valid; duplicate numbers within one tenant return a scoped conflict. Rehire retains prior service/pay records. Archived employees remain available to authorized historical reports and do not consume active capacity.
 
 ## P01-05 — imports, documents and self-service
@@ -66,6 +74,10 @@ Membership unique `(tenant_id,user_id)`; employee number unique `(tenant_id,empl
 
 Migration order: identity/control plane; tenant context/RLS; organization; lifecycle/private data; files/imports; grants/capacity; outbox/audit indexes. Phase 1 must prove adding a new tenant-owned table cannot pass CI without an isolation policy/test classification.
 
+Add `company_policy_versions` and publication/audit references for the central domain configuration boundary. Use typed module schemas and tenant/domain/effective interval constraints; business modules may store specialized rule records referenced by the common version, without duplicating editable policy sources. Later migrations extend supported policy domains without enabling unfinished behavior.
+
+Add `compensation_agreements`, typed `salary_components` and `compensation_component_versions` alongside employee private data in P01-04. Phase 3 extends these entities rather than creating a second salary source of truth. The employee onboarding form submits compensation through a separately authorized transaction/command; an employee record saved without a successful compensation command must clearly show incomplete payroll setup.
+
 ## API and UI contracts
 
 All business paths inherit `/api/v1/tenants/{tenantId}` and shared status/version/idempotency conventions:
@@ -73,8 +85,10 @@ All business paths inherit `/api/v1/tenants/{tenantId}` and shared status/versio
 - Absolute `GET /api/v1/auth/login`, `GET /api/v1/auth/callback`, `POST /api/v1/auth/logout`, `GET /api/v1/auth/session`; login/callback use OIDC, logout is a CSRF-protected mutation.
 - Absolute `/api/v1/platform/tenants` create/list commercial metadata; `/tenants/{id}/grants` preview/create/revoke entitlements, never HR data.
 - `/organization`, `/branches`, `/departments`, `/designations`: scoped configuration.
+- `/company-policies`, `/company-policies/{domain}/versions`, `/company-policies/{domain}/preview` and `/company-policies/{domain}/publish`: typed, versioned company-wide settings. Publish requires effective date, expected version and reason; the server enforces domain permissions and implemented-module availability. Add a Company Policies screen with supported-domain tabs, effective dates and publication history.
 - `/memberships`, `/invitations`, `/memberships/{id}/roles`: owner actions, no self-escalation outside granted administration rights.
 - `/employees` list/create; `/employees/{id}` read/versioned edit; explicit `/activate`, `/terminate`, `/archive`, `/rehire` transition commands.
+- `/employees/{id}/compensation` permission-protected read/history and dated creation/revision commands; reject salary fields on the ordinary profile endpoint. Include a salary/history section in onboarding and employee detail for explicitly authorized HR/payroll staff only.
 - `/employee-imports` create; `/{id}/preview`, `/{id}/confirm`, `/{id}` result/status.
 - `/employees/{id}/documents` register/list; `/documents/{id}/download` authorizes a short-lived link.
 - `/me/profile`, `/me/profile-change-requests`, `/profile-change-requests/{id}/decision`.

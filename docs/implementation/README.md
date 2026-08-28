@@ -12,6 +12,8 @@ Working defaults: cloud SaaS with a local attendance connector; PKR; Asia/Karach
 
 Version 1 production includes staff lifecycle, basic onboarding/offboarding, leave, fixed/overnight shifts, K50 event collection, corrections and approvals, validated Pakistan payroll, payslips, exports, reports, server-enforced subscriptions, complimentary access, security, backup/recovery and operating procedures.
 
+Confirmed clarification: a local LAN connector fetches K50 attendance and uploads it with retry and re-read deduplication. Authorized company/HR staff capture compensation during employee onboarding and effective-dated increments later. Monthly payroll is generated automatically on a configured company date, with reviewable/downloadable reports; employers pay salaries entirely outside Kinto. Working default: generation on the 1st/10th is for the previous calendar month. See C05–C07/D08 in [decisions](DECISIONS.md); automatic generation does not bypass missing-input checks or finalization approval.
+
 Outside version 1: international payroll; hourly/piecework payroll; ATS/recruitment; performance scoring; native mobile applications; GPS/face recognition attendance; arbitrary payroll scripts; bank payouts; direct tax filing; multiple legal employers in one tenant; dedicated/on-premises deployment. Phase 5 adds expenses and assets only after release stability. Other expansion remains a separate approval, not an implied commitment.
 
 ## Reading order
@@ -48,6 +50,10 @@ Billing work in Phase 4 can be developed alongside payroll after Phase 1 contrac
 - **P03 — not started; 4–6 estimated weeks.** Exit: independently reconciled payroll engine and approved rule packages. Allowed deployment: supervised shadow payroll; existing payroll remains authoritative.
 - **P04 — not started; 3–5 estimated engineering weeks.** Exit: two consecutive live payroll cycles reconciled, collection/grace behavior tested, operational/security sign-off. Allowed deployment: controlled commercial production.
 - **P05 — not started; 4–6 additional estimated weeks.** Exit: expense and asset gates, phased rollout and rollback evidence. Allowed deployment: opt-in production modules.
+
+Updated delivery boundaries: P01 includes employee compensation entry/history (no calculation); P02 implements the local connector; P03 adds automatic monthly generation and draft/final report downloads. P04 subscriptions are Kinto service fees, not employee salary transfers. These additions remain planned, not completed.
+
+Leave/payroll clarification: P02 includes per-type annual entitlements and hard monthly usage caps, with reservations and atomic over-limit rejection. P02 settles reviewed uncovered absence using the company choice of salary deduction or available paid Annual leave first; P03 deducts only residual unpaid absence and separately approved unpaid leave from the closed period, showing leave/absence units, salary, itemized deductions and net payable in reports. Pending leave and uncertain attendance remain blockers; no guessed absence deductions. Company-wide settings include leave limits, absence fallback and check-in/out plus full/half-day target/minimum hours. See C08–C10/D09–D10 in the decision register. No implementation status changes are implied.
 
 Phases 0–4 retain the blueprint's 16–25 week sequential estimate. Assumptions: two experienced engineers, part-time design/QA, available hardware and a Pakistan payroll specialist. These are not commitments or measurements of coding-agent speed. External procurement, business approvals and live monthly cycles may extend elapsed time. Re-estimate after Phase 0; do not invent a calendar deadline from these ranges.
 

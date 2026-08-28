@@ -10,6 +10,8 @@ Turn the working pilot into a supportable subscription product with enforceable 
 
 Manual invoices and independently approved bank-transfer reconciliation are the production billing baseline. Automated recurring collection is an optional gated integration, not a prerequisite for manually renewed subscriptions. No paid price, tax treatment, SLA, payment provider, public signup, automatic purge or real charge is authorized by this document. Pricing/terms/privacy and seller identity must be approved first.
 
+This phase's payment integrations collect Kinto subscription fees only. Employee salary payments remain external to Kinto, including when payroll reports are generated automatically. A subscription payment provider is not a dependency of the employee payroll/report engine.
+
 ## P04-01 — commercial catalog and subscription state
 
 Extend Phase 1's immutable plan versions with currency, effective prices, billing period and accepted terms version. Proposed capacity configurations for implementation fixtures: Free 5 employees/1 branch/0 devices; Starter 20/1/1; Growth 50/3/5; Business 100/10/10; Scale 250/20/20. These are working quotas for product approval, not advertised promises. Core security, backups and historical export exist in every plan. Advanced modules remain unavailable until implemented.
@@ -66,7 +68,7 @@ Acceptance: a second operator can perform the restore and incident drills from i
 
 For each launch payroll policy category, reconcile two consecutive live monthly cycles in parallel with the existing approved payroll. Record input versions, every difference, cause, correction, reviewed final figures and customer approval. Historical replay supplements but cannot replace live cycles. Do not use a fabricated acknowledgment or model-generated sign-off as customer approval.
 
-Complete the end-to-end journey: create company → assign plan/complimentary grant → import employees → connect authorized K50 → review leave/attendance → lock period → calculate/review/finalize payroll → publish slips/export → record verified payments → renew/restrict/reactivate subscription. Distinguish salary-payment records from SaaS subscription payments in UI/data.
+Complete the end-to-end journey: create company → assign plan/complimentary grant → add/import employees and compensation → configure monthly generation → connect authorized local K50 collector → review leave/attendance → lock period → scheduled payroll generation → HR draft report/download → review/finalize → publish slips/final report → employer pays outside Kinto → renew/restrict/reactivate subscription. Optional external salary-payment notes are not required to complete the report workflow. Distinguish those notes from verified SaaS subscription payments in UI/data. No test or pilot step initiates a salary transfer from Kinto.
 
 Launch by tenant allowlist, with feature flags independent of entitlements and a rollback window/owner. Start with the validated customer/device/rule scope; document unsupported cases and support contacts. No public self-serve signup until abuse controls, onboarding terms and automated provisioning are separately approved and tested. Test contract-approved export/access restrictions before enforcing them on paying customers.
 

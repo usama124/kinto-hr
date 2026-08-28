@@ -12,6 +12,13 @@ Confirmed means the product owner supplied the requirement. Working default mean
 - **C02:** first device target ZKTeco K50; firmware, ownership/access and current connected software not yet supplied.
 - **C03:** employee, biometric attendance and payroll core; multi-company SaaS considered the recommended direction accepted for this planning baseline.
 - **C04:** selected clients can receive free access independently of ordinary paid subscription plans; free capacity starts at five employees with paid capacity bands.
+- **C05:** the K50 connector runs on a customer-local computer/gateway on the device's LAN, fetches attendance and uploads it to Kinto. Retries and repeated device reads must not create duplicate stored/counted attendance. No inbound public device access or fingerprint-template transfer is required.
+- **C06:** authorized company/HR users enter employee payroll details during onboarding and record increments with effective dates. Kinto automatically generates monthly employee payroll on a company-configured date and provides a viewable/downloadable report.
+- **C07:** employers pay employees outside Kinto by cheque, bank transfer, cash or another external method. Kinto does not initiate salary payments. SaaS subscription collection is a separate commercial function.
+- **C08:** leave management supports company-configured leave types such as sick, casual and annual, each with annual entitlement and a separate monthly usage limit. Requests exceeding either available annual entitlement or the monthly limit must be rejected. Two casual days per month is the owner's example of a company policy, not a universal statutory quota.
+- **C09 (revised):** closed-period payroll settles confirmed uncovered absence using the company policy: deduct salary, or consume available paid annual-leave quota first. Approved unpaid leave remains a separate unpaid category. Report original absence, annual-leave allocation, residual unpaid absence, itemized deductions and net salary payable externally; never charge the same units to both salary and leave.
+
+- **C10:** supported business rules are configured centrally per company and apply company-wide: leave quotas, absence settlement, check-in/out times, full/half-day target hours and minimum qualifying hours. One company's configuration cannot affect another. Personal salary agreements remain employee-specific.
 
 ## Working implementation decisions
 
@@ -22,6 +29,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 - **D05 — payments:** manual invoice plus independently approved bank-transfer reconciliation is the launch baseline. Owner: product/finance. Automated recurring card collection is conditional; do not call manually renewed access automatic charging.
 - **D06 — payroll separation:** distinct preparer and approver accounts for production finalization; owners can receive explicit roles but cannot approve a run they prepared. Owner: product/payroll reviewer. Gate: pilot staffing supports this; relaxing it needs a documented policy change, not a hidden bypass.
 - **D07 — expansion:** Phase 5 is expenses and asset custody; ATS, performance, mobile, international payroll and on-premises remain deferred requests.
+- **D08 — scheduled payroll defaults:** generate the previous calendar month's regular payroll on a configured day/time in Asia/Karachi; a day absent from that month uses its last day. Generation produces a reviewable draft/calculated report, not automatic finalization, payslip publication or payment. Missing inputs produce visible blockers, never guessed salary. These period/time/short-month defaults remain subject to product-owner confirmation; separate approval requirements remain unchanged.
+- **D09 — leave counting and deduction defaults:** measure quotas in days (0.5/1-day increments), by dates taken rather than submission date; use local calendar months and a configured leave year (calendar year initially). Pending requests reserve both annual and monthly capacity. Approved paid leave or an explicit company-policy annual-leave settlement protects its covered absence units; pending decisions and uncertain device records block period closure until resolved. Deduction base/divisor, leave-year/proration/accrual and paid/unpaid classifications require employer policy confirmation and applicable payroll review, not inferred statutory defaults.
+
+- **D10 — policy and settlement defaults:** use effective-dated company-wide policies, with no hidden employee/branch rule overrides in v1. Named shift schedules may be assigned from company-managed definitions. Annual-leave-first settlement uses the paid Annual leave type, respects annual/monthly limits and existing reservations, and never borrows sick/casual quota. Employer must explicitly choose salary deduction or HR review for unavailable/insufficient annual quota before enabling that mode. Thresholds classify confirmed attendance; ambiguous device evidence remains a blocker. Security, statutory review and tenant boundaries are not configurable bypasses.
 
 ## Open external decisions and safe fallbacks
 
@@ -36,6 +47,18 @@ Confirmed means the product owner supplied the requirement. Working default mean
 - **E09 — retention and support.** Owner: product/legal/customer/operator. Approve record retention, suspension notices, export window, backup expiry, restoration and support charges. Blocks automatic purge and general commercial release. Safe default: no automatic business-record purge; synthetic artifacts may be cleaned by their documented test lifecycle.
 
 ## Change control
+
+### 28 August 2026 — company-wide policies and annual-leave-first absence settlement
+
+Product owner revised C09 and confirmed C10. This supersedes the earlier salary-only/no-automatic-leave-consumption rule below. P01 introduces company policy administration/access/versioning; P02 defines timing, leave quotas and explicit annual-leave settlement before attendance lock; P03 consumes that immutable outcome without spending leave again. D10 records fallback and threshold defaults. Add tests for tenant isolation, threshold boundaries, quota exhaustion/races, settlement replay and immutable policy history. Existing implementation and completed test counts are unchanged.
+
+### 28 August 2026 — leave quotas and absence deductions
+
+Product owner confirmed C08–C09. P02 must enforce annual entitlement and monthly usage limits atomically for employees and HR alike, including cross-month requests and concurrent submissions. P03 must derive uncovered absence from the locked attendance/leave snapshot and itemize the resulting deduction and net payable in CSV/PDF reports. Applied-but-pending leave is not silently paid or deducted: resolve it before closure. D09 records the counting and review defaults. This extends planned acceptance tests, not implemented functionality; no Pakistan statutory leave quota or deduction formula is approved by this clarification.
+
+### 28 August 2026 — local connector and automatic payroll clarification
+
+Product owner confirmed C05–C07. P01 now includes permission-protected compensation capture/history during employee onboarding; P03 reuses that model for scheduled calculation and report downloads. P02 retains durable local capture, retry/source deduplication and real-device acceptance. P03 adds persistent schedule occurrences, one regular run per employer/pay period, outage catch-up and explicitly draft downloads. Salary-payment records are optional external bookkeeping; bank-specific payment files and money movement are not launch requirements. SaaS billing in P04 is unchanged. Affects connector replay tests, salary-history/permissions tests and payroll scheduling/report tests; this is a specification update, not implemented functionality. D08 records defaults rather than assuming a pay-period convention was confirmed.
 
 ### 28 August 2026 — initial engineering baseline
 

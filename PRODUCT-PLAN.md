@@ -63,6 +63,12 @@ An employee sees their own payslips and requests. A manager sees their team's at
 
 ## 4. Product modules
 
+### Company-wide configuration principle
+
+Employers manage supported business rules from a central Company Policies area: check-in/out times, full/half-day target hours and minimum qualifying hours, breaks/grace periods, leave types with annual/monthly limits, absence-settlement mode, payroll schedule and reviewed deduction settings. Values apply company-wide with effective dates and audit history; v1 has no hidden employee/branch rule overrides. Salary amounts remain employee-specific, and any named shift assignment must select a published company-managed definition. New settings affect eligible open periods, not historical finalized payroll. Security and statutory safeguards are not employer-disableable rules.
+
+Absence settlement offers salary deduction or paid Annual-leave-first. When annual quota is unavailable or insufficient, the employer explicitly chooses salary deduction for the remainder or an HR review blocker. Annual-first respects monthly/annual limits and pending reservations; it cannot silently consume Sick/Casual leave or charge the same absence to both quota and salary. Reports retain original absence, annual allocation, residual unpaid units and the effective policy used.
+
 ### A. Employee management — launch essential
 
 - Employee number, profile, contact details, emergency contact, employment status, joining and leaving dates.
@@ -96,21 +102,29 @@ Start with the ZKTeco K50 and a verified firmware/variant list. Treat K50 Pro an
 
 Leave cannot be postponed if payroll deductions depend on attendance.
 
+Confirmed requirement: configure sick, casual, annual and other leave types with annual entitlement and a separate monthly usage cap. For a company policy allowing two casual days per month, a third day is rejected even when annual balance remains. Count dates taken, reserve pending requests against both limits, split cross-month requests and enforce the limits transactionally on employee and HR/API paths. Quota values, leave-year/accrual and paid/unpaid classification are employer policies subject to review, not universal legal defaults.
+
 ### D. Payroll — essential before selling the complete product
 
 - Pay periods and effective-dated salary structures.
+- Authorized company/HR staff enter payroll details during employee onboarding and record increments with effective dates; preserve salary history rather than overwriting previous rates.
+- Automatically generate monthly payroll on a company-configured day/time (for example the 1st or 10th), with viewable/downloadable reports. Working default: previous calendar month, Asia/Karachi, and last-day handling for short months; generation is separate from the employer's external payment date.
 - Basic salary, recurring allowances, overtime, bonuses, reimbursements, and authorized deductions.
 - Unpaid leave, joining/leaving proration, salary changes, arrears, and advances or loans if pilot employers require them.
 - Explicit currency, rounding policy, and decimal arithmetic; no binary floating-point calculations for money.
 - Country-specific statutory rules with effective dates and documented applicability, reviewed by a qualified local payroll specialist.
 - Preview, exception validation, comparison with the previous period, approval, finalization, and payslips.
-- Payroll register, bank-file or CSV export, accounting summary, and manual payment-status reconciliation.
+- Payroll register in CSV/PDF, accounting summary, and optional employer-recorded external payment notes. Bank-specific payment files are deferred unless requested.
 - Final settlement for departures within a documented supported scope.
 - Explainable line items: amount, formula, inputs, rate, dates, and rule version.
 
-Workflow: **draft → calculated → reviewed → approved → finalized → exported/payment recorded**. Exporting a bank file is not proof that salary was paid.
+Workflow: **scheduled draft → input checks → calculated → reviewed → approved → finalized → final reports/payslips**. Authorized HR can view/download clearly labeled draft reports after calculation, before final approval. Missing salary, required rules or locked attendance produce visible blockers and resume the same run when resolved, never guessed amounts or omitted employees. Scheduler retries, manual generation and outage catch-up must converge on one regular run per company/pay period. Generation does not automatically finalize or mark payment complete.
+
+The employer pays employees entirely outside Kinto by cheque, bank transfer, cash or another method. No salary-transfer integration or payment gateway is required. Optional external payment notes are bookkeeping only and do not gate report downloads. SaaS subscription fees are separate from employee salaries.
 
 Freeze finalized calculations and their inputs. Corrections use an authorized reversal or adjustment with an audit trail; do not silently rewrite previously issued payslips. A late device event after payroll close raises an exception rather than silently changing net pay.
+
+At month close, settle confirmed uncovered absence under a company-wide choice: salary deduction, or available paid Annual leave quota first. Annual-first respects annual/monthly limits and pending reservations; employer explicitly selects salary deduction or HR review for insufficient quota. Payroll deducts only the residual unpaid absence using the reviewed salary base/divisor, never both leave and salary for the same units. Paid leave is protected; unpaid leave has a separate deduction and cannot also count as uncovered absence. Pending leave or uncertain attendance must be resolved before closure; quota rejection alone does not prove absence. Monthly reports show present days, approved leave by type, original absence, annual-quota-covered absence and leave balance changes, residual unpaid absence/unpaid leave, applied company policy, salary before reductions, each deduction and net salary payable outside Kinto. The payroll schedule remains configurable (such as the 1st or 10th after month close); this does not introduce an early month-end run before attendance is complete.
 
 Do not execute arbitrary customer JavaScript or SQL as payroll formulas. Start with typed components and constrained formulas. Capture opening year-to-date figures when a client migrates mid-year.
 
@@ -144,7 +158,9 @@ AI can eventually assist with document search or drafting, under permissions and
 
 The vendor's regional K50 page lists TCP/IP and USB-host communication. This supports planning a local-network integration, but does not verify the SDK, polling behavior, direct cloud push, or secure HTTPS support on the customer's particular unit. [ZKTeco K50 product specifications](https://www.zkteco.eg/KSeries/K50)
 
-Recommended initial path, subject to the hardware proof of concept: **K50 → office LAN → local connector → authenticated outbound HTTPS → SaaS attendance ingestion**. Do not promise direct ADMS/cloud push based on the model name. Do not require customers to expose device ports publicly.
+Confirmed initial path, with actual compatibility subject to the hardware proof of concept: **K50 → office LAN → local connector → authenticated outbound HTTPS → SaaS attendance ingestion**. Do not promise direct ADMS/cloud push based on the model name. Do not require customers to expose device ports publicly.
+
+The product owner has confirmed this local-connector topology. It runs on a customer-local system, fetches device attendance, buffers records through internet outages and uploads them to Kinto. Repeat requests and re-reading device history must not create duplicate canonical attendance records or totals. Retransmission after a lost acknowledgment is allowed; the server acknowledges the already stored event. Actual source-event identity and ambiguous same-timestamp punches still require device testing.
 
 The connector should run as a background service that starts with its host, maintains an encrypted durable event backlog, exposes sync health, and resumes after outages. A Windows service is a candidate if the validated vendor SDK requires Windows; confirm the OS and SDK before committing. Evaluate a modest configurable polling interval on real hardware rather than promising instantaneous updates. Fingerprint enrollment remains on the device initially; the SaaS maps device user IDs to employee records and receives attendance metadata, not fingerprint templates.
 
