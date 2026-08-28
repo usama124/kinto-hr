@@ -16,7 +16,31 @@ model Tenant {
   employees Employee[]
   auditEvents AuditEvent[]
   outboxEvents OutboxEvent[]
+  memberships Membership[]
   @@map("tenants")
+}
+model Identity {
+  id String @id @default(uuid()) @db.Uuid
+  issuer String @db.VarChar(512)
+  subject String @db.VarChar(255)
+  status String @default("active") @db.VarChar(20)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  memberships Membership[]
+  @@unique([issuer, subject])
+  @@map("identities")
+}
+model Membership {
+  id String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  identityId String @map("identity_id") @db.Uuid
+  status String @default("active") @db.VarChar(20)
+  roles String[]
+  version Int @default(1)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  identity Identity @relation(fields: [identityId], references: [id], onDelete: Restrict)
+  @@unique([tenantId, identityId])
+  @@map("memberships")
 }
 model Employee {
   id String @id @default(uuid()) @db.Uuid

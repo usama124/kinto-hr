@@ -13,6 +13,7 @@ An HR SaaS for Pakistan: employee management, ZKTeco K50 attendance and payroll,
 - Internal employee draft/activation persistence primitives with serialized capacity allocation, transactional audit and durable outbox writes.
 - Separate BullMQ/Redis worker with durable delivery state, tenant-scoped processing, duplicate receipts prevented, bounded retries and audited local replay.
 - Expiring worker heartbeats, private operational health/Prometheus metrics, and a repeatable synthetic PostgreSQL backup/restore drill.
+- Identity/membership persistence and an internal permission/MFA boundary with immediate rechecks of revoked access. OIDC login and sessions are not implemented yet.
 - Unit/API, real PostgreSQL and desktop/mobile browser regression suites; coverage gates and GitHub Actions CI.
 - The complete [implementation roadmap](docs/implementation/README.md) and six phase specifications.
 

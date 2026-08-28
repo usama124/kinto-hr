@@ -27,6 +27,8 @@ The database boundaries are:
 
 The local bootstrap script requires all four database URLs to target the same local `kinto_*` database and refuses an unsafe role. It is not a production account-provisioning system. Roles are cluster-wide; do not use this local bootstrap against a cluster shared with unrelated applications. The isolated migration test reuses these same local fixture credentials.
 
+The membership-access migration adds global `identities` and tenant `memberships` with forced RLS. `kinto_app` has SELECT only, scoped by transaction-local verified issuer/subject and tenant. Bootstrap grants these reads but creates no identity, owner or membership. Do not manually provision real customers: the protected OIDC/first-owner/invitation flows are not implemented. `inAuthorizedTenant` is an internal authorization boundary, not a replacement for authentication. The recovery drill now restores and verifies identity/membership data as well as existing business tables.
+
 ## Processing, failure and replay
 
 An outbox insert creates its delivery row in the same transaction through a restricted trigger. Existing events are backfilled by the worker migration. The dispatcher polls up to 100 due references every two seconds. Redis holds only `{ eventId, tenantId }`; the worker loads the immutable event from PostgreSQL under transaction-local tenant context. UUID job IDs reduce queue duplicates, while PostgreSQL locks and the unique receipt enforce durable deduplication even after Redis forgets a job.

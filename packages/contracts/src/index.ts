@@ -16,3 +16,18 @@ export const healthSchema = z
   .object({ status: z.literal('ok'), service: z.literal('kinto-api') })
   .strict();
 export type Health = z.infer<typeof healthSchema>;
+
+// Internal input from the future verified OIDC/session adapter, never request JSON.
+export const authenticatedIdentitySchema = z.strictObject({
+  issuer: z.url().max(512),
+  subject: z.string().min(1).max(255),
+  mfaVerified: z.boolean(),
+});
+export type AuthenticatedIdentity = z.infer<typeof authenticatedIdentitySchema>;
+export const tenantRoleSchema = z.enum([
+  'owner',
+  'hr_admin',
+  'payroll_preparer',
+  'payroll_approver',
+  'employee',
+]);

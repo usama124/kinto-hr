@@ -3,11 +3,16 @@ import {
   employeeDraftSchema,
   tenantIdSchema,
   type EmployeeDraft,
+  authenticatedIdentitySchema,
+  tenantRoleSchema,
+  type AuthenticatedIdentity,
 } from '@kinto/contracts';
 import {
   assertCanActivate,
   assertDraftActivation,
   DomainError,
+  hasPermission,
+  type Permission,
 } from '@kinto/domain';
 export { PrismaClient };
 export function createDatabase(url: string): PrismaClient {
@@ -39,6 +44,52 @@ export async function inTenant<T>(
     if (!tenant || tenant.status !== 'active')
       throw new DomainError('TENANT_UNAVAILABLE');
     return work(tx);
+  });
+}
+
+// Not an authentication mechanism: only a verified server-side identity may enter
+// here. Future HTTP handlers must not populate this from headers/body/query data.
+// Keep ALL authorized work in the supplied transaction; do not authorize here and
+// then call an unscoped helper in a second transaction.
+export async function inAuthorizedTenant<T>(
+  db: PrismaClient,
+  authenticatedIdentity: AuthenticatedIdentity,
+  tenantId: string,
+  permission: Permission,
+  work: (
+    tx: Prisma.TransactionClient,
+    actor: { identityId: string; membershipId: string },
+  ) => Promise<T>,
+): Promise<T> {
+  const principal = authenticatedIdentitySchema.parse(authenticatedIdentity);
+  return inTenant(db, tenantId, async (tx) => {
+    await tx.$queryRaw`SELECT set_config('app.identity_issuer', ${principal.issuer}, true), set_config('app.identity_subject', ${principal.subject}, true)`;
+    const identity = await tx.identity.findUnique({
+      where: {
+        issuer_subject: {
+          issuer: principal.issuer,
+          subject: principal.subject,
+        },
+      },
+    });
+    if (!identity || identity.status !== 'active')
+      throw new DomainError('FORBIDDEN');
+    const membership = await tx.membership.findUnique({
+      where: { tenantId_identityId: { tenantId, identityId: identity.id } },
+    });
+    if (!membership || membership.status !== 'active')
+      throw new DomainError('FORBIDDEN');
+    const roles = tenantRoleSchema
+      .array()
+      .min(1)
+      .max(5)
+      .parse(membership.roles);
+    if (
+      !hasPermission(roles, permission) ||
+      (roles.some((role) => role !== 'employee') && !principal.mfaVerified)
+    )
+      throw new DomainError('FORBIDDEN');
+    return work(tx, { identityId: identity.id, membershipId: membership.id });
   });
 }
 export async function createEmployeeDraft(
