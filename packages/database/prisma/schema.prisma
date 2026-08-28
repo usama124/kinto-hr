@@ -37,6 +37,7 @@ model AuditEvent {
   tenantId String @map("tenant_id") @db.Uuid
   actorId String @map("actor_id") @db.Uuid
   action String @db.VarChar(100)
+  reason String? @db.VarChar(240)
   resourceId String @map("resource_id") @db.Uuid
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
@@ -51,7 +52,31 @@ model OutboxEvent {
   aggregateVersion Int @map("aggregate_version")
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  delivery JobDelivery?
+  receipt ConsumerReceipt?
+  @@unique([tenantId, id])
   @@unique([tenantId, aggregateId, aggregateVersion, type])
   @@index([tenantId, createdAt])
   @@map("outbox_events")
+}
+model JobDelivery {
+  eventId String @id @map("event_id") @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  status String @default("pending") @db.VarChar(20)
+  attempts Int @default(0)
+  availableAt DateTime @default(now()) @map("available_at") @db.Timestamptz()
+  lastError String? @map("last_error") @db.VarChar(60)
+  completedAt DateTime? @map("completed_at") @db.Timestamptz()
+  event OutboxEvent @relation(fields: [tenantId, eventId], references: [tenantId, id], onDelete: Cascade)
+  @@unique([tenantId, eventId])
+  @@map("job_deliveries")
+}
+model ConsumerReceipt {
+  eventId String @id @map("event_id") @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  consumer String @db.VarChar(100)
+  processedAt DateTime @default(now()) @map("processed_at") @db.Timestamptz()
+  event OutboxEvent @relation(fields: [tenantId, eventId], references: [tenantId, id], onDelete: Cascade)
+  @@unique([tenantId, eventId])
+  @@map("consumer_receipts")
 }

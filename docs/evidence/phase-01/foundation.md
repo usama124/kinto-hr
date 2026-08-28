@@ -52,7 +52,7 @@ The live GitHub run status must be checked separately after pushing. Local resul
 
 ## Remaining gates and next slice
 
-Complete P01-01 worker/operating setup and P01-02 OIDC/MFA, secure sessions, membership resolution, invitations and scoped authorization before exposing employee data. Employee activation still needs the specified organization and employment fields. Draft capacity fields do not constitute immutable plans, complimentary grants or paid subscriptions. Outbox writes have no dispatcher/consumer yet.
+At the time of this initial slice, outbox writes had no dispatcher/consumer. The subsequent [worker increment](worker.md) adds restricted dispatch, durable processing and local operating instructions. Complete remaining recovery/operating evidence and P01-02 OIDC/MFA, secure sessions, membership resolution, invitations and scoped authorization before exposing employee data. Employee activation still needs the specified organization and employment fields. Draft capacity fields do not constitute immutable plans, complimentary grants or paid subscriptions.
 
 No K50 communication, fingerprint collection, payroll calculation, subscription collection, paid hosting, real customer data, security sign-off, recovery exercise or public deployment occurred. Hardware/firmware access, payroll specialist fixtures and hosting/privacy/commercial decisions remain open. The developer preview must not be used for live HR/payroll records.
 

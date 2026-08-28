@@ -22,9 +22,17 @@ jobs:
         ports:
           - 5432:5432
         options: --health-cmd "pg_isready -U kinto_admin -d kinto_test" --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7.4.11-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
+        ports:
+          - 6379:6379
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       DATABASE_URL: postgresql://kinto_app:kinto-ci-runtime-only@127.0.0.1:5432/kinto_test
       MIGRATION_DATABASE_URL: postgresql://kinto_admin:kinto-ci-admin-only@127.0.0.1:5432/kinto_test
+      WORKER_DATABASE_URL: postgresql://kinto_worker:kinto-ci-worker-only@127.0.0.1:5432/kinto_test
+      DISPATCHER_DATABASE_URL: postgresql://kinto_dispatcher:kinto-ci-dispatch-only@127.0.0.1:5432/kinto_test
+      REDIS_URL: redis://127.0.0.1:6379/0
       API_PORT: '4000'
       API_HOST: 127.0.0.1
       API_URL: http://127.0.0.1:4000
@@ -42,9 +50,12 @@ jobs:
       - run: pnpm db:bootstrap
       - run: pnpm verify
       - run: pnpm test:integration
+      - run: pnpm test:migrations
       - name: Verify migration replay
         run: pnpm db:migrate
       - run: pnpm build
+      - run: pnpm worker:check
+      - run: pnpm test:worker:runtime
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test:e2e
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
