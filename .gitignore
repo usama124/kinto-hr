@@ -1,36 +1,79 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+# Dependencies (all workspace packages, not only the repository root)
+node_modules/
+.pnpm-store/
+.pnp
+.pnp.*
 
-# dependencies
-/node_modules
-/.pnp
-.pnp.js
+# Generated builds and tool caches
+.next/
+dist/
+build/
+out/
+.turbo/
+.cache/
+*.tsbuildinfo
+next-env.d.ts
 
-# testing
-/coverage
+# Test output and browser artifacts; keep test source and fixtures tracked
+coverage/
+.nyc_output/
+playwright-report/
+playwright/.cache/
+test-results/
+blob-report/
 
-# next.js
-/.next/
-/out/
-
-# production
-/build
-
-# misc
-.DS_Store
+# Environment settings and credentials; only sanitized examples belong in Git
+.env
+.env.*
+!.env.example
+.envrc
+.secrets/
 *.pem
+*.key
+*.p12
+*.pfx
 
-# debug
+# Local runtime data, customer uploads and database backups
+.local/
+/.data/
+/uploads/
+/backups/
+/dumps/
+*.dump
+*.backup
+*.sql.gz
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+*.sqlite3-journal
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
+# Do not ignore *.sql: versioned Prisma migrations must be committed.
+
+# Logs and temporary files
+*.log
+logs/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
+*.tmp
+*.swp
+*.swo
+*~
 
-# local env files
-.env*.local
-.env
+# Machine-specific editor, agent and deployment state
+.idea/
+.vscode/*
+!.vscode/extensions.json
+/.codex/
+.vercel/
+.netlify/
+.DS_Store
+Thumbs.db
+Desktop.ini
 
-# vercel
-.vercel
-
-# typescript
-*.tsbuildinfo
-next-env.d.ts
+# Keep manifests, pnpm-lock.yaml, .github/, source, tests, docs and migrations.
+# Ignore rules do not remove files already tracked or erase Git history.
