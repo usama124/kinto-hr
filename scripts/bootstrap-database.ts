@@ -46,6 +46,9 @@ try {
   );
   await database.$executeRawUnsafe('GRANT SELECT ON tenants TO kinto_app');
   await database.$executeRawUnsafe(
+    'GRANT SELECT ON identities, memberships TO kinto_app',
+  );
+  await database.$executeRawUnsafe(
     'GRANT SELECT, INSERT, UPDATE ON employees TO kinto_app',
   );
   await database.$executeRawUnsafe(

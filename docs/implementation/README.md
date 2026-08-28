@@ -74,6 +74,8 @@ Every phase document ends with an implementation record. Complete evidence there
 
 ## Ownership and approval
 
+Latest bounded P01-02 increment: [membership access](../evidence/phase-01/membership-access.md) implements the internal identity/membership store and authorization transaction. Next is the verified OIDC/session adapter that supplies this boundary; there is still no login or employee HTTP endpoint. Restore coverage now includes identity and membership records.
+
 The product owner decides commercial scope, defaults and customer commitments. The engineering implementer supplies code and technical evidence. A reviewer verifies security and critical invariants. A qualified Pakistan payroll specialist approves applicable rules and expected results. The customer payroll approver signs off pilot reconciliations. The operator accepts recovery, incident and support responsibilities. One person may cover several roles only where that does not defeat required independent payroll review or separation of duties.
 
 ## Universal phase acceptance

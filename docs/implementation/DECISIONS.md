@@ -48,6 +48,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 28 August 2026 — membership authorization prerequisite
+
+Engineering implemented a bounded P01-02 slice: exact issuer/subject identity storage, tenant memberships and a transaction-scoped permission check. Both new tables use forced RLS; the runtime can only read them, not self-provision or assign roles. A privileged role requires an MFA signal from a future verified authentication adapter, not a caller-supplied header or unverified token. No OIDC login, sessions, invitations, owner-management workflow or business HTTP routes are enabled. The restore drill now verifies both identity and membership data. See [membership access evidence](../evidence/phase-01/membership-access.md). Provider-specific MFA validation and the session integration remain the next implementation gate.
+
 ### 28 August 2026 — local recovery and worker monitoring
 
 Engineering continued P01-01 with a repeatable real PostgreSQL archive/restore exercise on two generated synthetic databases and a loopback-only worker metrics/health process. The drill deliberately does not target the working database, restore an arbitrary archive, or claim fresh-cluster/PITR/file recovery. Worker availability is now measured by expiring Redis-time instance heartbeats rather than inferred from reachable dependencies. The monitor uses only dispatcher credentials, emits aggregate metrics without tenant labels, and fails operational readiness for missing workers, dead jobs, unavailable dependencies or work five minutes overdue. No hosting, backup retention, paid services, alert recipients or production RPO/RTO were selected. See [evidence](../evidence/phase-01/recovery-monitoring.md); P01-02 authorization is next and foundation remains incomplete.

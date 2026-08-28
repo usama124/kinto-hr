@@ -10,6 +10,7 @@ import {
   createDatabase,
   createEmployeeDraft,
   inTenant,
+  inAuthorizedTenant,
   type PrismaClient,
 } from '@kinto/database';
 import { processEvent } from '../apps/worker/src/processor';
@@ -32,12 +33,16 @@ async function snapshot(db: PrismaClient) {
       'audit_events',
       'consumer_receipts',
       'employees',
+      'identities',
       'job_deliveries',
+      'memberships',
       'outbox_events',
       'tenants',
     ],
   );
   return {
+    identities: await db.identity.findMany({ orderBy: { id: 'asc' } }),
+    memberships: await db.membership.findMany({ orderBy: { id: 'asc' } }),
     tenants: await db.tenant.findMany({ orderBy: { id: 'asc' } }),
     employees: await db.employee.findMany({ orderBy: { id: 'asc' } }),
     audit: await db.auditEvent.findMany({ orderBy: { id: 'asc' } }),
@@ -168,6 +173,12 @@ async function main() {
         where: { tenantId },
       });
       refs.push({ tenantId, eventId: event.id });
+      const identity = await source.identity.create({
+        data: { issuer: 'https://recovery.example/realm', subject: tenantId },
+      });
+      await source.membership.create({
+        data: { tenantId, identityId: identity.id, roles: ['hr_admin'] },
+      });
     }
     assert.equal(await processEvent(sourceWorker, refs[0]), 'completed');
     const dead = await source.outboxEvent.create({
@@ -241,10 +252,34 @@ async function main() {
     const policies = await restored.$queryRaw<
       { enabled: boolean; forced: boolean }[]
     >`SELECT relrowsecurity AS enabled, relforcerowsecurity AS forced FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND relkind='r' AND relname <> '_prisma_migrations'`;
-    assert.equal(policies.length, 6);
+    assert.equal(policies.length, 8);
     assert.ok(policies.every((row) => row.enabled && row.forced));
     assert.deepEqual(await restoredApp.employee.findMany(), []);
     for (const tenantId of tenants) {
+      const principal = {
+        issuer: 'https://recovery.example/realm',
+        subject: tenantId,
+        mfaVerified: true,
+      };
+      assert.equal(
+        await inAuthorizedTenant(
+          restoredApp,
+          principal,
+          tenantId,
+          'employees.read',
+          (tx) => tx.employee.count(),
+        ),
+        1,
+      );
+      await assert.rejects(
+        inAuthorizedTenant(
+          restoredApp,
+          principal,
+          tenants.find((id) => id !== tenantId)!,
+          'employees.read',
+          async () => true,
+        ),
+      );
       const employees = await inTenant(restoredApp, tenantId, (tx) =>
         tx.employee.findMany(),
       );

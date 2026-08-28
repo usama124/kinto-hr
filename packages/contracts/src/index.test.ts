@@ -1,5 +1,11 @@
 import { expect, it } from 'vitest';
-import { employeeDraftSchema, healthSchema, tenantIdSchema } from './index';
+import {
+  authenticatedIdentitySchema,
+  tenantRoleSchema,
+  employeeDraftSchema,
+  healthSchema,
+  tenantIdSchema,
+} from './index';
 it('trims names while preserving employee identifiers as strings', () => {
   expect(
     employeeDraftSchema.parse({ employeeNumber: '0012', name: ' Sana Khan ' }),
@@ -27,4 +33,25 @@ it('validates tenant IDs and health responses', () => {
       password: 'secret',
     }).success,
   ).toBe(false);
+});
+it('requires explicit authenticated identity claims without accepting supplied roles', () => {
+  const principal = {
+    issuer: 'https://identity.example/realm',
+    subject: 'case-sensitive-Subject',
+    mfaVerified: false,
+  };
+  expect(authenticatedIdentitySchema.parse(principal)).toEqual(principal);
+  expect(
+    authenticatedIdentitySchema.safeParse({ ...principal, roles: ['owner'] })
+      .success,
+  ).toBe(false);
+  expect(
+    authenticatedIdentitySchema.safeParse({ ...principal, subject: '' })
+      .success,
+  ).toBe(false);
+  expect(
+    authenticatedIdentitySchema.safeParse({ ...principal, mfaVerified: 'true' })
+      .success,
+  ).toBe(false);
+  expect(tenantRoleSchema.safeParse('platform_operator').success).toBe(false);
 });
