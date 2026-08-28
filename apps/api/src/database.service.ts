@@ -3,7 +3,12 @@ import {
   type OnModuleDestroy,
   type OnModuleInit,
 } from '@nestjs/common';
-import { assertSafeRuntimeRole, createDatabase } from '@kinto/database';
+import {
+  assertSafeRuntimeRole,
+  createDatabase,
+  findActiveIdentity,
+} from '@kinto/database';
+import { type AuthenticatedIdentity } from '@kinto/contracts';
 import { readConfig } from './config';
 @Injectable()
 export class DatabaseService implements OnModuleInit, OnModuleDestroy {
@@ -14,6 +19,9 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
   async ready() {
     await assertSafeRuntimeRole(this.db);
     await this.db.$queryRaw`SELECT 1`;
+  }
+  findIdentity(principal: AuthenticatedIdentity) {
+    return findActiveIdentity(this.db, principal);
   }
   async onModuleDestroy() {
     await this.db.$disconnect();

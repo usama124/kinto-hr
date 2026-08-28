@@ -39,6 +39,9 @@ export default function RootLayout({
               <Link className="nav-item" href="/setup">
                 Connection guide <span>03</span>
               </Link>
+              <Link className="nav-item" href="/login">
+                Account access <span>04</span>
+              </Link>
             </nav>
             <div className="upcoming">
               <span className="nav-heading">UPCOMING MODULES</span>

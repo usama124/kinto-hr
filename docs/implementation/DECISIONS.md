@@ -19,6 +19,8 @@ Confirmed means the product owner supplied the requirement. Working default mean
 - **C09 (revised):** closed-period payroll settles confirmed uncovered absence using the company policy: deduct salary, or consume available paid annual-leave quota first. Approved unpaid leave remains a separate unpaid category. Report original absence, annual-leave allocation, residual unpaid absence, itemized deductions and net salary payable externally; never charge the same units to both salary and leave.
 
 - **C10:** supported business rules are configured centrally per company and apply company-wide: leave quotas, absence settlement, check-in/out times, full/half-day target hours and minimum qualifying hours. One company's configuration cannot affect another. Personal salary agreements remain employee-specific.
+- **C11:** companies cannot self-register. Only a platform administrator can provision a company tenant and its initial named company administrator/owner account. Company users can log in and reset their own passwords; there is no shared company password.
+- **C12:** employees cannot self-register. Only their company administrator/owner or authorized HR can provision their employee login account within that company. Employees can log in and reset their own passwords. Account activation and password recovery do not create an unapproved tenant, membership or role grant.
 
 ## Working implementation decisions
 
@@ -47,6 +49,14 @@ Confirmed means the product owner supplied the requirement. Working default mean
 - **E09 — retention and support.** Owner: product/legal/customer/operator. Approve record retention, suspension notices, export window, backup expiry, restoration and support charges. Blocks automatic purge and general commercial release. Safe default: no automatic business-record purge; synthetic artifacts may be cleaned by their documented test lifecycle.
 
 ## Change control
+
+### 29 August 2026 — optional OIDC and server-session foundation
+
+Engineering implemented the next bounded P01-02 slice using pinned `openid-client` 6.8.7 and `ioredis` 5.11.1: code/PKCE/state/nonce/signature validation, login for existing active identities only, Redis-backed opaque sessions, expiration/rotation, origin/CSRF-protected logout and a safe account-access page. Authentication remains disabled unless explicitly configured. Arbitrary provider roles or MFA claims confer no permissions: `mfaVerified` stays false pending real-provider validation. No public signup or identity/membership writes were added. Synthetic protocol integration is not Keycloak/MFA/recovery acceptance. See [authentication evidence](../evidence/phase-01/authentication.md) and [operating requirements](../operations/authentication.md). Next is real-provider setup/MFA/recovery and administrator-only provisioning, then membership/company administration. Hosting and live-data approvals remain unresolved.
+
+### 28 August 2026 — administrator-only account provisioning
+
+Product owner confirmed C11–C12, effective for all planned phases: platform administrators create companies and initial owners; company administrators/authorized HR create employee accounts. Public self-registration is excluded, including Free plans and identity-provider registration. Invitations activate administrator-provisioned access; login and password reset remain available for existing accounts. This replaces the earlier possibility of later public signup. P01-02 must test provisioning permissions, tenant isolation, bounded HR role grants, activation replay and recovery without account creation or restored revoked access; Phase 4 retains operator-led onboarding. These are specification changes only: provisioning, OIDC login, sessions and recovery workflows remain unimplemented.
 
 ### 28 August 2026 — membership authorization prerequisite
 

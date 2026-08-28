@@ -17,7 +17,7 @@ export const healthSchema = z
   .strict();
 export type Health = z.infer<typeof healthSchema>;
 
-// Internal input from the future verified OIDC/session adapter, never request JSON.
+// Internal input from the verified OIDC/session adapter, never request JSON.
 export const authenticatedIdentitySchema = z.strictObject({
   issuer: z.url().max(512),
   subject: z.string().min(1).max(255),

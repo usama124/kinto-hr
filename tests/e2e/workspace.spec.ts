@@ -67,3 +67,59 @@ test('does not interpret an invalid health response as connected', async ({
     'Not connected · start the local services',
   );
 });
+
+test('account access explains administrator provisioning while sign-in is disabled', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.getByRole('link', { name: 'Account access' }).click();
+  await expect(
+    page.getByRole('heading', { name: 'Sign in to Kinto.' }),
+  ).toBeVisible();
+  await expect(page.getByRole('status')).toHaveText(
+    'Sign-in is not enabled in this environment yet.',
+  );
+  await expect(page.getByText(/There is no self-signup/)).toBeVisible();
+  await expect(
+    page.getByRole('link', { name: 'Continue to sign in' }),
+  ).toHaveCount(0);
+  await expect(page.getByRole('textbox')).toHaveCount(0);
+});
+
+test('account access handles outage, login and logout states without storing credentials', async ({
+  page,
+}) => {
+  let signedIn = false;
+  let unavailable = true;
+  const csrf = 'a'.repeat(43);
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({
+      status: unavailable ? 503 : signedIn ? 200 : 401,
+      contentType: 'application/json',
+      body: signedIn ? JSON.stringify({ csrfToken: csrf }) : '{}',
+    }),
+  );
+  await page.goto('/login');
+  await expect(page.getByRole('status')).toHaveText(
+    'Account access is unavailable. Please try again.',
+  );
+  unavailable = false;
+  await page.getByRole('button', { name: 'Try again' }).click();
+  await expect(
+    page.getByRole('link', { name: 'Continue to sign in' }),
+  ).toHaveAttribute('href', '/api/v1/auth/login');
+  signedIn = true;
+  await page.reload();
+  await expect(page.getByRole('status')).toContainText('You are signed in.');
+  await page.route('**/api/v1/auth/logout', async (route) => {
+    expect(route.request().method()).toBe('POST');
+    expect(route.request().headers()['x-csrf-token']).toBe(csrf);
+    signedIn = false;
+    await route.fulfill({ status: 204 });
+  });
+  await page.getByRole('button', { name: 'Sign out of Kinto' }).click();
+  await expect(
+    page.getByRole('link', { name: 'Continue to sign in' }),
+  ).toBeVisible();
+  expect(await page.evaluate(() => localStorage.length)).toBe(0);
+});

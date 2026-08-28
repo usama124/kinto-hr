@@ -22,16 +22,22 @@ Working session defaults: 30-minute idle expiry, 12-hour absolute expiry, and re
 
 Users are global identities keyed by verified issuer/subject. Memberships bind users to tenants; an employee may have no login. An employee-user link is tenant-scoped. Do not automatically grant membership because an email domain matches. Rate-limit authentication and invitation flows without exposing whether an unrelated identity exists.
 
+Account creation is administrator-only in every plan and phase. Disable public self-registration in the application, API and identity-provider configuration; hiding a signup button is insufficient. Only a platform administrator can create a company tenant and its initial named owner account through the protected control plane. Company owner/admin and authorized HR can provision employee accounts only for employees in their own tenant. HR's employee-account provisioning permission grants only the Employee role, not owner, platform or payroll roles; general membership/role administration remains separate. Do not expose passwords to administrators or use a shared company credential.
+
+Invitations are activation/password-setup links for administrator-provisioned access, not open signup. Acceptance verifies the intended identity and rechecks that the provisioning grant and tenant access remain valid. Provisioning and retries must not duplicate identities, employee links or memberships; failed identity-provider operations leave access pending/denied until reconciled. Audit provisioning, invitation and role changes without recording secrets.
+
+Company users and employees can log in and use identity-provider password recovery for existing accounts. Recovery uses expiring, single-use tokens, generic responses and rate limits. It must not create identities, tenants or memberships, change roles, or reactivate disabled identities/revoked memberships. Successful password recovery does not override tenant suspension or MFA requirements.
+
 Permission keys use `resource.action` plus `self`, `team`, `branch` or `tenant` scope. Initial roles:
 
 - Company owner: organization and membership administration, billing and employee administration; **no automatic payroll-detail or finalize permission**. Payroll roles must be explicitly assigned and audited.
-- HR administrator: employee/documents/leave/attendance administration; no bank details or salary calculation access by default.
+- HR administrator: employee/documents/leave/attendance administration and bounded employee-account provisioning within their tenant; no bank details or salary calculation access by default.
 - Payroll preparer: salary inputs, calculation, payroll reports; cannot approve/finalize their own run.
 - Payroll approver: review/finalize eligible runs; cannot silently alter their inputs.
 - Manager: assigned team's requests and attendance; no salary/bank details.
 - Employee: own permitted profile, requests, attendance and published payslips.
 - Auditor: read-only access to explicitly granted modules and fields; not all HR data by default.
-- Platform operator: tenant commercial status and technical health; no normal customer employee/payroll access.
+- Platform operator: company/initial-owner provisioning, tenant commercial status and technical health; no normal customer employee/payroll access.
 
 Phase 1 uses predefined roles; arbitrary custom roles are later scope. Phase 3 adds restricted rule-maintainer and independent rule-reviewer templates for its separately granted publication workflow. Team scope is derived from authorized reporting relationships, not a list submitted by the browser. Keep a last-active-owner guard. Support access requires a customer-approved, time-limited grant with actor identity and audit trail; shared passwords and silent impersonation are forbidden.
 

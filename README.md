@@ -13,13 +13,16 @@ An HR SaaS for Pakistan: employee management, ZKTeco K50 attendance and payroll,
 - Internal employee draft/activation persistence primitives with serialized capacity allocation, transactional audit and durable outbox writes.
 - Separate BullMQ/Redis worker with durable delivery state, tenant-scoped processing, duplicate receipts prevented, bounded retries and audited local replay.
 - Expiring worker heartbeats, private operational health/Prometheus metrics, and a repeatable synthetic PostgreSQL backup/restore drill.
-- Identity/membership persistence and an internal permission/MFA boundary with immediate rechecks of revoked access. OIDC login and sessions are not implemented yet.
+- Identity/membership persistence and an internal permission/MFA boundary with immediate rechecks of revoked access.
+- Optional OIDC login/callback, Redis server sessions, CSRF-protected logout and an account-access page. Disabled by default; real-provider MFA, recovery and administrator provisioning remain pending.
 - Unit/API, real PostgreSQL and desktop/mobile browser regression suites; coverage gates and GitHub Actions CI.
 - The complete [implementation roadmap](docs/implementation/README.md) and six phase specifications.
 
 The persistence primitives are a foundation spike, not the complete employee lifecycle. They intentionally have no HTTP endpoints until identity, membership checks, full activation fields and employee permissions are implemented. There is no demo login or authorization bypass. The worker's first consumer only records receipt of committed activation events; business automation is not enabled.
 
-OIDC/MFA, employee workflows, imports/documents, attendance, payroll, billing and real K50 communication remain future slices. Payroll permission tests assert a future invariant; they do not mean payroll is available. No customer records or biometric templates are included.
+Real-provider MFA/recovery and account provisioning, employee workflows, imports/documents, attendance, payroll, billing and real K50 communication remain future slices. Payroll permission tests assert a future invariant; they do not mean payroll is available. No customer records or biometric templates are included. See [authentication setup and limitations](docs/operations/authentication.md).
+
+Required account access: only platform admins create companies and initial owners; only company admins/authorized HR create employee accounts within their company. Neither companies nor employees can self-register, including on Free plans. The login adapter accepts existing provisioned identities only; account creation and password recovery are still pending. See [account provisioning requirements](docs/implementation/DECISIONS.md).
 
 ## Local development
 
@@ -94,4 +97,4 @@ Actions and dependencies are pinned. Run `pnpm audit --audit-level=high` when ch
 - `docs/implementation`: specification baseline and progress records.
 - `docs/operations`: local runbook and proposed staging controls.
 
-Next: P01-02 OIDC/MFA, secure sessions, verified memberships and scoped company administration before exposing employee APIs. Local database restore and worker monitoring are implemented; scheduled encrypted backups/PITR, private-file recovery, alert notification delivery, staging provisioning and remote CI success remain unverified. Foundation/Phase 1 is not complete: company policies, immutable entitlements and full employee/compensation/import workflows are still pending. Real K50/firmware validation, independently reviewed Pakistan payroll rules, hosting/privacy and commercial approvals remain external release gates. Do not use this preview for live HR/payroll data.
+Next: P01-02 real-provider MFA/recovery, protected administrator/company/employee provisioning and invitations, membership selection/administration, last-owner protection and security audit. The OIDC/session adapter is implemented with synthetic integration evidence; privileged access stays denied until provider MFA is verified. Then scoped company/policy administration before employee APIs. Local database restore and worker monitoring are implemented; scheduled encrypted backups/PITR, private-file recovery, alert notification delivery, staging provisioning and remote CI success remain unverified. Foundation/Phase 1 is not complete: company policies, immutable entitlements and full employee/compensation/import workflows are still pending. Real K50/firmware validation, independently reviewed Pakistan payroll rules, hosting/privacy and commercial approvals remain external release gates. Do not use this preview for live HR/payroll data.

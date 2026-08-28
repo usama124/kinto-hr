@@ -30,6 +30,25 @@ export async function assertSafeRuntimeRole(db: PrismaClient): Promise<void> {
   if (rows.length !== 1 || rows[0].unsafe)
     throw new Error('Unsafe runtime database role');
 }
+// Login only resolves previously provisioned identities. It never creates users
+// or memberships; company authorization remains in inAuthorizedTenant.
+export async function findActiveIdentity(
+  db: PrismaClient,
+  authenticatedIdentity: AuthenticatedIdentity,
+): Promise<{ id: string } | null> {
+  const principal = authenticatedIdentitySchema.parse(authenticatedIdentity);
+  return db.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT set_config('app.identity_issuer', ${principal.issuer}, true), set_config('app.identity_subject', ${principal.subject}, true)`;
+    return tx.identity.findFirst({
+      where: {
+        issuer: principal.issuer,
+        subject: principal.subject,
+        status: 'active',
+      },
+      select: { id: true },
+    });
+  });
+}
 // Membership must be authenticated before this persistence boundary is called.
 // No employee HTTP endpoint is exposed in the foundation release.
 export async function inTenant<T>(

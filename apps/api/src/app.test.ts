@@ -9,6 +9,7 @@ import { configureHttp } from './http';
 let app: INestApplication;
 const ready = vi.fn().mockResolvedValue(undefined);
 beforeAll(async () => {
+  vi.stubEnv('AUTH_MODE', 'disabled');
   const module = await Test.createTestingModule({ imports: [AppModule] })
     .overrideProvider(DatabaseService)
     .useValue({ ready })
@@ -19,6 +20,7 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   await app?.close();
+  vi.unstubAllEnvs();
 });
 it('returns safe liveness and security headers', async () => {
   const response = await request(app.getHttpServer())
@@ -47,6 +49,11 @@ it.each([
   '/api/v1/platform/tenants',
   '/api/v1/payroll',
   '/api/v1/auth/login',
+  '/api/v1/auth/callback',
+  '/api/v1/auth/session',
+  '/api/v1/auth/logout',
+  '/api/v1/auth/signup',
+  '/api/v1/auth/register',
 ])('keeps unfinished business endpoint %s closed', async (path) => {
   const response = await request(app.getHttpServer())
     .get(path)
