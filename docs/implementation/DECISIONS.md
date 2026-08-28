@@ -48,6 +48,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 28 August 2026 — restricted foundation worker implementation
+
+Engineering implemented the next P01-01 slice under the owner's instruction to continue foundation work: BullMQ 5.81.4 with digest-pinned Redis 7.4.11, a separate TypeScript runtime, PostgreSQL delivery/receipt persistence and narrowly privileged metadata dispatch functions. Redis job IDs are an optimization; database receipts protect replay after queue removal. A NOLOGIN role enumerates only delivery metadata rather than granting the ordinary worker cross-tenant business access. The initial worker is a receipt-only activation observer; future business handlers require their own authorization/entitlement checks and envelope fields. Local operator replay requires database credentials and a reason, and is not a public/authenticated business API. See [implementation evidence](../evidence/phase-01/worker.md). Hosting, identity and production operational approval remain unresolved; the staging description provisions nothing.
+
 ### 28 August 2026 — company-wide policies and annual-leave-first absence settlement
 
 Product owner revised C09 and confirmed C10. This supersedes the earlier salary-only/no-automatic-leave-consumption rule below. P01 introduces company policy administration/access/versioning; P02 defines timing, leave quotas and explicit annual-leave settlement before attendance lock; P03 consumes that immutable outcome without spending leave again. D10 records fallback and threshold defaults. Add tests for tenant isolation, threshold boundaries, quota exhaustion/races, settlement replay and immutable policy history. Existing implementation and completed test counts are unchanged.

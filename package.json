@@ -8,8 +8,11 @@
     "node": ">=22.14.0 <23"
   },
   "scripts": {
-    "dev": "pnpm --parallel --filter @kinto/api --filter @kinto/web dev",
-    "build": "pnpm --filter @kinto/api build && pnpm --filter @kinto/web build",
+    "dev": "pnpm --parallel --filter @kinto/api --filter @kinto/web --filter @kinto/worker dev",
+    "build": "pnpm --filter @kinto/api build && pnpm --filter @kinto/web build && pnpm --filter @kinto/worker build",
+    "worker:check": "pnpm --filter @kinto/worker check",
+    "worker:replay": "tsx scripts/replay-outbox.ts",
+    "test:worker:runtime": "node --test tests/runtime/worker.test.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint . --max-warnings=0",
@@ -21,9 +24,10 @@
     "db:generate": "pnpm --filter @kinto/database generate",
     "db:migrate": "pnpm --filter @kinto/database migrate",
     "db:bootstrap": "tsx scripts/bootstrap-database.ts",
+    "test:migrations": "tsx scripts/verify-migrations.ts",
     "check:docs": "node scripts/check-docs.mjs",
     "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test:coverage && pnpm check:docs",
-    "verify:full": "pnpm verify && pnpm test:integration && pnpm build && pnpm test:e2e"
+    "verify:full": "pnpm verify && pnpm test:integration && pnpm test:migrations && pnpm build && pnpm test:worker:runtime && pnpm test:e2e"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
@@ -41,7 +45,8 @@
     "tsx": "4.23.12",
     "typescript": "5.9.3",
     "typescript-eslint": "8.68.0",
-    "vitest": "4.1.11"
+    "vitest": "4.1.11",
+    "zod": "4.4.3"
   },
   "pnpm": {
     "overrides": {

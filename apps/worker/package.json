@@ -1,0 +1,21 @@
+{
+  "name": "@kinto/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "build": "tsup",
+    "start": "node dist/main.cjs",
+    "check": "tsx src/check.ts"
+  },
+  "dependencies": {
+    "@kinto/database": "workspace:*",
+    "@prisma/client": "6.19.3",
+    "bullmq": "5.81.4",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "tsup": "8.5.0"
+  }
+}

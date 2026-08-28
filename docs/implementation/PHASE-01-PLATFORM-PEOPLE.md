@@ -108,6 +108,7 @@ Release internally in staging. If identity/isolation fails, disable tenant acces
 
 - Work packages: P01-01 partially implemented; P01-02/03/04 contain internal persistence spikes only; P01-05 not started.
 - Implemented files/migrations and executed checks: see [foundation evidence](../evidence/phase-01/foundation.md). Web/API preview, first migration, restricted runtime role, tenant isolation, atomic draft activation/audit/outbox and regression suites exist.
-- Acceptance: local foundation checks passed; no complete work-package or phase acceptance. Worker, OIDC/memberships, organization, complete lifecycle, immutable entitlements, imports/private files and restore evidence are still required. No business HTTP endpoints are exposed.
-- Migration evidence: first schema applied and replayed locally. Recovery and staging evidence: pending.
+- Worker/runtime increment: see [worker evidence](../evidence/phase-01/worker.md). Local Redis/BullMQ processing, restricted dispatcher/worker roles, durable receipts/retries, audited local replay, startup/shutdown checks and a staging operating description now exist. Only a receipt-recording foundation consumer is enabled; business automation remains unavailable.
+- Acceptance: local foundation checks passed; no complete work-package or phase acceptance. OIDC/memberships, organization, complete lifecycle, immutable entitlements, imports/private files, operational monitoring and restore evidence are still required. No business HTTP endpoints are exposed.
+- Migration evidence: first schema and worker migration applied locally; isolated previous-schema upgrade/backfill, two-tenant delivery isolation and replay passed. Recovery and staging evidence: pending.
 - Human review/staging approval: pending.
