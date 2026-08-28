@@ -146,6 +146,8 @@ Customer provisioning, invitations, plan assignment, complimentary access, billi
 
 Separate platform administration from a customer's HR workspace.
 
+Account creation is administrator-only for every subscription plan, including Free. Only a platform administrator creates a company tenant and its initial named company admin/owner. Only that company's admin/owner or authorized HR creates employee login accounts within the company; employee-account provisioning does not grant HR permission to assign privileged roles. There is no company or employee self-signup, including through the identity provider. Invitations activate approved access, while company users and employees can log in and reset their own passwords. Recovery cannot create accounts or restore revoked access; passwords are individual, never shared company credentials. These workflows are required Phase 1 work, not current preview functionality.
+
 ### H. Expansion after the core is reliable
 
 Prioritize expenses, asset custody and returns, richer onboarding, letters, accounting integrations, advanced shifts, multiple legal entities, and native mobile attendance according to demand. Recruitment/ATS, appraisals, performance goals, training, benefits administration, and workforce planning come later.

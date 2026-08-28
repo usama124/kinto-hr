@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
 import { readConfig } from './config';
+import { readAuthConfig } from './auth/config';
 it('requires an explicit PostgreSQL runtime URL', () => {
   expect(() => readConfig({})).toThrow();
   expect(() => readConfig({ DATABASE_URL: 'https://example.com' })).toThrow();
@@ -10,6 +11,50 @@ it('requires an explicit PostgreSQL runtime URL', () => {
     port: 4000,
     host: '127.0.0.1',
   });
+});
+
+const authEnv = {
+  AUTH_MODE: 'oidc',
+  NODE_ENV: 'production',
+  OIDC_ISSUER: 'https://identity.example/realms/kinto',
+  AUTH_ORIGIN: 'https://hr.example',
+  OIDC_CLIENT_ID: 'kinto',
+  OIDC_CLIENT_SECRET: 'synthetic-client-secret',
+  AUTH_REDIS_URL: 'rediss://redis.example/0',
+};
+it('keeps authentication disabled unless explicitly configured', () => {
+  expect(readAuthConfig({})).toBeUndefined();
+  expect(() => readAuthConfig({ AUTH_MODE: 'true' })).toThrow();
+  expect(() => readAuthConfig({ AUTH_MODE: 'oidc' })).toThrow();
+  expect(readAuthConfig(authEnv)?.origin).toBe('https://hr.example');
+});
+it.each([
+  { OIDC_ISSUER: 'http://identity.example/realm' },
+  { OIDC_ISSUER: 'https://user:secret@identity.example/realm' },
+  { OIDC_ISSUER: 'https://identity.example/realm?untrusted=yes' },
+  { AUTH_ORIGIN: 'https://hr.example/path' },
+  { AUTH_ORIGIN: 'http://localhost:3000' },
+  { OIDC_CLIENT_SECRET: 'short' },
+  { AUTH_REDIS_URL: 'redis://127.0.0.1:6379' },
+])('rejects unsafe auth settings %j', (override) => {
+  expect(() => readAuthConfig({ ...authEnv, ...override })).toThrow();
+});
+it('permits plain HTTP/Redis only on loopback in explicit local modes', () => {
+  const env = {
+    ...authEnv,
+    NODE_ENV: 'development',
+    OIDC_ISSUER: 'http://127.0.0.1:8080/realm',
+    AUTH_ORIGIN: 'http://localhost:3000',
+    AUTH_REDIS_URL: 'redis://127.0.0.1:6379',
+  };
+  expect(readAuthConfig(env)?.local).toBe(true);
+  expect(() =>
+    readAuthConfig({ ...env, OIDC_ISSUER: 'http://remote.example' }),
+  ).toThrow();
+  expect(() =>
+    readAuthConfig({ ...env, AUTH_REDIS_URL: 'redis://remote.example' }),
+  ).toThrow();
+  expect(() => readAuthConfig({ ...env, NODE_ENV: undefined })).toThrow();
 });
 it('validates port and listen host', () => {
   expect(

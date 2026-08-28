@@ -12,6 +12,7 @@ export default defineConfig({
         'packages/domain/src/**/*.ts',
         'packages/contracts/src/**/*.ts',
         'apps/api/src/config.ts',
+        'apps/api/src/auth/config.ts',
         'apps/worker/src/config.ts',
       ],
       exclude: ['**/*.test.ts'],

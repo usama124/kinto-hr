@@ -80,9 +80,9 @@ export default function Home() {
       <div className="notice">
         <strong>A foundation preview, not a live HR system.</strong>
         <p>
-          Sign-in and employee HTTP access are not enabled yet. This preview
-          contains no customer records and cannot process attendance, payroll or
-          payments.
+          Sign-in is disabled by default and employee HTTP access remains
+          closed. This preview contains no customer records and cannot process
+          attendance, payroll or payments.
         </p>
         <Link href="/setup">Read the connection guide →</Link>
       </div>

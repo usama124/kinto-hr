@@ -38,7 +38,9 @@ export default function Setup() {
       <div className="notice">
         <strong>Access is intentionally closed.</strong>
         <p>
-          OIDC sign-in is the next security milestone. There is no demo login,
+          The OIDC session adapter is available for configured test
+          environments; sign-in is disabled by default. Provider MFA, account
+          provisioning and recovery are still pending. There is no demo login,
           default administrator or development token that opens employee data.
         </p>
       </div>

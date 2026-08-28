@@ -9,6 +9,10 @@ const config: NextConfig = {
         source: '/api/v1/health/:path*',
         destination: `${apiUrl}/api/v1/health/:path*`,
       },
+      {
+        source: '/api/v1/auth/:path*',
+        destination: `${apiUrl}/api/v1/auth/:path*`,
+      },
     ];
   },
   async headers() {
