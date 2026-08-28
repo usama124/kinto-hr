@@ -1,0 +1,99 @@
+# Phase 1 — platform, access and employee management
+
+Version 1.1 · 28 August 2026 · Status: foundation slice locally verified; phase incomplete · Estimate: 3–5 weeks
+
+Dependencies: [Phase 0](PHASE-00-VALIDATION.md), [shared spec](SYSTEM-SPEC.md). Next: [Phase 2](PHASE-02-ATTENDANCE-LEAVE.md).
+
+## Objective, entry and exclusions
+
+Deliver a complete internal staging workflow: provision a company, assign capacity, invite users, configure branches, import/manage employees and safely access documents. Foundation-only work may use the roadmap's Phase 0 exception, but real users/data require identity/privacy decisions. No attendance calculation, real payroll, customer invoicing or public self-signup in this phase.
+
+The company owner/HR admin are primary users. Employee self-service is limited to authorized profile viewing/change requests. Platform operators manage tenant capabilities without access to HR content.
+
+## P01-01 — repository, CI and environments
+
+Create the shared-spec workspace and module boundaries, container-based local services, validated configuration, example environment variable names without secrets, migration workflow, seed-only synthetic fixtures and application health/readiness checks. Establish actual scripts for lint, typecheck, tests, integration, browser tests and production build; document exact commands after execution. CI runs against PostgreSQL, not a mocked/SQLite tenant store.
+
+Create a staging deployment description with private database/storage, separate migration credentials, backups, monitoring and secret injection. Provision it only after relevant approval. Health endpoints reveal status, not credentials/configuration. Test missing configuration fails startup safely.
+
+Acceptance: a clean checkout can install locked dependencies, migrate, seed synthetic tenants, run documented checks and build the web/API/worker. A migration failure stops deployment without running partially configured app instances. No unprotected admin/test bypass ships in a production build.
+
+## P01-02 — identity, tenancy, roles and audit
+
+Implement OIDC sessions, membership selection, MFA enforcement, invitations and role/scoped authorization according to the shared spec. Bootstrap the first operator through an explicit protected setup operation, not a public default credential. Use separate control-plane authorization for provisioning tenants; resolve company access through memberships.
+
+Implement transactional audit events, tenant-scoped repositories, RLS and safe database role provisioning. Add legal-entity and branch setup with Pakistan/PKR/Asia-Karachi defaults, configurable province/territory and one legal entity per tenant. A legal-entity identity change is audited; deleting an entity with business records is disallowed.
+
+Acceptance: tenant A cannot list/read/change tenant B by changing path IDs, files, filters, cursors or job IDs. Missing tenant context denies access. An existing session loses access after membership revocation. HR/manager cannot see bank details or salaries. Last-owner removal fails. Payroll self-approval restrictions are represented in permissions even though payroll is not implemented yet.
+
+## P01-03 — plan and entitlement foundation
+
+Implement immutable plan versions, per-tenant subscription records, capability/capacity resolution, complimentary grants and a tenant capacity lock. Seed test packages Free 5, Starter 20, Growth 50, Business 100 and Scale 250; prices remain unset and production invoices cannot be issued from these seeds. Only implemented capabilities may be enabled.
+
+Precedence: security suspension denies access; implemented-module flag limits availability; valid base plan plus approved add-on grants determine features/capacity; a dated explicit override replaces only its named field; unspecified fields retain baseline. Reject overlapping active overrides for the same field. Current role/data scope still applies. Record entitlement version and invalidate caches on changes. Decisions affecting allocation use authoritative database state, not cached limits.
+
+A complimentary billing mode suppresses collection while retaining a chosen capacity/package; it is not a universal permission grant. Override/grant edits require operator authorization, reason and audit, and have a preview of effective changes. Grant expiry cannot silently charge a customer without an accepted paid agreement; detailed commercial transitions arrive in Phase 4.
+
+Acceptance: a complimentary 100-seat tenant works without a payment provider; a 20-seat tenant cannot activate employee 21 through UI, API or concurrent import; two competing final-seat activations result in one success. Expiring a grant never deletes employees, files or history. Existing employees can still be offboarded when over cap, while new activations are denied.
+
+## P01-04 — organization and employee lifecycle
+
+Organization records: legal entity, branch, department, designation and reporting manager, all tenant-scoped. Prevent a reporting-line cycle. Changing a manager or branch creates an effective-dated assignment; historical approvals retain actor and scope evidence.
+
+Employee lifecycle: `draft → active → terminated → archived`; a scheduled termination records final working date and is applied idempotently after that date. Draft activation is explicit and reserves capacity transactionally. Rehire creates a new employment period linked to the same employee identity; it never replaces previous payroll/history. No general-purpose hard delete after activation or referenced history.
+
+Required activation fields: unique tenant employee number, display/legal name as needed, joining date, employment type, branch, department/designation and manager or documented top-level exception. Default scope is monthly salaried employees; unsupported worker types cannot be silently treated as salaried. Optional private fields include contact, emergency contact, CNIC and bank details with separate read/write permissions. Validate formats without claiming government verification.
+
+Basic onboarding/offboarding checklists have assignee, due date, completed timestamp and actor. Offboarding revokes linked employee access at the approved effective time, preserves payroll records, and creates a final-settlement task for Phase 3. Asset clearance integration is later Phase 5.
+
+Acceptance: future assignment changes do not overwrite past records; overlapping employment/assignment intervals fail; identical employee numbers in different tenants are valid; duplicate numbers within one tenant return a scoped conflict. Rehire retains prior service/pay records. Archived employees remain available to authorized historical reports and do not consume active capacity.
+
+## P01-05 — imports, documents and self-service
+
+CSV workflow: upload → parse/validate → preview → confirm → commit → results. Initial employee import is create-only; conflicting employee numbers produce row errors, never implicit overwrites. Preview records a file digest and validation revision. Confirmation revalidates permissions, referenced IDs and capacity; any error rejects the whole batch with no partial activation. Stage rows, then commit atomically under the tenant capacity lock. Repeated confirmation returns the same result.
+
+Use a shared file pipeline for employee documents: quarantine, size/type/scan, clean, authorized download, retention-controlled removal. Documents have category, employee, visibility, expiry and optional replacement linkage. Employee-visible and HR-only documents are distinct. CNIC/bank documents do not become visible merely because a person manages the employee.
+
+Employees can request changes to a whitelist of contact/emergency fields. HR approves/rejects with reason; employees cannot edit salary, status, role or manager. Display only actual available profile sections. Add employee roster, joiner/leaver and department counts with scoped CSV exports; audit export creation/download.
+
+Acceptance: bad rows reject import with row-numbered errors and no records changed; confirmation retries create one batch only; spreadsheet formula content is safe in exports. Infected/unscanned files never download. A revoked user cannot retrieve an old document/job URL through the application; short-lived storage URL residual access is bounded to the documented five-minute maximum.
+
+## Data model and migrations
+
+Control-plane entities: `users(issuer,subject)`, `tenants(status,security_status)`, `memberships(user_id,tenant_id,status)`, `roles`, `membership_roles`, `plan_versions`, `subscriptions`, `entitlement_overrides`, `capacity_state` and `support_grants`. Tenant business entities: `legal_entities`, `branches`, `departments`, `designations`, `employees`, `employment_periods`, `employee_assignments`, `employee_private_details`, `employee_user_links`, `documents`, `checklist_tasks`, `profile_change_requests`, `import_batches`, `import_rows`, `jobs`, `audit_events` and `outbox_events`.
+
+Membership unique `(tenant_id,user_id)`; employee number unique `(tenant_id,employee_number)`; employee-user link unique per employment account policy, with no cross-tenant references. Entity/employee child foreign keys include tenant. Effective intervals reject overlap. Capacity count and status changes commit together. Restrict immutable plan versions and audit events at the database permissions level.
+
+Migration order: identity/control plane; tenant context/RLS; organization; lifecycle/private data; files/imports; grants/capacity; outbox/audit indexes. Phase 1 must prove adding a new tenant-owned table cannot pass CI without an isolation policy/test classification.
+
+## API and UI contracts
+
+All business paths inherit `/api/v1/tenants/{tenantId}` and shared status/version/idempotency conventions:
+
+- Absolute `GET /api/v1/auth/login`, `GET /api/v1/auth/callback`, `POST /api/v1/auth/logout`, `GET /api/v1/auth/session`; login/callback use OIDC, logout is a CSRF-protected mutation.
+- Absolute `/api/v1/platform/tenants` create/list commercial metadata; `/tenants/{id}/grants` preview/create/revoke entitlements, never HR data.
+- `/organization`, `/branches`, `/departments`, `/designations`: scoped configuration.
+- `/memberships`, `/invitations`, `/memberships/{id}/roles`: owner actions, no self-escalation outside granted administration rights.
+- `/employees` list/create; `/employees/{id}` read/versioned edit; explicit `/activate`, `/terminate`, `/archive`, `/rehire` transition commands.
+- `/employee-imports` create; `/{id}/preview`, `/{id}/confirm`, `/{id}` result/status.
+- `/employees/{id}/documents` register/list; `/documents/{id}/download` authorizes a short-lived link.
+- `/me/profile`, `/me/profile-change-requests`, `/profile-change-requests/{id}/decision`.
+- `/entitlements` returns effective limits, usage and available features; `/reports/headcount` and `/exports` remain permission-scoped.
+
+Screens: login/tenant switch, company setup, members/roles, employee list/detail/history, import preview/results, onboarding/offboarding tasks, document manager, self profile and operator commercial tenant view. Show meaningful loading/error/permission states and distinguish drafts from active employees. Do not create fake payroll/attendance dashboard totals before those modules exist.
+
+Minimum command contracts: `POST /employees` accepts employee number, name, joining date, monthly-salaried employment type and tenant-scoped organization references; it always creates a draft. `POST /employees/{id}/activate` accepts expected version and atomically consumes a seat immediately; future automatic activation is not implemented in Phase 1, and employment joining date remains a separate historical field. `POST /employee-imports/{id}/confirm` accepts preview revision and file digest; changing either requires a fresh preview. Successful mutations return resource ID, state and new version; no client field can set tenant identity, audit actor or active capacity count.
+
+## Release evidence and rollback
+
+Evidence must cover each work package plus concurrent RLS/seat tests, private-field projections, invitation replay, malicious files/CSV, worker authorization, employee lifecycle and restore of two synthetic tenants. Review keyboard/responsive employee/import flows. Apply migrations to clean and previous schema; restore a database/file sample and demonstrate tenant-specific export without another tenant's data.
+
+Release internally in staging. If identity/isolation fails, disable tenant access and fix it; do not loosen RLS. Roll back via previous compatible app version and flags; preserve imported employee/history records. No destructive schema rollback or customer cleanup without a separate reviewed procedure.
+
+## Implementation record
+
+- Work packages: P01-01 partially implemented; P01-02/03/04 contain internal persistence spikes only; P01-05 not started.
+- Implemented files/migrations and executed checks: see [foundation evidence](../evidence/phase-01/foundation.md). Web/API preview, first migration, restricted runtime role, tenant isolation, atomic draft activation/audit/outbox and regression suites exist.
+- Acceptance: local foundation checks passed; no complete work-package or phase acceptance. Worker, OIDC/memberships, organization, complete lifecycle, immutable entitlements, imports/private files and restore evidence are still required. No business HTTP endpoints are exposed.
+- Migration evidence: first schema applied and replayed locally. Recovery and staging evidence: pending.
+- Human review/staging approval: pending.
