@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { workerConfig, redisConnection } from './config';
+import { workerConfig, redisConnection, monitorConfig } from './config';
 import { referenceSchema, retryDelay } from './processor';
 import { randomUUID } from 'node:crypto';
 
@@ -11,6 +11,20 @@ const env = {
   REDIS_URL: 'redis://localhost:6379/0',
 };
 describe('worker configuration and queue boundary', () => {
+  it('allows a monitor with only dispatcher and Redis credentials', () => {
+    expect(
+      monitorConfig({
+        DISPATCHER_DATABASE_URL: env.DISPATCHER_DATABASE_URL,
+        REDIS_URL: env.REDIS_URL,
+      }),
+    ).toMatchObject({ WORKER_MONITOR_PORT: 9464 });
+    expect(() => monitorConfig({ ...env, WORKER_MONITOR_PORT: '80' })).toThrow(
+      'Invalid monitor configuration',
+    );
+    expect(() =>
+      monitorConfig({ ...env, WORKER_MONITOR_PORT: '65536' }),
+    ).toThrow('Invalid monitor configuration');
+  });
   it('uses bounded defaults and supports TLS/auth/database selection', () => {
     expect(workerConfig(env)).toMatchObject({
       WORKER_QUEUE: 'kinto-foundation',

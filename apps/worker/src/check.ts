@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { Queue } from 'bullmq';
 import { assertSafeRuntimeRole, createDatabase } from '@kinto/database';
 import { workerConfig, redisConnection } from './config';
+import { readHealth, healthAlerts } from './health';
 
 if (existsSync('.env')) process.loadEnvFile('.env');
 else if (existsSync('../../.env')) process.loadEnvFile('../../.env');
@@ -28,20 +29,16 @@ async function check() {
     ]);
     await workerDb.jobDelivery.findMany({ take: 1 });
     await queue.waitUntilReady();
-    const statuses = await db.$queryRaw<
-      { status: string; count: bigint; oldestDueAt: Date }[]
-    >`SELECT * FROM public.outbox_health()`;
+    const health = await readHealth(db, queue);
+    const alerts = healthAlerts(health);
     console.log(
       JSON.stringify({
         dependencies: 'ready',
-        deliveries: statuses.map((row) => ({
-          ...row,
-          count: Number(row.count),
-        })),
+        health,
+        alerts,
       }),
     );
-    if (statuses.some((row) => row.status === 'dead' && row.count > 0n))
-      process.exitCode = 1;
+    if (alerts.length > 0) process.exitCode = 1;
   } finally {
     await queue.close();
     await db.$disconnect();

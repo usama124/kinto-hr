@@ -6,6 +6,8 @@ import {
   type EventReference,
 } from './processor';
 import { redisConnection, workerConfig } from './config';
+import { randomUUID } from 'node:crypto';
+import { publishHeartbeat, removeHeartbeat } from './health';
 
 export async function startWorker(config: ReturnType<typeof workerConfig>) {
   const db = createDatabase(config.WORKER_DATABASE_URL);
@@ -52,6 +54,7 @@ export async function startWorker(config: ReturnType<typeof workerConfig>) {
   let currentPoll: Promise<void> = Promise.resolve();
   let running: Promise<void> | undefined;
   let lastHeartbeat = 0;
+  const instanceId = randomUUID();
 
   async function dispatch() {
     const refs = await dispatcher.$queryRaw<
@@ -67,6 +70,15 @@ export async function startWorker(config: ReturnType<typeof workerConfig>) {
   async function poll() {
     try {
       await dispatch();
+      if (!closing && worker.isRunning() && !worker.isPaused()) {
+        if ((await worker.client).status !== 'ready')
+          throw new Error('Worker connection unavailable');
+        await publishHeartbeat(
+          queue,
+          instanceId,
+          Math.max(60000, config.WORKER_POLL_MS * 3),
+        );
+      }
       if (Date.now() - lastHeartbeat >= 30000) {
         log('dispatch_ok');
         lastHeartbeat = Date.now();
@@ -83,6 +95,9 @@ export async function startWorker(config: ReturnType<typeof workerConfig>) {
     closing = true;
     clearTimeout(timer);
     await currentPoll;
+    await removeHeartbeat(queue, instanceId).catch(() =>
+      log('heartbeat_cleanup_failed'),
+    );
     await worker.close();
     await running;
     await queue.close();
