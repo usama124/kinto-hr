@@ -25,7 +25,7 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     if (!this.config) return;
     this.store = new AuthStore(
       this.config.redisUrl,
-      `kinto:auth:${digest(`${this.config.issuer}|${this.config.clientId}|${this.config.origin}`)}:`,
+      `kinto:auth:v2:${digest(`${this.config.issuer}|${this.config.clientId}|${this.config.origin}`)}:`,
     );
     try {
       await this.store.connect();
@@ -93,5 +93,20 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
   }
   async logout(token: string) {
     await this.resources().store.deleteSession(token);
+  }
+  async backchannelLogout(token: string) {
+    const { store, provider } = this.resources();
+    let logout;
+    try {
+      logout = await provider.verifyLogoutToken(token);
+    } catch {
+      throw new UnauthorizedException();
+    }
+    await store.revokeProviderSessions({
+      jti: logout.jti,
+      subject: logout.sub,
+      providerSessionId: logout.sid,
+      issuer: logout.iss,
+    });
   }
 }

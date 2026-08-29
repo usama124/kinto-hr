@@ -40,9 +40,10 @@ export default function Setup() {
         <p>
           The OIDC session adapter and an explicit Keycloak LoA 2 profile are
           available for configured test environments; sign-in is disabled by
-          default. Account provisioning and complete reset-session revocation
-          are still pending. There is no demo login, default administrator or
-          development token that opens employee data.
+          default. Signed reset-session revocation is locally verified, while
+          production recovery controls and account provisioning remain pending.
+          There is no demo login, default administrator or development token
+          that opens employee data.
         </p>
       </div>
       <Link className="text-link" href="/">

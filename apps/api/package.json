@@ -16,6 +16,7 @@
     "@prisma/client": "6.19.3",
     "helmet": "8.1.0",
     "ioredis": "5.11.1",
+    "jose": "6.2.10",
     "openid-client": "6.8.7",
     "reflect-metadata": "0.2.2",
     "rxjs": "7.8.2",

@@ -4,6 +4,7 @@ export interface KeycloakFixture {
   realm: string;
   origin: string;
   smtpPort: number;
+  backchannelUrl: string;
   clientSecret: string;
   users: {
     id: string;
@@ -16,7 +17,9 @@ export function testRealm(input: KeycloakFixture) {
   if (
     !/^kinto_test_[a-f0-9]{32}$/.test(input.realm) ||
     new URL(input.origin).hostname !== 'localhost' ||
-    new URL(input.origin).protocol !== 'https:'
+    new URL(input.origin).protocol !== 'https:' ||
+    new URL(input.backchannelUrl).hostname !== '127.0.0.1' ||
+    new URL(input.backchannelUrl).protocol !== 'http:'
   )
     throw new Error('Synthetic local realm required');
   const execution = (
@@ -123,6 +126,8 @@ export function testRealm(input: KeycloakFixture) {
           'pkce.code.challenge.method': 'S256',
           'id.token.signed.response.alg': 'RS256',
           'default.acr.values': '2',
+          'backchannel.logout.url': input.backchannelUrl,
+          'backchannel.logout.session.required': 'true',
         },
         protocolMappers: [
           {
