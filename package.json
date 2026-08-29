@@ -27,9 +27,10 @@
     "db:bootstrap": "tsx scripts/bootstrap-database.ts",
     "test:migrations": "tsx scripts/verify-migrations.ts",
     "test:recovery": "tsx scripts/verify-recovery.ts",
+    "test:keycloak": "tsx scripts/verify-keycloak.ts",
     "check:docs": "node scripts/check-docs.mjs",
     "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test:coverage && pnpm check:docs",
-    "verify:full": "pnpm verify && pnpm test:integration && pnpm test:migrations && pnpm test:recovery && pnpm build && pnpm test:worker:runtime && pnpm test:e2e"
+    "verify:full": "pnpm verify && pnpm test:integration && pnpm test:migrations && pnpm test:recovery && pnpm build && pnpm test:worker:runtime && pnpm test:e2e && pnpm test:keycloak"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

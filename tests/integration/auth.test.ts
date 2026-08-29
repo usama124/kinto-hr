@@ -149,6 +149,10 @@ beforeAll(async () => {
       if (grant.mode === 'stale-auth') claims.auth_time = now - 600;
       if (grant.mode === 'future-auth') claims.auth_time = now + 600;
       if (grant.mode === 'unknown') claims.sub = 'not-provisioned';
+      if (grant.mode === 'loa2') claims.acr = '2';
+      if (grant.mode === 'loa1') claims.acr = '1';
+      if (grant.mode === 'numeric-loa') claims.acr = 2;
+      if (grant.mode === 'no-acr') delete claims.acr;
       const header = Buffer.from(
         JSON.stringify({
           alg: grant.mode === 'algorithm' ? 'HS256' : 'RS256',
@@ -187,6 +191,7 @@ beforeAll(async () => {
     OIDC_ISSUER: issuer,
     OIDC_CLIENT_ID: clientId,
     OIDC_CLIENT_SECRET: clientSecret,
+    OIDC_MFA_PROFILE: 'none',
     AUTH_REDIS_URL: redisUrl,
   }))
     vi.stubEnv(key, value);
@@ -565,3 +570,34 @@ it('reports failed auth readiness and never returns a session on a store error',
     read.mockRestore();
   }
 });
+
+async function directGrant(profile: 'none' | 'keycloak-loa2-v1') {
+  const oidc = await OidcProvider.connect({
+    ...readAuthConfig(process.env)!,
+    mfaProfile: profile,
+  });
+  const started = await oidc.begin();
+  if (profile !== 'none')
+    expect(
+      JSON.parse(new URL(started.url).searchParams.get('claims')!),
+    ).toEqual({ id_token: { acr: { essential: true, values: ['2'] } } });
+  const response = await fetch(started.url, { redirect: 'manual' });
+  return oidc.complete(
+    new URL(response.headers.get('location')!),
+    started.transaction,
+  );
+}
+it('requires explicit MFA profile opt-in even for a signed LoA 2 token', async () => {
+  mode = 'loa2';
+  expect((await directGrant('none')).principal.mfaVerified).toBe(false);
+  expect((await directGrant('keycloak-loa2-v1')).principal.mfaVerified).toBe(
+    true,
+  );
+});
+it.each(['loa1', 'numeric-loa', 'no-acr', 'valid'])(
+  'rejects %s assurance under the Keycloak MFA profile',
+  async (variant) => {
+    mode = variant;
+    await expect(directGrant('keycloak-loa2-v1')).rejects.toThrow();
+  },
+);

@@ -10,7 +10,7 @@ When explicitly configured, NestJS exposes `GET /api/v1/auth/login`, `GET /api/v
 
 Login resolves an existing active Kinto identity using the verified issuer/subject and forced PostgreSQL RLS. Unknown/disabled identities are refused; login never inserts identities, memberships or tenants. The session endpoint rechecks that identity. A session is not company authorization: every future business handler must call `inAuthorizedTenant` using the server session's principal and keep all work inside that transaction. Never accept identity, role or MFA data from a header/body/query. Membership revocation and tenant suspension continue to be checked at that business boundary.
 
-**MFA remains unverified:** the adapter always sets `mfaVerified=false`, even if a signed token contains `acr`, `amr` or roles. Consequently privileged company operations remain denied. Real Keycloak MFA claim mapping, recovery and account activation must be implemented and tested before this restriction changes.
+MFA is unverified by default: `OIDC_MFA_PROFILE=none` always sets `mfaVerified=false`, even if a signed token contains `acr`, `amr` or roles. The only supported opt-in is the separately reviewed and tested `keycloak-loa2-v1` profile, which requires essential/exact signed `acr=2`; see [Keycloak operations](keycloak.md). This meaning is provider/flow-specific, not universal. Other providers remain untrusted. Account activation and complete password-reset session revocation remain pending.
 
 ## Configuration and provider gate
 
@@ -32,7 +32,7 @@ Before real-provider acceptance, configure and verify:
 - Confidential client with authorization-code flow only, S256 required, RS256 ID tokens and exact callback allowlist; no wildcard redirect, implicit or password grant.
 - `auth_time` emitted and `max_age=300` respected; synchronized clocks. Login requires recent authentication. Privileged-action reauthentication is still future work.
 - Reset-password and invitation/password-setup flows for existing administrator-provisioned accounts only, single-use expiring tokens, generic responses and mail delivery without secrets in logs. These flows are not tested/delivered here.
-- Privileged MFA policy, disabled-account behavior, key rotation, provider outages and account-recovery/session-revocation behavior verified against the actual chosen provider.
+- Privileged MFA policy, disabled-account behavior, key rotation, provider outages and account-recovery/session-revocation behavior verified against the actual chosen provider. The local Keycloak LoA 2 flow is verified; production deployment and credential-change session revocation are not.
 
 The provider configuration cannot be inferred from OIDC discovery. An administrator must verify the registration and grant settings; this adapter cannot prevent a misconfigured external identity provider from creating its own users. Such users still receive no Kinto session unless separately provisioned in Kinto.
 
@@ -50,6 +50,6 @@ Authentication Redis is disposable security state, not business recovery data. D
 
 ## Verification and next work
 
-Run `pnpm verify:full` using the documented local test services. The auth integration suite uses a loopback synthetic OIDC protocol server with actual RSA signatures, discovery/JWKS and PKCE exchange plus real PostgreSQL/Redis. It does not simulate a real Keycloak password/MFA screen or email recovery. Browser tests cover disabled access and explicitly mocked UI states, not a verified provider login journey.
+Run `pnpm verify:full` using the documented local test services. The fast auth integration suite uses a loopback synthetic OIDC protocol server with actual RSA signatures, discovery/JWKS and PKCE exchange plus real PostgreSQL/Redis. The additional `pnpm test:keycloak` workflow uses the pinned real provider and actual browser/TOTP/reset-email pages against the built application. Ordinary browser tests still use disabled/mocked account UI states.
 
-Next: actual Keycloak test realm with registration disabled, tested MFA and recovery; protected first-operator/company-owner provisioning and company-admin/HR employee invitations; membership selection/administration, last-owner protection and security audit. Company/policy administration and employee HTTP APIs remain closed until their authorization/lifecycle requirements are complete. See the [roadmap](../implementation/README.md).
+Next: provider credential-change/all-session revocation; protected first-operator/company-owner provisioning and company-admin/HR employee invitations; membership selection/administration, last-owner protection and security audit. Company/policy administration and employee HTTP APIs remain closed until their authorization/lifecycle requirements are complete. See the [roadmap](../implementation/README.md).

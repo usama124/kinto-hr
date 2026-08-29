@@ -79,6 +79,13 @@ export class OidcProvider {
       state: transaction.state,
       nonce: transaction.nonce,
       max_age: '300',
+      ...(this.settings.mfaProfile === 'keycloak-loa2-v1'
+        ? {
+            claims: JSON.stringify({
+              id_token: { acr: { essential: true, values: ['2'] } },
+            }),
+          }
+        : {}),
     });
     return { transaction, url: url.href };
   }
@@ -94,12 +101,15 @@ export class OidcProvider {
     const authTime = z.number().int().nonnegative().parse(claims?.auth_time);
     if (authTime > Math.floor(Date.now() / 1000))
       throw new Error('Invalid authentication time');
+    const requiresMfa = this.settings.mfaProfile === 'keycloak-loa2-v1';
+    if (requiresMfa && claims?.acr !== '2')
+      throw new Error('Required authentication assurance was not met');
     const principal = authenticatedIdentitySchema.parse({
       issuer: claims?.iss,
       subject: claims?.sub,
-      // Provider-specific MFA semantics have not been validated. Never promote
-      // an arbitrary acr/amr or provider role into a privileged Kinto identity.
-      mfaVerified: false,
+      // This explicit profile refers to the reviewed Keycloak LoA flow, not a
+      // universal meaning for acr=2. Generic providers remain unverified.
+      mfaVerified: requiresMfa,
     });
     return { principal, authTime };
   }
