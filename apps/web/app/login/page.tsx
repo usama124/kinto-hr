@@ -98,8 +98,10 @@ export default function Login() {
           creates employee accounts. There is no self-signup.
         </p>
         <p>
-          Password recovery and account activation are pending identity-provider
-          setup. Contact your administrator if you cannot access your account.
+          Password recovery is available only when an approved identity provider
+          is configured. Account activation and administrator provisioning are
+          still pending. Contact your administrator if you cannot access your
+          account.
         </p>
         {state === 'signed-in' && (
           <p>

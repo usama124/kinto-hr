@@ -38,10 +38,11 @@ export default function Setup() {
       <div className="notice">
         <strong>Access is intentionally closed.</strong>
         <p>
-          The OIDC session adapter is available for configured test
-          environments; sign-in is disabled by default. Provider MFA, account
-          provisioning and recovery are still pending. There is no demo login,
-          default administrator or development token that opens employee data.
+          The OIDC session adapter and an explicit Keycloak LoA 2 profile are
+          available for configured test environments; sign-in is disabled by
+          default. Account provisioning and complete reset-session revocation
+          are still pending. There is no demo login, default administrator or
+          development token that opens employee data.
         </p>
       </div>
       <Link className="text-link" href="/">

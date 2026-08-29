@@ -60,6 +60,8 @@ jobs:
       - run: pnpm test:worker:runtime
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test:e2e
+      - name: Verify real Keycloak MFA and recovery
+        run: pnpm test:keycloak
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:

@@ -27,6 +27,14 @@ it('keeps authentication disabled unless explicitly configured', () => {
   expect(() => readAuthConfig({ AUTH_MODE: 'true' })).toThrow();
   expect(() => readAuthConfig({ AUTH_MODE: 'oidc' })).toThrow();
   expect(readAuthConfig(authEnv)?.origin).toBe('https://hr.example');
+  expect(readAuthConfig(authEnv)?.mfaProfile).toBe('none');
+  expect(
+    readAuthConfig({ ...authEnv, OIDC_MFA_PROFILE: 'keycloak-loa2-v1' })
+      ?.mfaProfile,
+  ).toBe('keycloak-loa2-v1');
+  expect(() =>
+    readAuthConfig({ ...authEnv, OIDC_MFA_PROFILE: 'trust-any-amr' }),
+  ).toThrow();
 });
 it.each([
   { OIDC_ISSUER: 'http://identity.example/realm' },

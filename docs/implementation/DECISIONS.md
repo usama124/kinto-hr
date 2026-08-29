@@ -50,6 +50,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 29 August 2026 — explicit Keycloak LoA 2 MFA profile
+
+Engineering implemented a bounded P01-02 provider profile: only the explicitly configured `keycloak-loa2-v1` contract can mark MFA verified, and only after all existing OIDC validation plus exact signed `acr=2`. Generic providers and arbitrary `amr`, roles or numeric/other ACR values remain untrusted. A disposable Keycloak 26.7.2 image pinned by digest now verifies the actual built API/web through password+TOTP, signup/grant/redirect denial, assurance downgrade, unprovisioned-user denial, generic password-reset response, email token expiry/replay, retained TOTP and revoked-membership denial. Provider reset does not yet revoke every existing Kinto session; recovery remains non-production until credential-change revocation is implemented. No account provisioning, public signup or production identity service was enabled. See [provider evidence](../evidence/phase-01/keycloak-mfa.md) and [operations](../operations/keycloak.md).
+
 ### 29 August 2026 — optional OIDC and server-session foundation
 
 Engineering implemented the next bounded P01-02 slice using pinned `openid-client` 6.8.7 and `ioredis` 5.11.1: code/PKCE/state/nonce/signature validation, login for existing active identities only, Redis-backed opaque sessions, expiration/rotation, origin/CSRF-protected logout and a safe account-access page. Authentication remains disabled unless explicitly configured. Arbitrary provider roles or MFA claims confer no permissions: `mfaVerified` stays false pending real-provider validation. No public signup or identity/membership writes were added. Synthetic protocol integration is not Keycloak/MFA/recovery acceptance. See [authentication evidence](../evidence/phase-01/authentication.md) and [operating requirements](../operations/authentication.md). Next is real-provider setup/MFA/recovery and administrator-only provisioning, then membership/company administration. Hosting and live-data approvals remain unresolved.
