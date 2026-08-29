@@ -1,4 +1,10 @@
 import * as client from 'openid-client';
+import {
+  createRemoteJWKSet,
+  customFetch,
+  jwtVerify,
+  type RemoteJWKSet,
+} from 'jose';
 import { z } from 'zod';
 import { authenticatedIdentitySchema } from '@kinto/contracts';
 import { type AuthConfig } from './config';
@@ -8,6 +14,7 @@ export class OidcProvider {
   private constructor(
     private readonly settings: AuthConfig,
     private readonly config: client.Configuration,
+    private readonly keys: RemoteJWKSet,
   ) {}
   static async connect(settings: AuthConfig) {
     const issuer = new URL(settings.issuer);
@@ -59,7 +66,16 @@ export class OidcProvider {
         'Identity provider must support S256 PKCE and exact issuer',
       );
     client.enableNonRepudiationChecks(config);
-    return new OidcProvider(settings, config);
+    const jwks = new URL(metadata.jwks_uri!);
+    const keys = createRemoteJWKSet(jwks, {
+      timeoutDuration: 5000,
+      [customFetch]: (url, options) => {
+        const target = new URL(url);
+        if (target.href !== jwks.href) throw new Error('Unexpected JWKS URL');
+        return fetch(target, { ...options, redirect: 'error' });
+      },
+    });
+    return new OidcProvider(settings, config, keys);
   }
   async begin() {
     const transaction = {
@@ -111,6 +127,44 @@ export class OidcProvider {
       // universal meaning for acr=2. Generic providers remain unverified.
       mfaVerified: requiresMfa,
     });
-    return { principal, authTime };
+    const providerSessionId = z
+      .string()
+      .min(1)
+      .max(255)
+      .optional()
+      .parse(claims?.sid);
+    return { principal, authTime, providerSessionId };
+  }
+  async verifyLogoutToken(token: string) {
+    if (token.length > 16384) throw new Error('Logout token is too large');
+    const { payload } = await jwtVerify(token, this.keys, {
+      issuer: this.settings.issuer,
+      audience: this.settings.clientId,
+      algorithms: ['RS256'],
+      requiredClaims: ['iat', 'jti', 'events'],
+      maxTokenAge: '2 minutes',
+      clockTolerance: 0,
+    });
+    const event = 'http://schemas.openid.net/event/backchannel-logout';
+    return z
+      .object({
+        iss: z.literal(this.settings.issuer),
+        aud: z.union([
+          z.literal(this.settings.clientId),
+          z
+            .array(z.string())
+            .refine((value) => value.includes(this.settings.clientId)),
+        ]),
+        iat: z.number().int(),
+        jti: z.string().min(1).max(255),
+        sub: z.string().min(1).max(255).optional(),
+        sid: z.string().min(1).max(255).optional(),
+        events: z.strictObject({
+          [event]: z.record(z.string(), z.unknown()),
+        }),
+        nonce: z.never().optional(),
+      })
+      .refine((value) => value.sub || value.sid)
+      .parse(payload);
   }
 }

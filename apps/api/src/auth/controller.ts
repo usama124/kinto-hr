@@ -1,11 +1,13 @@
 import { timingSafeEqual } from 'node:crypto';
 import {
   Controller,
+  Body,
   Get,
   Post,
   Req,
   Res,
   Inject,
+  HttpCode,
   ForbiddenException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -109,5 +111,11 @@ export class AuthController {
     await this.auth.logout(token);
     res.setHeader('Set-Cookie', cookie(SESSION_COOKIE, '', 0));
     res.status(204).end();
+  }
+  @Post('backchannel-logout')
+  @HttpCode(204)
+  async backchannelLogout(@Body('logout_token') logoutToken: unknown) {
+    if (typeof logoutToken !== 'string') throw new UnauthorizedException();
+    await this.auth.backchannelLogout(logoutToken);
   }
 }

@@ -50,6 +50,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 29 August 2026 — signed provider session revocation
+
+Engineering implemented the next bounded P01-02 slice using standard OIDC Back-Channel Logout. Signed RS256 Logout Tokens are restricted to the configured issuer/audience, exact discovered JWKS URL, recent issue time, unique replay ID, standard event, no nonce and a subject or provider-session target. Redis indexes contain digests and delete matching opaque sessions atomically; the v2 namespace intentionally logs out pre-index sessions during rollout. The pinned real Keycloak reset workflow now proves its explicitly selected sign-out-other-devices path invalidates a pre-reset Kinto session. This does not approve live recovery: Keycloak leaves that option unchecked, callback delivery lacks durable reconciliation during Kinto outage, and identity-disable/MFA-recovery synchronization remains pending. No signup, provisioning or business endpoint was added. See [revocation evidence](../evidence/phase-01/session-revocation.md) and [authentication operations](../operations/authentication.md).
+
 ### 29 August 2026 — explicit Keycloak LoA 2 MFA profile
 
 Engineering implemented a bounded P01-02 provider profile: only the explicitly configured `keycloak-loa2-v1` contract can mark MFA verified, and only after all existing OIDC validation plus exact signed `acr=2`. Generic providers and arbitrary `amr`, roles or numeric/other ACR values remain untrusted. A disposable Keycloak 26.7.2 image pinned by digest now verifies the actual built API/web through password+TOTP, signup/grant/redirect denial, assurance downgrade, unprovisioned-user denial, generic password-reset response, email token expiry/replay, retained TOTP and revoked-membership denial. Provider reset does not yet revoke every existing Kinto session; recovery remains non-production until credential-change revocation is implemented. No account provisioning, public signup or production identity service was enabled. See [provider evidence](../evidence/phase-01/keycloak-mfa.md) and [operations](../operations/keycloak.md).

@@ -63,8 +63,9 @@ let tokenRequests = 0;
 let mode = 'valid';
 const codes = new Map<
   string,
-  { nonce: string; challenge: string; mode: string }
+  { nonce: string; challenge: string; mode: string; sid: string }
 >();
+let providerSessionId = 'synthetic-provider-session';
 function cookies(response: { headers: Record<string, unknown> }, name: string) {
   const headers = response.headers['set-cookie'] as string[];
   return headers.find((header) => header.startsWith(`${name}=`))!.split(';')[0];
@@ -101,6 +102,7 @@ beforeAll(async () => {
         nonce: url.searchParams.get('nonce')!,
         challenge: url.searchParams.get('code_challenge')!,
         mode,
+        sid: providerSessionId,
       });
       const callback = new URL(url.searchParams.get('redirect_uri')!);
       callback.searchParams.set('state', url.searchParams.get('state')!);
@@ -138,6 +140,7 @@ beforeAll(async () => {
         exp: now + 300,
         nonce: grant.nonce,
         auth_time: now,
+        sid: grant.sid,
         acr: 'mfa',
         amr: ['pwd', 'otp'],
         roles: ['owner'],
@@ -197,7 +200,7 @@ beforeAll(async () => {
     vi.stubEnv(key, value);
   store = new AuthStore(
     redisUrl!,
-    `kinto:auth:${digest(`${issuer}|${clientId}|${origin}`)}:`,
+    `kinto:auth:v2:${digest(`${issuer}|${clientId}|${origin}`)}:`,
   );
   await store.connect();
   const identity = await admin.identity.create({ data: { issuer, subject } });
@@ -217,6 +220,7 @@ beforeAll(async () => {
 });
 beforeEach(async () => {
   mode = 'valid';
+  providerSessionId = 'synthetic-provider-session';
   for (const ip of ['127.0.0.1', '::ffff:127.0.0.1', '::1'])
     await store.redis.del(store.key('rate', ip));
   await admin.identity.update({
@@ -233,7 +237,7 @@ afterAll(async () => {
   if (store) {
     // Only fixture-specific keys; never FLUSHDB or shared application cleanup.
     const keys = await store.redis.keys(
-      `kinto:auth:${digest(`${issuer}|${clientId}|${origin}`)}:*`,
+      `kinto:auth:v2:${digest(`${issuer}|${clientId}|${origin}`)}:*`,
     );
     if (keys.length) await store.redis.del(...keys);
     store.close();
@@ -282,6 +286,51 @@ async function login(oldCookie?: string) {
     response,
     sessionCookie: cookies(response, SESSION_COOKIE),
   };
+}
+function logoutToken(input: {
+  jti?: string;
+  sid?: string;
+  sub?: string;
+  variant?:
+    | 'algorithm'
+    | 'audience'
+    | 'issuer'
+    | 'nonce'
+    | 'stale'
+    | 'future'
+    | 'events'
+    | 'signature';
+}) {
+  const now = Math.floor(Date.now() / 1000);
+  const claims: Record<string, unknown> = {
+    iss: input.variant === 'issuer' ? 'https://attacker.example' : issuer,
+    aud: input.variant === 'audience' ? 'another-client' : clientId,
+    iat:
+      input.variant === 'stale'
+        ? now - 600
+        : input.variant === 'future'
+          ? now + 600
+          : now,
+    jti: input.jti ?? randomUUID(),
+    ...(input.sid ? { sid: input.sid } : {}),
+    ...(input.sub ? { sub: input.sub } : {}),
+    events:
+      input.variant === 'events'
+        ? { 'https://attacker.example/event': {} }
+        : { 'http://schemas.openid.net/event/backchannel-logout': {} },
+    ...(input.variant === 'nonce' ? { nonce: 'prohibited' } : {}),
+  };
+  const header = Buffer.from(
+    JSON.stringify({
+      alg: input.variant === 'algorithm' ? 'none' : 'RS256',
+      kid: 'synthetic',
+      typ: 'logout+jwt',
+    }),
+  ).toString('base64url');
+  const payload = `${header}.${Buffer.from(JSON.stringify(claims)).toString('base64url')}`;
+  const signature = sign('RSA-SHA256', Buffer.from(payload), privateKey);
+  if (input.variant === 'signature') signature[0] ^= 1;
+  return `${payload}.${signature.toString('base64url')}`;
 }
 it('authenticates a provisioned identity with signed OIDC and returns only safe session data', async () => {
   const result = await login();
@@ -434,6 +483,89 @@ it('rotates the session on login and requires both origin and CSRF token on logo
     .get('/api/v1/auth/session')
     .set('Cookie', next.sessionCookie)
     .expect(401);
+});
+it('accepts signed back-channel logout once and revokes the targeted provider sessions atomically', async () => {
+  providerSessionId = 'provider-session-one';
+  const first = await login();
+  const second = await login();
+  providerSessionId = 'provider-session-two';
+  const other = await login();
+  const event = logoutToken({ sid: 'provider-session-one' });
+  await request(app.getHttpServer())
+    .post('/api/v1/auth/backchannel-logout')
+    .type('form')
+    .send({ logout_token: event })
+    .expect(204);
+  for (const sessionCookie of [first.sessionCookie, second.sessionCookie])
+    await request(app.getHttpServer())
+      .get('/api/v1/auth/session')
+      .set('Cookie', sessionCookie)
+      .expect(401);
+  await request(app.getHttpServer())
+    .get('/api/v1/auth/session')
+    .set('Cookie', other.sessionCookie)
+    .expect(200);
+  await request(app.getHttpServer())
+    .post('/api/v1/auth/backchannel-logout')
+    .type('form')
+    .send({ logout_token: event })
+    .expect(204);
+  await request(app.getHttpServer())
+    .get('/api/v1/auth/session')
+    .set('Cookie', other.sessionCookie)
+    .expect(200);
+  await request(app.getHttpServer())
+    .post('/api/v1/auth/backchannel-logout')
+    .type('form')
+    .send({ logout_token: logoutToken({ sub: subject }) })
+    .expect(204);
+  await request(app.getHttpServer())
+    .get('/api/v1/auth/session')
+    .set('Cookie', other.sessionCookie)
+    .expect(401);
+});
+it.each([
+  'audience',
+  'algorithm',
+  'issuer',
+  'nonce',
+  'stale',
+  'future',
+  'events',
+  'signature',
+] as const)(
+  'rejects %s back-channel logout tokens without deleting a session',
+  async (variant) => {
+    const active = await login();
+    const response = await request(app.getHttpServer())
+      .post('/api/v1/auth/backchannel-logout')
+      .type('form')
+      .send({
+        logout_token: logoutToken({
+          sid: providerSessionId,
+          variant,
+        }),
+      })
+      .expect(401);
+    expect(JSON.stringify(response.body)).not.toMatch(/logout_token|jti|sid/);
+    await request(app.getHttpServer())
+      .get('/api/v1/auth/session')
+      .set('Cookie', active.sessionCookie)
+      .expect(200);
+  },
+);
+it('rejects malformed or untargeted back-channel requests', async () => {
+  for (const body of [
+    {},
+    { logout_token: 'not-a-jwt' },
+    { logout_token: 'x'.repeat(16385) },
+    { logout_token: logoutToken({}) },
+  ])
+    await request(app.getHttpServer())
+      .post('/api/v1/auth/backchannel-logout')
+      .type('form')
+      .send(body)
+      .expect(401);
 });
 it('enforces idle and absolute expiration, including concurrent reads after deletion', async () => {
   const result = await login();

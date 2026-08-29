@@ -63,6 +63,7 @@ const db = createDatabase(adminUrl);
 const runtime = createDatabase(runtimeUrl);
 const children: ChildProcess[] = [];
 let browser: Browser | undefined;
+let preResetContext: Awaited<ReturnType<Browser['newContext']>> | undefined;
 let store: AuthStore | undefined;
 let identityId: string | undefined;
 let stage = 'setup';
@@ -163,6 +164,7 @@ try {
     realm,
     origin: proxy.origin,
     smtpPort: mail.port,
+    backchannelUrl: `http://127.0.0.1:${apiPort}/api/v1/auth/backchannel-logout`,
     clientSecret,
     users: [
       { id: userId, username, password, otpSecret },
@@ -267,12 +269,14 @@ try {
   );
   store = new AuthStore(
     redisUrl,
-    `kinto:auth:${digest(`${issuer}|kinto-web|${proxy.origin}`)}:`,
+    `kinto:auth:v2:${digest(`${issuer}|kinto-web|${proxy.origin}`)}:`,
   );
   await store.connect();
   browser = await chromium.launch();
   const context = await isolatedContext();
   const page = await context.newPage();
+  let usedLink = '';
+  let preResetSessionToken = '';
   await scenario(
     'real browser password + TOTP establishes an authorized session',
     async () => {
@@ -415,6 +419,11 @@ try {
   await scenario(
     'recovery is non-enumerating and sends a reset only for an existing account',
     async () => {
+      preResetContext = await isolatedContext();
+      const signedIn = await preResetContext.newPage();
+      await passwordStep(signedIn);
+      await otpStep(signedIn);
+      preResetSessionToken = (await sessionFor(signedIn)).cookie.value;
       const count = mail.messages.length;
       const unknown = await requestReset('nonexistent-account');
       const known = await requestReset(username);
@@ -422,7 +431,6 @@ try {
       await until(async () => mail.messages.length === count + 1);
     },
   );
-  let usedLink = '';
   await scenario(
     'email reset changes the password, retains TOTP and rejects link replay',
     async () => {
@@ -430,8 +438,15 @@ try {
       await page.goto(usedLink);
       await page.locator('#password-new').fill(newPassword);
       await page.locator('#password-confirm').fill(newPassword);
+      const logoutOtherSessions = page.locator('input[name="logout-sessions"]');
+      await expect(logoutOtherSessions).toHaveCount(1);
+      await logoutOtherSessions.check();
       await page.locator('input[type=submit], button[type=submit]').click();
       await expect(page.locator('#password-new')).toHaveCount(0);
+      await until(
+        async () =>
+          (await store!.readSession(preResetSessionToken)) === undefined,
+      );
       // Email ownership/password replacement alone must not prove MFA.
       assert(
         !(await context.cookies()).some(
@@ -470,6 +485,8 @@ try {
         ),
         /FORBIDDEN/,
       );
+      await preResetContext!.close();
+      preResetContext = undefined;
     },
   );
   await scenario('expired reset links cannot change a password', async () => {
@@ -528,6 +545,7 @@ try {
   }
   process.exitCode = 1;
 } finally {
+  await preResetContext?.close();
   await browser?.close();
   for (const child of children)
     if (child.exitCode === null) {
@@ -551,7 +569,7 @@ try {
   await close(mail.server);
   if (store) {
     const keys = await store.redis.keys(
-      `kinto:auth:${digest(`${issuer}|kinto-web|${proxy!.origin}`)}:*`,
+      `kinto:auth:v2:${digest(`${issuer}|kinto-web|${proxy!.origin}`)}:*`,
     );
     if (keys.length) await store.redis.del(...keys);
     store.close();
