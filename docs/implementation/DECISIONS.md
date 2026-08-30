@@ -50,6 +50,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 30 August 2026 — protected company-provisioning request
+
+Engineering implemented the first bounded administrator-provisioning increment. Platform operators are global, separate from customer memberships, and the first operator requires an explicit migration-authorized, audited setup operation with exact OIDC identity. The protected API requires an existing session, same-origin CSRF, recent trusted MFA, active operator authority and a caller idempotency key. One constrained PostgreSQL function atomically creates the company, a `pending_identity_provider` intended-owner request and tenant/platform audit events; concurrent replay cannot duplicate them. No owner identity or membership is created yet, so provider failure grants no access. Provider account reconciliation, digest-only invitation delivery/activation, first-owner membership and later-operator administration remain the next P01-02 gate. See [evidence](../evidence/phase-01/company-provisioning.md).
+
 ### 29 August 2026 — signed provider session revocation
 
 Engineering implemented the next bounded P01-02 slice using standard OIDC Back-Channel Logout. Signed RS256 Logout Tokens are restricted to the configured issuer/audience, exact discovered JWKS URL, recent issue time, unique replay ID, standard event, no nonce and a subject or provider-session target. Redis indexes contain digests and delete matching opaque sessions atomically; the v2 namespace intentionally logs out pre-index sessions during rollout. The pinned real Keycloak reset workflow now proves its explicitly selected sign-out-other-devices path invalidates a pre-reset Kinto session. This does not approve live recovery: Keycloak leaves that option unchecked, callback delivery lacks durable reconciliation during Kinto outage, and identity-disable/MFA-recovery synchronization remains pending. No signup, provisioning or business endpoint was added. See [revocation evidence](../evidence/phase-01/session-revocation.md) and [authentication operations](../operations/authentication.md).

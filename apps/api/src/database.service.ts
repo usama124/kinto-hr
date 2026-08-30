@@ -7,8 +7,12 @@ import {
   assertSafeRuntimeRole,
   createDatabase,
   findActiveIdentity,
+  requestCompanyProvisioning,
 } from '@kinto/database';
-import { type AuthenticatedIdentity } from '@kinto/contracts';
+import {
+  type AuthenticatedIdentity,
+  type CompanyProvisioning,
+} from '@kinto/contracts';
 import { readConfig } from './config';
 @Injectable()
 export class DatabaseService implements OnModuleInit, OnModuleDestroy {
@@ -22,6 +26,13 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
   }
   findIdentity(principal: AuthenticatedIdentity) {
     return findActiveIdentity(this.db, principal);
+  }
+  provisionCompany(
+    actor: { identityId: string; mfaVerified: boolean },
+    requestKey: string,
+    input: CompanyProvisioning,
+  ) {
+    return requestCompanyProvisioning(this.db, actor, requestKey, input);
   }
   async onModuleDestroy() {
     await this.db.$disconnect();

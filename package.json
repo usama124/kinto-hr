@@ -25,6 +25,7 @@
     "db:generate": "pnpm --filter @kinto/database generate",
     "db:migrate": "pnpm --filter @kinto/database migrate",
     "db:bootstrap": "tsx scripts/bootstrap-database.ts",
+    "db:bootstrap:operator": "tsx scripts/bootstrap-platform-operator.ts",
     "test:migrations": "tsx scripts/verify-migrations.ts",
     "test:recovery": "tsx scripts/verify-recovery.ts",
     "test:keycloak": "tsx scripts/verify-keycloak.ts",

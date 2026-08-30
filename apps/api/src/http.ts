@@ -7,10 +7,22 @@ import {
   type INestApplication,
 } from '@nestjs/common';
 import helmet from 'helmet';
+import { DomainError } from '@kinto/domain';
 @Catch()
 class SafeExceptionFilter implements ExceptionFilter {
   catch(error: unknown, host: ArgumentsHost) {
-    const status = error instanceof HttpException ? error.getStatus() : 500;
+    const status =
+      error instanceof HttpException
+        ? error.getStatus()
+        : error instanceof DomainError
+          ? error.code === 'FORBIDDEN'
+            ? 403
+            : error.code === 'NOT_FOUND'
+              ? 404
+              : error.code === 'TENANT_UNAVAILABLE'
+                ? 503
+                : 409
+          : 500;
     const response = host.switchToHttp().getResponse();
     response.status(status).json({
       code:

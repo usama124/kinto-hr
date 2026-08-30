@@ -14,12 +14,12 @@ import {
 import { AuthService } from './service';
 import { ABSOLUTE_SECONDS, LOGIN_SECONDS } from './store';
 
-interface AuthRequest {
+export interface AuthRequest {
   headers: Record<string, string | string[] | undefined>;
   socket: { remoteAddress?: string };
   originalUrl: string;
 }
-interface AuthResponse {
+export interface AuthResponse {
   setHeader(name: string, value: string | string[]): void;
   redirect(status: number, location: string): void;
   status(code: number): AuthResponse;
@@ -29,7 +29,7 @@ export const SESSION_COOKIE = '__Host-kinto-session';
 export const LOGIN_COOKIE = '__Host-kinto-login';
 const cookie = (name: string, value: string, seconds: number) =>
   `${name}=${value}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${seconds}`;
-function readCookie(req: AuthRequest, name: string): string | undefined {
+export function readCookie(req: AuthRequest, name: string): string | undefined {
   const header = req.headers.cookie;
   if (!header) return undefined;
   if (typeof header !== 'string') throw new UnauthorizedException();
@@ -42,6 +42,21 @@ function readCookie(req: AuthRequest, name: string): string | undefined {
   const value = values[0].slice(name.length + 1);
   if (!/^[A-Za-z0-9_-]{43}$/.test(value)) throw new UnauthorizedException();
   return value;
+}
+export function assertSessionMutation(
+  req: AuthRequest,
+  expectedOrigin: string,
+  expectedCsrf: string,
+) {
+  if (req.headers.origin !== expectedOrigin) throw new ForbiddenException();
+  const csrf = req.headers['x-csrf-token'];
+  if (
+    typeof csrf !== 'string' ||
+    !/^[A-Za-z0-9_-]{43}$/.test(csrf) ||
+    !/^[A-Za-z0-9_-]{43}$/.test(expectedCsrf) ||
+    !timingSafeEqual(Buffer.from(csrf), Buffer.from(expectedCsrf))
+  )
+    throw new ForbiddenException();
 }
 @Controller('auth')
 export class AuthController {
@@ -96,18 +111,10 @@ export class AuthController {
     @Res() res: AuthResponse,
   ) {
     await this.limit(req);
-    if (req.headers.origin !== this.auth.origin())
-      throw new ForbiddenException();
     const token = readCookie(req, SESSION_COOKIE);
     if (!token) throw new UnauthorizedException();
     const session = await this.auth.session(token);
-    const csrf = req.headers['x-csrf-token'];
-    if (
-      typeof csrf !== 'string' ||
-      !/^[A-Za-z0-9_-]{43}$/.test(csrf) ||
-      !timingSafeEqual(Buffer.from(csrf), Buffer.from(session.csrf))
-    )
-      throw new ForbiddenException();
+    assertSessionMutation(req, this.auth.origin(), session.csrf);
     await this.auth.logout(token);
     res.setHeader('Set-Cookie', cookie(SESSION_COOKIE, '', 0));
     res.status(204).end();

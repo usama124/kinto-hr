@@ -54,6 +54,55 @@ try {
   await database.$executeRawUnsafe(
     'GRANT SELECT, INSERT ON audit_events, outbox_events TO kinto_app',
   );
+  // Company provisioning is a reviewed SECURITY DEFINER operation. Its owner
+  // cannot log in or bypass RLS and receives only the columns/tables it needs.
+  await database.$executeRawUnsafe(`DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'kinto_control_owner') THEN
+      CREATE ROLE kinto_control_owner NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'kinto_control_owner' AND
+      (rolcanlogin OR rolsuper OR rolbypassrls OR rolcreaterole OR rolcreatedb))
+      OR EXISTS (SELECT 1 FROM pg_auth_members m JOIN pg_roles r ON r.oid IN (m.roleid, m.member)
+        WHERE r.rolname = 'kinto_control_owner') THEN
+      RAISE EXCEPTION 'Unsafe control-plane function owner';
+    END IF;
+  END $$`);
+  await database.$executeRawUnsafe(
+    'GRANT USAGE ON SCHEMA public TO kinto_control_owner',
+  );
+  await database.$executeRawUnsafe(
+    'REVOKE ALL ON ALL TABLES IN SCHEMA public FROM kinto_control_owner',
+  );
+  for (const statement of [
+    'DROP POLICY IF EXISTS platform_control_select ON identities',
+    'CREATE POLICY platform_control_select ON identities FOR SELECT TO kinto_control_owner USING (true)',
+    'DROP POLICY IF EXISTS platform_control_select ON platform_operators',
+    'CREATE POLICY platform_control_select ON platform_operators FOR SELECT TO kinto_control_owner USING (true)',
+    'DROP POLICY IF EXISTS platform_control ON tenants',
+    'CREATE POLICY platform_control ON tenants FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
+    'DROP POLICY IF EXISTS platform_control ON company_provisioning_requests',
+    'CREATE POLICY platform_control ON company_provisioning_requests FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
+    'DROP POLICY IF EXISTS platform_control_insert ON audit_events',
+    'CREATE POLICY platform_control_insert ON audit_events FOR INSERT TO kinto_control_owner WITH CHECK (true)',
+    'DROP POLICY IF EXISTS platform_control_insert ON platform_audit_events',
+    'CREATE POLICY platform_control_insert ON platform_audit_events FOR INSERT TO kinto_control_owner WITH CHECK (true)',
+  ])
+    await database.$executeRawUnsafe(statement);
+  await database.$executeRawUnsafe(
+    'GRANT SELECT ON identities, platform_operators TO kinto_control_owner',
+  );
+  await database.$executeRawUnsafe(
+    'GRANT SELECT, INSERT ON tenants, company_provisioning_requests TO kinto_control_owner',
+  );
+  await database.$executeRawUnsafe(
+    'GRANT INSERT ON audit_events, platform_audit_events TO kinto_control_owner',
+  );
+  await database.$executeRawUnsafe(
+    'ALTER FUNCTION public.request_company_provisioning(uuid, boolean, uuid, uuid, uuid, uuid, uuid, varchar, integer, varchar, varchar) OWNER TO kinto_control_owner',
+  );
+  await database.$executeRawUnsafe(
+    'GRANT EXECUTE ON FUNCTION public.request_company_provisioning(uuid, boolean, uuid, uuid, uuid, uuid, uuid, varchar, integer, varchar, varchar) TO kinto_app',
+  );
   await assertSafeRuntimeRole(appDatabase);
   // The dispatcher can call reviewed metadata functions only. The worker has
   // tenant-scoped delivery access, but no employee, salary or audit privileges.

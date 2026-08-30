@@ -9,6 +9,7 @@ import { type Health } from '@kinto/contracts';
 import { DatabaseService } from './database.service';
 import { AuthService } from './auth/service';
 import { AuthController } from './auth/controller';
+import { PlatformController } from './platform/controller';
 @Controller('health')
 export class HealthController {
   constructor(
@@ -29,7 +30,7 @@ export class HealthController {
   }
 }
 @Module({
-  controllers: [HealthController, AuthController],
+  controllers: [HealthController, AuthController, PlatformController],
   providers: [DatabaseService, AuthService],
 })
 export class AppModule {}

@@ -31,3 +31,11 @@ export const tenantRoleSchema = z.enum([
   'payroll_approver',
   'employee',
 ]);
+
+export const companyProvisioningSchema = z.strictObject({
+  companyName: z.string().trim().min(1).max(160),
+  employeeLimit: z.number().int().min(0).max(250),
+  billingMode: z.enum(['free', 'complimentary', 'manual_paid']),
+  initialOwnerEmail: z.string().trim().toLowerCase().pipe(z.email().max(320)),
+});
+export type CompanyProvisioning = z.infer<typeof companyProvisioningSchema>;
