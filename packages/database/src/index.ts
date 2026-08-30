@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { PrismaClient, type Prisma } from '@prisma/client';
 import {
   employeeDraftSchema,
@@ -6,6 +7,8 @@ import {
   authenticatedIdentitySchema,
   tenantRoleSchema,
   type AuthenticatedIdentity,
+  companyProvisioningSchema,
+  type CompanyProvisioning,
 } from '@kinto/contracts';
 import {
   assertCanActivate,
@@ -110,6 +113,52 @@ export async function inAuthorizedTenant<T>(
       throw new DomainError('FORBIDDEN');
     return work(tx, { identityId: identity.id, membershipId: membership.id });
   });
+}
+
+export async function requestCompanyProvisioning(
+  db: PrismaClient,
+  actor: { identityId: string; mfaVerified: boolean },
+  requestKey: string,
+  input: CompanyProvisioning,
+) {
+  tenantIdSchema.parse(actor.identityId);
+  tenantIdSchema.parse(requestKey);
+  const company = companyProvisioningSchema.parse(input);
+  const rows = await db.$queryRaw<
+    {
+      outcome: 'created' | 'existing' | 'forbidden' | 'conflict';
+      tenant_id: string | null;
+      provisioning_request_id: string | null;
+      provisioning_status: string | null;
+    }[]
+  >`SELECT * FROM public.request_company_provisioning(
+    ${actor.identityId}::uuid,
+    ${actor.mfaVerified},
+    ${requestKey}::uuid,
+    ${randomUUID()}::uuid,
+    ${randomUUID()}::uuid,
+    ${randomUUID()}::uuid,
+    ${randomUUID()}::uuid,
+    ${company.companyName}::varchar,
+    ${company.employeeLimit}::integer,
+    ${company.billingMode}::varchar,
+    ${company.initialOwnerEmail}::varchar
+  )`;
+  const row = rows[0];
+  if (!row || row.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (row.outcome === 'conflict') throw new DomainError('CONFLICT');
+  if (
+    !row.tenant_id ||
+    !row.provisioning_request_id ||
+    !row.provisioning_status
+  )
+    throw new Error('Invalid provisioning result');
+  return {
+    tenantId: row.tenant_id,
+    provisioningRequestId: row.provisioning_request_id,
+    status: row.provisioning_status,
+    replayed: row.outcome === 'existing',
+  };
 }
 export async function createEmployeeDraft(
   db: PrismaClient,

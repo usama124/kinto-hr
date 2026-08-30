@@ -82,7 +82,19 @@ async function main() {
     }
     run(['db:migrate']);
     run(['db:bootstrap']);
+    env.PLATFORM_BOOTSTRAP_ISSUER = 'https://migration.synthetic.example/realm';
+    env.PLATFORM_BOOTSTRAP_SUBJECT = 'synthetic-first-operator';
+    env.PLATFORM_BOOTSTRAP_CONFIRM = 'bootstrap-first-platform-operator';
+    run(['db:bootstrap:operator']);
+    run(['db:bootstrap:operator']);
     run(['db:migrate']);
+    assert.equal(await target.platformOperator.count(), 1);
+    assert.equal(
+      await target.platformAuditEvent.count({
+        where: { action: 'platform_operator.bootstrapped' },
+      }),
+      1,
+    );
     assert.equal(await target.jobDelivery.count(), 2);
     for (const id of ids) {
       const rows = await inTenant(worker, id, (tx) =>

@@ -59,6 +59,7 @@ let provider: Server;
 let app: INestApplication;
 let store: AuthStore;
 let identityId: string;
+const provisionedTenantIds: string[] = [];
 let tokenRequests = 0;
 let mode = 'valid';
 const codes = new Map<
@@ -205,6 +206,7 @@ beforeAll(async () => {
   await store.connect();
   const identity = await admin.identity.create({ data: { issuer, subject } });
   identityId = identity.id;
+  await admin.platformOperator.create({ data: { identityId } });
   await admin.tenant.create({
     data: { id: tenantId, name: 'Synthetic auth company', employeeLimit: 5 },
   });
@@ -242,6 +244,17 @@ afterAll(async () => {
     if (keys.length) await store.redis.del(...keys);
     store.close();
   }
+  await admin.platformAuditEvent.deleteMany({ where: { actorId: identityId } });
+  await admin.auditEvent.deleteMany({
+    where: { tenantId: { in: provisionedTenantIds } },
+  });
+  await admin.companyProvisioningRequest.deleteMany({
+    where: { tenantId: { in: provisionedTenantIds } },
+  });
+  await admin.tenant.deleteMany({
+    where: { id: { in: provisionedTenantIds } },
+  });
+  await admin.platformOperator.deleteMany({ where: { identityId } });
   await admin.membership.deleteMany({ where: { tenantId } });
   await admin.tenant.deleteMany({ where: { id: tenantId } });
   await admin.identity.deleteMany({ where: { issuer, subject } });
@@ -638,12 +651,11 @@ it('rechecks disabled identities and never restores revoked memberships during l
     (await admin.membership.findFirstOrThrow({ where: { tenantId } })).status,
   ).toBe('revoked');
 });
-it('keeps registration, provisioning and employee endpoints closed even when login is enabled', async () => {
+it('keeps registration and unfinished employee endpoints closed even when login is enabled', async () => {
   const result = await login();
   for (const path of [
     '/api/v1/auth/signup',
     '/api/v1/auth/register',
-    '/api/v1/platform/tenants',
     `/api/v1/tenants/${tenantId}/employees`,
   ])
     await request(app.getHttpServer())
@@ -651,6 +663,118 @@ it('keeps registration, provisioning and employee endpoints closed even when log
       .set('Cookie', result.sessionCookie)
       .send({ role: 'owner' })
       .expect(404);
+});
+it('allows only an MFA-verified active platform operator to request a company idempotently', async () => {
+  const body = {
+    companyName: 'HTTP Provisioned Company',
+    employeeLimit: 20,
+    billingMode: 'complimentary',
+    initialOwnerEmail: 'Owner@Synthetic.Example',
+  };
+  await request(app.getHttpServer())
+    .post('/api/v1/platform/tenants')
+    .set('Origin', origin)
+    .set('Idempotency-Key', randomUUID())
+    .send(body)
+    .expect(401);
+  const ordinaryLogin = await login();
+  const ordinarySession = (await store.readSession(
+    handle(ordinaryLogin.sessionCookie),
+  ))!;
+  await request(app.getHttpServer())
+    .post('/api/v1/platform/tenants')
+    .set('Cookie', ordinaryLogin.sessionCookie)
+    .set('Origin', origin)
+    .set('X-CSRF-Token', ordinarySession.csrf)
+    .set('Idempotency-Key', randomUUID())
+    .send(body)
+    .expect(403);
+
+  const staleMfa = await store.createSession({
+    principal: { issuer, subject, mfaVerified: true },
+    identityId,
+    authTime: Math.floor(Date.now() / 1000) - 301,
+  });
+  await request(app.getHttpServer())
+    .post('/api/v1/platform/tenants')
+    .set('Cookie', `${SESSION_COOKIE}=${staleMfa.token}`)
+    .set('Origin', origin)
+    .set('X-CSRF-Token', staleMfa.session.csrf)
+    .set('Idempotency-Key', randomUUID())
+    .send(body)
+    .expect(403);
+
+  const elevated = await store.createSession({
+    principal: { issuer, subject, mfaVerified: true },
+    identityId,
+    authTime: Math.floor(Date.now() / 1000),
+  });
+  const sessionCookie = `${SESSION_COOKIE}=${elevated.token}`;
+  await request(app.getHttpServer())
+    .post('/api/v1/platform/tenants')
+    .set('Cookie', sessionCookie)
+    .set('Origin', origin)
+    .set('Idempotency-Key', randomUUID())
+    .send(body)
+    .expect(403);
+  await request(app.getHttpServer())
+    .post('/api/v1/platform/tenants')
+    .set('Cookie', sessionCookie)
+    .set('Origin', origin)
+    .set('X-CSRF-Token', elevated.session.csrf)
+    .set('Idempotency-Key', 'not-a-uuid')
+    .send(body)
+    .expect(400);
+
+  const key = randomUUID();
+  const created = await request(app.getHttpServer())
+    .post('/api/v1/platform/tenants')
+    .set('Cookie', sessionCookie)
+    .set('Origin', origin)
+    .set('X-CSRF-Token', elevated.session.csrf)
+    .set('Idempotency-Key', key)
+    .send(body)
+    .expect(202);
+  provisionedTenantIds.push(created.body.tenantId);
+  expect(created.body).toMatchObject({
+    status: 'pending_identity_provider',
+    replayed: false,
+  });
+  expect(JSON.stringify(created.body)).not.toContain('Owner@');
+  const replay = await request(app.getHttpServer())
+    .post('/api/v1/platform/tenants')
+    .set('Cookie', sessionCookie)
+    .set('Origin', origin)
+    .set('X-CSRF-Token', elevated.session.csrf)
+    .set('Idempotency-Key', key)
+    .send(body)
+    .expect(202);
+  expect(replay.body).toEqual({ ...created.body, replayed: true });
+  await request(app.getHttpServer())
+    .post('/api/v1/platform/tenants')
+    .set('Cookie', sessionCookie)
+    .set('Origin', origin)
+    .set('X-CSRF-Token', elevated.session.csrf)
+    .set('Idempotency-Key', key)
+    .send({ ...body, employeeLimit: 50 })
+    .expect(409);
+
+  await admin.platformOperator.update({
+    where: { identityId },
+    data: { status: 'revoked', version: { increment: 1 } },
+  });
+  await request(app.getHttpServer())
+    .post('/api/v1/platform/tenants')
+    .set('Cookie', sessionCookie)
+    .set('Origin', origin)
+    .set('X-CSRF-Token', elevated.session.csrf)
+    .set('Idempotency-Key', randomUUID())
+    .send(body)
+    .expect(403);
+  await admin.platformOperator.update({
+    where: { identityId },
+    data: { status: 'active' },
+  });
 });
 it('rate-limits auth requests without trusting forwarded IPs', async () => {
   const allowed = await Promise.all(

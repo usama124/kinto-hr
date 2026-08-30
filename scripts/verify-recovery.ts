@@ -11,6 +11,7 @@ import {
   createEmployeeDraft,
   inTenant,
   inAuthorizedTenant,
+  requestCompanyProvisioning,
   type PrismaClient,
 } from '@kinto/database';
 import { processEvent } from '../apps/worker/src/processor';
@@ -31,17 +32,29 @@ async function snapshot(db: PrismaClient) {
     tables.map((row) => row.name),
     [
       'audit_events',
+      'company_provisioning_requests',
       'consumer_receipts',
       'employees',
       'identities',
       'job_deliveries',
       'memberships',
       'outbox_events',
+      'platform_audit_events',
+      'platform_operators',
       'tenants',
     ],
   );
   return {
     identities: await db.identity.findMany({ orderBy: { id: 'asc' } }),
+    platformOperators: await db.platformOperator.findMany({
+      orderBy: { identityId: 'asc' },
+    }),
+    provisioningRequests: await db.companyProvisioningRequest.findMany({
+      orderBy: { id: 'asc' },
+    }),
+    platformAudit: await db.platformAuditEvent.findMany({
+      orderBy: { id: 'asc' },
+    }),
     memberships: await db.membership.findMany({ orderBy: { id: 'asc' } }),
     tenants: await db.tenant.findMany({ orderBy: { id: 'asc' } }),
     employees: await db.employee.findMany({ orderBy: { id: 'asc' } }),
@@ -180,6 +193,27 @@ async function main() {
         data: { tenantId, identityId: identity.id, roles: ['hr_admin'] },
       });
     }
+    const operator = await source.identity.create({
+      data: {
+        issuer: 'https://recovery.example/realm',
+        subject: 'synthetic-platform-operator',
+      },
+    });
+    await source.platformOperator.create({
+      data: { identityId: operator.id },
+    });
+    const provisioning = await requestCompanyProvisioning(
+      sourceApp,
+      { identityId: operator.id, mfaVerified: true },
+      randomUUID(),
+      {
+        companyName: 'Synthetic pending recovery company',
+        employeeLimit: 20,
+        billingMode: 'complimentary',
+        initialOwnerEmail: 'owner@recovery.example',
+      },
+    );
+    assert.equal(provisioning.status, 'pending_identity_provider');
     assert.equal(await processEvent(sourceWorker, refs[0]), 'completed');
     const dead = await source.outboxEvent.create({
       data: {
@@ -252,7 +286,7 @@ async function main() {
     const policies = await restored.$queryRaw<
       { enabled: boolean; forced: boolean }[]
     >`SELECT relrowsecurity AS enabled, relforcerowsecurity AS forced FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND relkind='r' AND relname <> '_prisma_migrations'`;
-    assert.equal(policies.length, 8);
+    assert.equal(policies.length, 11);
     assert.ok(policies.every((row) => row.enabled && row.forced));
     assert.deepEqual(await restoredApp.employee.findMany(), []);
     for (const tenantId of tenants) {
@@ -331,6 +365,7 @@ async function main() {
       completedReplayPreserved: true,
       pendingResumedOnce: true,
       deadPreserved: true,
+      pendingCompanyProvisioningPreserved: true,
     };
     await writeFile(
       join(directory, 'report.json'),

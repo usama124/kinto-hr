@@ -41,7 +41,8 @@ export class DomainError extends Error {
       | 'STALE_VERSION'
       | 'TENANT_UNAVAILABLE'
       | 'NOT_FOUND'
-      | 'FORBIDDEN',
+      | 'FORBIDDEN'
+      | 'CONFLICT',
   ) {
     super(code);
     this.name = 'DomainError';

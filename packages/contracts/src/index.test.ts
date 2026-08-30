@@ -5,11 +5,49 @@ import {
   employeeDraftSchema,
   healthSchema,
   tenantIdSchema,
+  companyProvisioningSchema,
 } from './index';
 it('trims names while preserving employee identifiers as strings', () => {
   expect(
     employeeDraftSchema.parse({ employeeNumber: '0012', name: ' Sana Khan ' }),
   ).toEqual({ employeeNumber: '0012', name: 'Sana Khan' });
+});
+it('normalizes only approved company provisioning fields', () => {
+  expect(
+    companyProvisioningSchema.parse({
+      companyName: ' Example Company ',
+      employeeLimit: 20,
+      billingMode: 'complimentary',
+      initialOwnerEmail: ' Owner@Example.COM ',
+    }),
+  ).toEqual({
+    companyName: 'Example Company',
+    employeeLimit: 20,
+    billingMode: 'complimentary',
+    initialOwnerEmail: 'owner@example.com',
+  });
+  for (const input of [
+    {
+      companyName: 'Company',
+      employeeLimit: 251,
+      billingMode: 'free',
+      initialOwnerEmail: 'owner@example.com',
+    },
+    {
+      companyName: 'Company',
+      employeeLimit: 5,
+      billingMode: 'free',
+      initialOwnerEmail: 'owner@example.com',
+      roles: ['platform_operator'],
+    },
+    {
+      companyName: 'Company',
+      employeeLimit: 5,
+      billingMode: 'unlimited',
+      initialOwnerEmail: 'owner@example.com',
+    },
+  ])
+    expect(companyProvisioningSchema.safeParse(input).success).toBe(false);
 });
 it.each([
   { employeeNumber: '', name: 'Name' },

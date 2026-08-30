@@ -17,6 +17,7 @@ model Tenant {
   auditEvents AuditEvent[]
   outboxEvents OutboxEvent[]
   memberships Membership[]
+  provisioningRequest CompanyProvisioningRequest?
   @@map("tenants")
 }
 model Identity {
@@ -26,8 +27,42 @@ model Identity {
   status String @default("active") @db.VarChar(20)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
   memberships Membership[]
+  platformOperator PlatformOperator?
+  companyProvisioningRequests CompanyProvisioningRequest[]
+  platformAuditEvents PlatformAuditEvent[]
   @@unique([issuer, subject])
   @@map("identities")
+}
+model PlatformOperator {
+  identityId String @id @map("identity_id") @db.Uuid
+  status String @default("active") @db.VarChar(20)
+  version Int @default(1)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  identity Identity @relation(fields: [identityId], references: [id], onDelete: Restrict)
+  @@map("platform_operators")
+}
+model CompanyProvisioningRequest {
+  id String @id @db.Uuid
+  requestKey String @map("request_key") @db.Uuid
+  requestedByIdentityId String @map("requested_by_identity_id") @db.Uuid
+  tenantId String @unique @map("tenant_id") @db.Uuid
+  initialOwnerEmail String @map("initial_owner_email") @db.VarChar(320)
+  status String @default("pending_identity_provider") @db.VarChar(40)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  requestedBy Identity @relation(fields: [requestedByIdentityId], references: [id], onDelete: Restrict)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  @@unique([requestedByIdentityId, requestKey])
+  @@map("company_provisioning_requests")
+}
+model PlatformAuditEvent {
+  id String @id @db.Uuid
+  actorId String @map("actor_id") @db.Uuid
+  action String @db.VarChar(100)
+  resourceId String @map("resource_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  actor Identity @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  @@index([createdAt])
+  @@map("platform_audit_events")
 }
 model Membership {
   id String @id @default(uuid()) @db.Uuid
