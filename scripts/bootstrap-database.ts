@@ -76,12 +76,18 @@ try {
   for (const statement of [
     'DROP POLICY IF EXISTS platform_control_select ON identities',
     'CREATE POLICY platform_control_select ON identities FOR SELECT TO kinto_control_owner USING (true)',
+    'DROP POLICY IF EXISTS platform_control_insert ON identities',
+    'CREATE POLICY platform_control_insert ON identities FOR INSERT TO kinto_control_owner WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control_select ON platform_operators',
     'CREATE POLICY platform_control_select ON platform_operators FOR SELECT TO kinto_control_owner USING (true)',
     'DROP POLICY IF EXISTS platform_control ON tenants',
     'CREATE POLICY platform_control ON tenants FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON company_provisioning_requests',
     'CREATE POLICY platform_control ON company_provisioning_requests FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
+    'DROP POLICY IF EXISTS platform_control ON owner_invitations',
+    'CREATE POLICY platform_control ON owner_invitations FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
+    'DROP POLICY IF EXISTS platform_control ON memberships',
+    'CREATE POLICY platform_control ON memberships FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control_insert ON audit_events',
     'CREATE POLICY platform_control_insert ON audit_events FOR INSERT TO kinto_control_owner WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control_insert ON platform_audit_events',
@@ -89,10 +95,19 @@ try {
   ])
     await database.$executeRawUnsafe(statement);
   await database.$executeRawUnsafe(
-    'GRANT SELECT ON identities, platform_operators TO kinto_control_owner',
+    'GRANT SELECT, INSERT ON identities TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
-    'GRANT SELECT, INSERT ON tenants, company_provisioning_requests TO kinto_control_owner',
+    'GRANT SELECT ON platform_operators TO kinto_control_owner',
+  );
+  await database.$executeRawUnsafe(
+    'GRANT SELECT, INSERT ON tenants TO kinto_control_owner',
+  );
+  await database.$executeRawUnsafe(
+    'GRANT SELECT, INSERT, UPDATE ON company_provisioning_requests, owner_invitations TO kinto_control_owner',
+  );
+  await database.$executeRawUnsafe(
+    'GRANT SELECT, INSERT ON memberships TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
     'GRANT INSERT ON audit_events, platform_audit_events TO kinto_control_owner',
@@ -103,6 +118,18 @@ try {
   await database.$executeRawUnsafe(
     'GRANT EXECUTE ON FUNCTION public.request_company_provisioning(uuid, boolean, uuid, uuid, uuid, uuid, uuid, varchar, integer, varchar, varchar) TO kinto_app',
   );
+  for (const signature of [
+    'public.reconcile_company_owner_provider(uuid, uuid, uuid, varchar, varchar, timestamptz, uuid, uuid)',
+    'public.mark_company_owner_invitation_delivered(uuid, timestamptz, uuid, uuid)',
+    'public.resolve_login_identity(varchar, varchar, boolean, uuid, uuid, uuid, uuid)',
+  ]) {
+    await database.$executeRawUnsafe(
+      `ALTER FUNCTION ${signature} OWNER TO kinto_control_owner`,
+    );
+    await database.$executeRawUnsafe(
+      `GRANT EXECUTE ON FUNCTION ${signature} TO kinto_app`,
+    );
+  }
   await assertSafeRuntimeRole(appDatabase);
   // The dispatcher can call reviewed metadata functions only. The worker has
   // tenant-scoped delivery access, but no employee, salary or audit privileges.

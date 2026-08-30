@@ -94,10 +94,15 @@ export function resetLink(message: string, issuer: string) {
     );
   return result;
 }
-export function totp(secret: string) {
+export function totp(secret: string | Buffer) {
   const counter = Buffer.alloc(8);
   counter.writeBigUInt64BE(BigInt(Math.floor(Date.now() / 30000)));
-  const hash = createHmac('sha1', Buffer.from(secret)).update(counter).digest();
+  const hash = createHmac(
+    'sha1',
+    Buffer.isBuffer(secret) ? secret : Buffer.from(secret),
+  )
+    .update(counter)
+    .digest();
   const offset = hash[hash.length - 1] & 15;
   return String((hash.readUInt32BE(offset) & 0x7fffffff) % 1000000).padStart(
     6,

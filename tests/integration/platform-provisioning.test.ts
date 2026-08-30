@@ -1,7 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDatabase, requestCompanyProvisioning } from '@kinto/database';
+import {
+  createDatabase,
+  findActiveIdentity,
+  markCompanyOwnerInvitationDelivered,
+  reconcileCompanyOwnerProvider,
+  requestCompanyProvisioning,
+} from '@kinto/database';
 
 if (existsSync('.env')) process.loadEnvFile('.env');
 const adminUrl = process.env.MIGRATION_DATABASE_URL;
@@ -27,6 +33,7 @@ const input = {
 let operatorId: string;
 let ordinaryIdentityId: string;
 const tenantIds: string[] = [];
+const providerIdentityIds: string[] = [];
 
 describe('platform-only company provisioning boundary', () => {
   beforeAll(async () => {
@@ -45,9 +52,15 @@ describe('platform-only company provisioning boundary', () => {
 
   afterAll(async () => {
     await admin.platformAuditEvent.deleteMany({
-      where: { actorId: operatorId },
+      where: { actorId: { in: [operatorId, ...providerIdentityIds] } },
     });
     await admin.auditEvent.deleteMany({
+      where: { tenantId: { in: tenantIds } },
+    });
+    await admin.membership.deleteMany({
+      where: { tenantId: { in: tenantIds } },
+    });
+    await admin.ownerInvitation.deleteMany({
       where: { tenantId: { in: tenantIds } },
     });
     await admin.companyProvisioningRequest.deleteMany({
@@ -58,7 +71,9 @@ describe('platform-only company provisioning boundary', () => {
       where: { identityId: operatorId },
     });
     await admin.identity.deleteMany({
-      where: { id: { in: [operatorId, ordinaryIdentityId] } },
+      where: {
+        id: { in: [operatorId, ordinaryIdentityId, ...providerIdentityIds] },
+      },
     });
     await Promise.all([admin.$disconnect(), runtime.$disconnect()]);
   });
@@ -92,6 +107,21 @@ describe('platform-only company provisioning boundary', () => {
         data: { identityId: ordinaryIdentityId },
       }),
     ).rejects.toThrow();
+    await expect(
+      runtime.identity.create({
+        data: { issuer, subject: randomUUID() },
+      }),
+    ).rejects.toThrow();
+    await expect(
+      runtime.membership.create({
+        data: {
+          tenantId: randomUUID(),
+          identityId: ordinaryIdentityId,
+          roles: ['owner'],
+        },
+      }),
+    ).rejects.toThrow();
+    await expect(runtime.ownerInvitation.findMany()).rejects.toThrow();
   });
 
   it('atomically creates one denied-until-provider request and both audit records', async () => {
@@ -179,5 +209,162 @@ describe('platform-only company provisioning boundary', () => {
       bypass: false,
       app_can_execute: true,
     });
+  });
+
+  it('binds a provider-owned invitation and atomically activates exactly one first owner', async () => {
+    const company = await requestCompanyProvisioning(
+      runtime,
+      { identityId: operatorId, mfaVerified: true },
+      randomUUID(),
+      { ...input, companyName: 'Synthetic invitation company' },
+    );
+    tenantIds.push(company.tenantId);
+    const provider = {
+      issuer: 'https://provider.synthetic.example/realms/kinto',
+      subject: randomUUID(),
+    };
+    const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000);
+    const invitation = await reconcileCompanyOwnerProvider(
+      runtime,
+      company.provisioningRequestId,
+      provider,
+      expiresAt,
+    );
+    const identity = await admin.identity.findUniqueOrThrow({
+      where: { issuer_subject: provider },
+    });
+    providerIdentityIds.push(identity.id);
+    expect(invitation).toMatchObject({
+      status: 'pending_delivery',
+      replayed: false,
+    });
+    expect(
+      await reconcileCompanyOwnerProvider(
+        runtime,
+        company.provisioningRequestId,
+        provider,
+        expiresAt,
+      ),
+    ).toMatchObject({
+      invitationId: invitation.invitationId,
+      replayed: true,
+    });
+    await expect(
+      reconcileCompanyOwnerProvider(
+        runtime,
+        company.provisioningRequestId,
+        { ...provider, subject: randomUUID() },
+        expiresAt,
+      ),
+    ).rejects.toThrow('CONFLICT');
+    expect(
+      await markCompanyOwnerInvitationDelivered(
+        runtime,
+        company.provisioningRequestId,
+        expiresAt,
+      ),
+    ).toEqual({ status: 'pending_activation', replayed: false });
+    expect(
+      await markCompanyOwnerInvitationDelivered(
+        runtime,
+        company.provisioningRequestId,
+        expiresAt,
+      ),
+    ).toEqual({ status: 'pending_activation', replayed: true });
+
+    expect(
+      await findActiveIdentity(
+        runtime,
+        { ...provider, mfaVerified: false },
+        invitation.invitationId,
+      ),
+    ).toEqual({ id: identity.id, ownerActivated: false });
+    const results = await Promise.all([
+      findActiveIdentity(runtime, { ...provider, mfaVerified: true }),
+      findActiveIdentity(runtime, { ...provider, mfaVerified: true }),
+    ]);
+    expect(results.map((row) => row?.ownerActivated).sort()).toEqual([
+      false,
+      true,
+    ]);
+    const membership = await admin.membership.findUniqueOrThrow({
+      where: {
+        tenantId_identityId: {
+          tenantId: company.tenantId,
+          identityId: identity.id,
+        },
+      },
+    });
+    expect(membership.roles).toEqual(['owner']);
+    expect(membership.status).toBe('active');
+    expect(
+      await admin.membership.count({ where: { tenantId: company.tenantId } }),
+    ).toBe(1);
+    expect(
+      await admin.ownerInvitation.findUniqueOrThrow({
+        where: { id: invitation.invitationId },
+      }),
+    ).toMatchObject({ status: 'accepted', identityId: identity.id });
+    expect(
+      await admin.companyProvisioningRequest.findUniqueOrThrow({
+        where: { id: company.provisioningRequestId },
+      }),
+    ).toMatchObject({ status: 'active' });
+  });
+
+  it('rejects wrong-identity and expired activation without granting membership', async () => {
+    for (const variant of ['wrong-identity', 'expired'] as const) {
+      const company = await requestCompanyProvisioning(
+        runtime,
+        { identityId: operatorId, mfaVerified: true },
+        randomUUID(),
+        { ...input, companyName: `Synthetic ${variant} company` },
+      );
+      tenantIds.push(company.tenantId);
+      const provider = {
+        issuer: 'https://provider.synthetic.example/realms/kinto',
+        subject: randomUUID(),
+      };
+      const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000);
+      const invitation = await reconcileCompanyOwnerProvider(
+        runtime,
+        company.provisioningRequestId,
+        provider,
+        expiresAt,
+      );
+      const identity = await admin.identity.findUniqueOrThrow({
+        where: { issuer_subject: provider },
+      });
+      providerIdentityIds.push(identity.id);
+      await markCompanyOwnerInvitationDelivered(
+        runtime,
+        company.provisioningRequestId,
+        expiresAt,
+      );
+      if (variant === 'expired')
+        await admin.ownerInvitation.update({
+          where: { id: invitation.invitationId },
+          data: { expiresAt: new Date(0) },
+        });
+      const principal =
+        variant === 'wrong-identity'
+          ? { issuer, subject: randomUUID(), mfaVerified: true }
+          : { ...provider, mfaVerified: true };
+      let expectedIdentityId = identity.id;
+      if (variant === 'wrong-identity') {
+        expectedIdentityId = (
+          await admin.identity.create({
+            data: { issuer: principal.issuer, subject: principal.subject },
+          })
+        ).id;
+        providerIdentityIds.push(expectedIdentityId);
+      }
+      expect(
+        await findActiveIdentity(runtime, principal, invitation.invitationId),
+      ).toEqual({ id: expectedIdentityId, ownerActivated: false });
+      expect(
+        await admin.membership.count({ where: { tenantId: company.tenantId } }),
+      ).toBe(0);
+    }
   });
 });

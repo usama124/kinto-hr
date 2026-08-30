@@ -12,6 +12,8 @@ import {
   inTenant,
   inAuthorizedTenant,
   requestCompanyProvisioning,
+  reconcileCompanyOwnerProvider,
+  markCompanyOwnerInvitationDelivered,
   type PrismaClient,
 } from '@kinto/database';
 import { processEvent } from '../apps/worker/src/processor';
@@ -39,6 +41,7 @@ async function snapshot(db: PrismaClient) {
       'job_deliveries',
       'memberships',
       'outbox_events',
+      'owner_invitations',
       'platform_audit_events',
       'platform_operators',
       'tenants',
@@ -50,6 +53,9 @@ async function snapshot(db: PrismaClient) {
       orderBy: { identityId: 'asc' },
     }),
     provisioningRequests: await db.companyProvisioningRequest.findMany({
+      orderBy: { id: 'asc' },
+    }),
+    ownerInvitations: await db.ownerInvitation.findMany({
       orderBy: { id: 'asc' },
     }),
     platformAudit: await db.platformAuditEvent.findMany({
@@ -214,6 +220,21 @@ async function main() {
       },
     );
     assert.equal(provisioning.status, 'pending_identity_provider');
+    const invitationExpiry = new Date(Date.now() + 48 * 60 * 60 * 1000);
+    await reconcileCompanyOwnerProvider(
+      sourceApp,
+      provisioning.provisioningRequestId,
+      {
+        issuer: 'https://recovery.example/realm',
+        subject: 'synthetic-pending-owner',
+      },
+      invitationExpiry,
+    );
+    await markCompanyOwnerInvitationDelivered(
+      sourceApp,
+      provisioning.provisioningRequestId,
+      invitationExpiry,
+    );
     assert.equal(await processEvent(sourceWorker, refs[0]), 'completed');
     const dead = await source.outboxEvent.create({
       data: {
@@ -286,7 +307,7 @@ async function main() {
     const policies = await restored.$queryRaw<
       { enabled: boolean; forced: boolean }[]
     >`SELECT relrowsecurity AS enabled, relforcerowsecurity AS forced FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND relkind='r' AND relname <> '_prisma_migrations'`;
-    assert.equal(policies.length, 11);
+    assert.equal(policies.length, 12);
     assert.ok(policies.every((row) => row.enabled && row.forced));
     assert.deepEqual(await restoredApp.employee.findMany(), []);
     for (const tenantId of tenants) {

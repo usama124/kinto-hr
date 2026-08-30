@@ -18,12 +18,15 @@ import {
   type AuthRequest,
 } from '../auth/controller';
 import { DatabaseService } from '../database.service';
+import { OwnerProvisioningService } from '../provisioning/service';
 
 @Controller('platform')
 export class PlatformController {
   constructor(
     @Inject(AuthService) private readonly auth: AuthService,
     @Inject(DatabaseService) private readonly database: DatabaseService,
+    @Inject(OwnerProvisioningService)
+    private readonly ownerProvisioning: OwnerProvisioningService,
   ) {}
 
   @Post('tenants')
@@ -42,7 +45,7 @@ export class PlatformController {
     const input = companyProvisioningSchema.safeParse(body);
     if (!key.success || !input.success) throw new BadRequestException();
     const now = Math.floor(Date.now() / 1000);
-    return this.database.provisionCompany(
+    const provisioned = await this.database.provisionCompany(
       {
         identityId: session.identityId,
         mfaVerified:
@@ -53,5 +56,10 @@ export class PlatformController {
       key.data,
       input.data,
     );
+    const owner = await this.ownerProvisioning.attempt(
+      provisioned.provisioningRequestId,
+      input.data.initialOwnerEmail,
+    );
+    return owner ? { ...provisioned, status: owner.status } : provisioned;
   }
 }

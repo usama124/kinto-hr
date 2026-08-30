@@ -59,6 +59,9 @@ const password = randomBytes(24).toString('base64url');
 const newPassword = randomBytes(24).toString('base64url');
 const otpSecret = randomBytes(20).toString('hex');
 const clientSecret = randomBytes(32).toString('base64url');
+const provisioningClientSecret = randomBytes(32).toString('base64url');
+const invitedEmail = 'invited-owner@kinto.test';
+const invitedPassword = `Kinto!${randomBytes(18).toString('hex')}Aa1`;
 const db = createDatabase(adminUrl);
 const runtime = createDatabase(runtimeUrl);
 const children: ChildProcess[] = [];
@@ -66,6 +69,8 @@ let browser: Browser | undefined;
 let preResetContext: Awaited<ReturnType<Browser['newContext']>> | undefined;
 let store: AuthStore | undefined;
 let identityId: string | undefined;
+let invitedIdentityId: string | undefined;
+let invitedTenantId: string | undefined;
 let stage = 'setup';
 let scenarios = 0;
 await mkdir('.local/keycloak', { recursive: true, mode: 0o700 });
@@ -82,6 +87,23 @@ function start(args: string[], env: NodeJS.ProcessEnv) {
   });
   children.push(child);
   return child;
+}
+function decodeBase32(value: string) {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let bits = '';
+  for (const character of value
+    .replaceAll(' ', '')
+    .replaceAll('=', '')
+    .toUpperCase()) {
+    const index = alphabet.indexOf(character);
+    if (index < 0) throw new Error('Invalid synthetic TOTP secret');
+    bits += index.toString(2).padStart(5, '0');
+  }
+  return Buffer.from(
+    Array.from({ length: Math.floor(bits.length / 8) }, (_, index) =>
+      Number.parseInt(bits.slice(index * 8, index * 8 + 8), 2),
+    ),
+  );
 }
 async function scenario(name: string, check: () => Promise<void>) {
   stage = name;
@@ -166,6 +188,7 @@ try {
     smtpPort: mail.port,
     backchannelUrl: `http://127.0.0.1:${apiPort}/api/v1/auth/backchannel-logout`,
     clientSecret,
+    provisioningClientSecret,
     users: [
       { id: userId, username, password, otpSecret },
       {
@@ -219,10 +242,35 @@ try {
         .catch(() => false),
     120000,
   );
+  const managementTokenResponse = await fetch(
+    `${issuer}/protocol/openid-connect/token`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Basic ${Buffer.from(`kinto-provisioner:${provisioningClientSecret}`).toString('base64')}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({ grant_type: 'client_credentials' }),
+    },
+  );
+  assert.equal(managementTokenResponse.status, 200);
+  const managementToken = String(
+    ((await managementTokenResponse.json()) as { access_token?: unknown })
+      .access_token,
+  );
+  const managementClaims = JSON.parse(
+    Buffer.from(managementToken.split('.')[1] ?? '', 'base64url').toString(),
+  ) as { resource_access?: Record<string, { roles?: string[] }> };
+  assert(
+    managementClaims.resource_access?.['realm-management']?.roles?.includes(
+      'manage-users',
+    ),
+  );
   const identity = await db.identity.create({
     data: { issuer, subject: userId },
   });
   identityId = identity.id;
+  await db.platformOperator.create({ data: { identityId } });
   await db.tenant.create({
     data: { id: tenantId, name: 'Synthetic Keycloak tenant', employeeLimit: 5 },
   });
@@ -241,6 +289,9 @@ try {
     OIDC_CLIENT_ID: 'kinto-web',
     OIDC_CLIENT_SECRET: clientSecret,
     OIDC_MFA_PROFILE: 'keycloak-loa2-v1',
+    ACCOUNT_PROVISIONING_MODE: 'keycloak',
+    KEYCLOAK_PROVISIONING_CLIENT_ID: 'kinto-provisioner',
+    KEYCLOAK_PROVISIONING_CLIENT_SECRET: provisioningClientSecret,
     NODE_PATH: '',
   });
   start(
@@ -303,6 +354,220 @@ try {
         ),
         true,
       );
+    },
+  );
+  await scenario(
+    'platform provisioning delivers setup actions and activates exactly one initial owner',
+    async () => {
+      const { cookie, session } = await sessionFor(page);
+      const messageCount = mail.messages.length;
+      const response = await fetch(
+        `http://127.0.0.1:${apiPort}/api/v1/platform/tenants`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Cookie: `__Host-kinto-session=${cookie.value}`,
+            Origin: proxy!.origin,
+            'X-CSRF-Token': session.csrf,
+            'Idempotency-Key': randomUUID(),
+          },
+          body: JSON.stringify({
+            companyName: 'Synthetic invited company',
+            employeeLimit: 5,
+            billingMode: 'free',
+            initialOwnerEmail: invitedEmail,
+          }),
+        },
+      );
+      assert.equal(response.status, 202);
+      const result = (await response.json()) as {
+        tenantId: string;
+        provisioningRequestId: string;
+        status: string;
+      };
+      invitedTenantId = result.tenantId;
+      assert.equal(result.status, 'pending_activation');
+      assert(!JSON.stringify(result).includes(invitedEmail));
+      assert.equal(
+        await db.membership.count({ where: { tenantId: invitedTenantId } }),
+        0,
+      );
+      await until(async () => mail.messages.length === messageCount + 1);
+
+      const invitationContext = await isolatedContext();
+      const invitationPage = await invitationContext.newPage();
+      await invitationPage.goto(resetLink(mail.messages.at(-1)!, issuer));
+      let invitedOtpSecret: Buffer | undefined;
+      let passwordConfigured = false;
+      let otpConfigured = false;
+      let invitedAcceptedTotpCounter: number | undefined;
+      const actionTrace: string[] = [];
+      for (let step = 0; step < 24; step++) {
+        if (
+          (await invitationContext.cookies()).some(
+            (value) => value.name === '__Host-kinto-session',
+          )
+        ) {
+          actionTrace.push('session');
+          break;
+        }
+        if (
+          new URL(invitationPage.url()).origin === proxy!.origin &&
+          (await invitationPage.getByRole('status').count()) &&
+          (await invitationPage.getByRole('status').innerText()).includes(
+            'You are signed in.',
+          )
+        )
+          break;
+        if (await invitationPage.locator('#password-new').count()) {
+          actionTrace.push('password-setup');
+          await invitationPage.locator('#password-new').fill(invitedPassword);
+          await invitationPage
+            .locator('#password-confirm')
+            .fill(invitedPassword);
+          await invitationPage
+            .locator('input[type=submit], button[type=submit]')
+            .click();
+          await expect(invitationPage.locator('#password-new')).toHaveCount(0);
+          passwordConfigured = true;
+          continue;
+        }
+        const profileForm = invitationPage.locator('#kc-update-profile-form');
+        if (await profileForm.count()) {
+          actionTrace.push('profile-setup');
+          if (await profileForm.locator('#firstName').count())
+            await profileForm.locator('#firstName').fill('Synthetic');
+          if (await profileForm.locator('#lastName').count())
+            await profileForm.locator('#lastName').fill('Owner');
+          await profileForm
+            .locator('input[type=submit], button[type=submit]')
+            .click();
+          continue;
+        }
+        const totpSetupForm = invitationPage.locator('#kc-totp-settings-form');
+        if (await totpSetupForm.count()) {
+          actionTrace.push('totp-setup');
+          const visibleSecret = invitationPage.locator('#kc-totp-secret-key');
+          invitedOtpSecret = (await visibleSecret.count())
+            ? decodeBase32(await visibleSecret.innerText())
+            : Buffer.from(
+                await totpSetupForm.locator('#totpSecret').inputValue(),
+              );
+          const setupWindowRemaining = 30000 - (Date.now() % 30000);
+          if (setupWindowRemaining < 6000)
+            await invitationPage.waitForTimeout(setupWindowRemaining + 250);
+          const setupCounter = Math.floor(Date.now() / 30000);
+          await totpSetupForm.locator('#totp').fill(totp(invitedOtpSecret));
+          if (await totpSetupForm.locator('#userLabel').count())
+            await totpSetupForm.locator('#userLabel').fill('Synthetic owner');
+          await totpSetupForm
+            .locator('input[type=submit], button[type=submit]')
+            .click();
+          await expect(totpSetupForm).toHaveCount(0);
+          invitedAcceptedTotpCounter = setupCounter;
+          otpConfigured = true;
+          continue;
+        }
+        if (await invitationPage.locator('#username').count()) {
+          actionTrace.push('login-password');
+          assert(
+            passwordConfigured && otpConfigured,
+            'Keycloak requested credentials before completing invited setup actions',
+          );
+          await invitationPage.locator('#username').fill(invitedEmail);
+          await invitationPage.locator('#password').fill(invitedPassword);
+          await invitationPage.locator('#kc-login').click();
+          assert.equal(
+            await invitationPage
+              .getByText('Invalid username or password.', { exact: true })
+              .count(),
+            0,
+            'Keycloak rejected the password accepted by its setup action',
+          );
+          continue;
+        }
+        if (await invitationPage.locator('#otp').count()) {
+          actionTrace.push('login-totp');
+          assert(invitedOtpSecret);
+          let loginCounter = Math.floor(Date.now() / 30000);
+          const loginWindowRemaining = 30000 - (Date.now() % 30000);
+          if (
+            loginCounter === invitedAcceptedTotpCounter ||
+            loginWindowRemaining < 6000
+          ) {
+            await invitationPage.waitForTimeout(loginWindowRemaining + 250);
+            loginCounter = Math.floor(Date.now() / 30000);
+          }
+          await invitationPage.locator('#otp').fill(totp(invitedOtpSecret));
+          await invitationPage.locator('#kc-login').click();
+          invitedAcceptedTotpCounter = loginCounter;
+          continue;
+        }
+        const actionLink = invitationPage.locator('#kc-info-message a');
+        if (await actionLink.count()) {
+          actionTrace.push('action-info-link');
+          await actionLink.first().click();
+          continue;
+        }
+        const submit = invitationPage.locator(
+          'input[type=submit], button[type=submit]',
+        );
+        if (await submit.count()) {
+          const formId =
+            (await submit
+              .first()
+              .locator('xpath=ancestor::form[1]')
+              .getAttribute('id')) ?? 'unknown-form';
+          const inputIds = await invitationPage
+            .locator('input[id]')
+            .evaluateAll((inputs) =>
+              inputs
+                .map((input) => input.id)
+                .filter(Boolean)
+                .slice(0, 8),
+            );
+          actionTrace.push(`generic-submit(${formId}:${inputIds.join(',')})`);
+          await submit.first().click();
+          continue;
+        }
+        actionTrace.push('wait');
+        await invitationPage.waitForTimeout(250);
+      }
+      assert(
+        (await invitationContext.cookies()).some(
+          (value) => value.name === '__Host-kinto-session',
+        ),
+        `Invited setup ended without a Kinto session: ${actionTrace.join(' > ')}`,
+      );
+      const invitedSession = await sessionFor(invitationPage);
+      const membership = await db.membership.findFirstOrThrow({
+        where: { tenantId: invitedTenantId },
+      });
+      invitedIdentityId = membership.identityId;
+      assert.equal(invitedSession.session.identityId, invitedIdentityId);
+      assert.deepEqual(membership.roles, ['owner']);
+      assert.equal(
+        await db.membership.count({ where: { tenantId: invitedTenantId } }),
+        1,
+      );
+      assert.equal(
+        (
+          await db.companyProvisioningRequest.findUniqueOrThrow({
+            where: { id: result.provisioningRequestId },
+          })
+        ).status,
+        'active',
+      );
+      assert.equal(
+        (
+          await db.ownerInvitation.findUniqueOrThrow({
+            where: { requestId: result.provisioningRequestId },
+          })
+        ).status,
+        'accepted',
+      );
+      await invitationContext.close();
     },
   );
   await scenario(
@@ -387,6 +652,8 @@ try {
   await scenario(
     'unprovisioned provider users gain no Kinto identity or membership',
     async () => {
+      const identityCount = await db.identity.count({ where: { issuer } });
+      const membershipCount = await db.membership.count();
       const fresh = await isolatedContext();
       const tab = await fresh.newPage();
       await tab.goto(`${proxy!.origin}/api/v1/auth/login`);
@@ -398,8 +665,11 @@ try {
       await expect(tab.locator('body')).toContainText(
         'Request could not be completed',
       );
-      assert.equal(await db.identity.count({ where: { issuer } }), 1);
-      assert.equal(await db.membership.count({ where: { tenantId } }), 1);
+      assert.equal(
+        await db.identity.count({ where: { issuer } }),
+        identityCount,
+      );
+      assert.equal(await db.membership.count(), membershipCount);
       await fresh.close();
     },
   );
@@ -522,10 +792,14 @@ try {
     `Keycloak verification passed: ${scenarios} scenarios. Private report: ${directory}/report.json`,
   );
 } catch (error) {
-  const message = String(error)
+  const message = (
+    error instanceof Error ? (error.stack ?? error.message) : String(error)
+  )
     .replaceAll(password, '[password]')
     .replaceAll(newPassword, '[password]')
+    .replaceAll(invitedPassword, '[password]')
     .replaceAll(clientSecret, '[client-secret]')
+    .replaceAll(provisioningClientSecret, '[client-secret]')
     .replaceAll(otpSecret, '[otp-secret]')
     .replace(/https?:\/\/\S+/g, '[url]');
   await writeFile(`${directory}/failure.txt`, message, { mode: 0o600 });
@@ -574,9 +848,42 @@ try {
     if (keys.length) await store.redis.del(...keys);
     store.close();
   }
-  await db.membership.deleteMany({ where: { tenantId } });
-  await db.tenant.deleteMany({ where: { id: tenantId } });
-  if (identityId) await db.identity.delete({ where: { id: identityId } });
+  if (invitedTenantId && !invitedIdentityId)
+    invitedIdentityId = (
+      await db.ownerInvitation.findFirst({
+        where: { tenantId: invitedTenantId },
+        select: { identityId: true },
+      })
+    )?.identityId;
+  const fixtureIdentityIds = [identityId, invitedIdentityId].filter(
+    (value): value is string => Boolean(value),
+  );
+  if (fixtureIdentityIds.length)
+    await db.platformAuditEvent.deleteMany({
+      where: { actorId: { in: fixtureIdentityIds } },
+    });
+  const fixtureTenantIds = [tenantId, invitedTenantId].filter(
+    (value): value is string => Boolean(value),
+  );
+  await db.auditEvent.deleteMany({
+    where: { tenantId: { in: fixtureTenantIds } },
+  });
+  await db.membership.deleteMany({
+    where: { tenantId: { in: fixtureTenantIds } },
+  });
+  if (invitedTenantId) {
+    await db.ownerInvitation.deleteMany({
+      where: { tenantId: invitedTenantId },
+    });
+    await db.companyProvisioningRequest.deleteMany({
+      where: { tenantId: invitedTenantId },
+    });
+  }
+  await db.tenant.deleteMany({ where: { id: { in: fixtureTenantIds } } });
+  if (identityId)
+    await db.platformOperator.deleteMany({ where: { identityId } });
+  if (fixtureIdentityIds.length)
+    await db.identity.deleteMany({ where: { id: { in: fixtureIdentityIds } } });
   await Promise.all([db.$disconnect(), runtime.$disconnect()]);
   // Remove generated passwords, OTP credentials and TLS key, keep only private
   // diagnostic report/log. The fixture never overwrites the user's .env.

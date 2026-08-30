@@ -18,6 +18,7 @@ model Tenant {
   outboxEvents OutboxEvent[]
   memberships Membership[]
   provisioningRequest CompanyProvisioningRequest?
+  ownerInvitations OwnerInvitation[]
   @@map("tenants")
 }
 model Identity {
@@ -30,6 +31,7 @@ model Identity {
   platformOperator PlatformOperator?
   companyProvisioningRequests CompanyProvisioningRequest[]
   platformAuditEvents PlatformAuditEvent[]
+  ownerInvitations OwnerInvitation[]
   @@unique([issuer, subject])
   @@map("identities")
 }
@@ -51,8 +53,27 @@ model CompanyProvisioningRequest {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
   requestedBy Identity @relation(fields: [requestedByIdentityId], references: [id], onDelete: Restrict)
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  invitation OwnerInvitation?
   @@unique([requestedByIdentityId, requestKey])
   @@map("company_provisioning_requests")
+}
+model OwnerInvitation {
+  id String @id @db.Uuid
+  requestId String @unique @map("request_id") @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  identityId String @map("identity_id") @db.Uuid
+  status String @default("pending_delivery") @db.VarChar(30)
+  expiresAt DateTime @map("expires_at") @db.Timestamptz()
+  deliveredAt DateTime? @map("delivered_at") @db.Timestamptz()
+  acceptedAt DateTime? @map("accepted_at") @db.Timestamptz()
+  version Int @default(1)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  request CompanyProvisioningRequest @relation(fields: [requestId], references: [id], onDelete: Restrict)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  identity Identity @relation(fields: [identityId], references: [id], onDelete: Restrict)
+  @@unique([tenantId, identityId])
+  @@index([status, expiresAt])
+  @@map("owner_invitations")
 }
 model PlatformAuditEvent {
   id String @id @db.Uuid
