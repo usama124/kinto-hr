@@ -139,27 +139,15 @@ export class KeycloakProvisioner {
     }
 
     const markers = this.markers(user);
-    if (!created && user.enabled && !user.emailVerified)
-      throw new Error('Unverified Keycloak identity cannot be claimed');
-    if (!user.enabled && !created && !markers.includes(requestId))
-      throw new Error('Disabled Keycloak identity cannot be claimed');
-    if (!markers.includes(requestId)) {
-      const update = await this.admin(
-        `/users/${encodeURIComponent(user.id)}`,
-        {
-          method: 'PUT',
-          body: JSON.stringify({
-            attributes: {
-              ...user.attributes,
-              [marker]: [...markers, requestId],
-            },
-          }),
-        },
-        token,
-      );
-      if (update.status !== 204)
-        throw new Error('Keycloak reconciliation marker failed');
+    if (!created && user.enabled) {
+      if (!user.emailVerified)
+        throw new Error('Unverified Keycloak identity cannot be claimed');
+      // Exact provider-verified email is the binding for an established
+      // account. Do not mutate its unrelated provider attributes.
+      return { subject: user.id, enableRequired: false };
     }
+    if (!created && !markers.includes(requestId))
+      throw new Error('Disabled Keycloak identity cannot be claimed');
     return { subject: user.id, enableRequired: !user.enabled };
   }
 

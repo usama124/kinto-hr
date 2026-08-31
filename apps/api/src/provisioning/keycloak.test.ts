@@ -66,7 +66,7 @@ it('creates a disabled marked user, then enables it and sends bounded setup acti
   ]);
 });
 
-it('reconciles one exact existing account and preserves its other attributes', async () => {
+it('reconciles one exact verified account without mutating provider attributes', async () => {
   const mock = vi
     .fn<typeof fetch>()
     .mockResolvedValueOnce(token())
@@ -84,20 +84,14 @@ it('reconciles one exact existing account and preserves its other attributes', a
         ]),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       ),
-    )
-    .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    );
   await expect(
     new KeycloakProvisioner(config, mock).reconcileUser(
       requestId,
       'owner@example.com',
     ),
   ).resolves.toEqual({ subject, enableRequired: false });
-  expect(JSON.parse(String(mock.mock.calls[3][1]?.body))).toEqual({
-    attributes: {
-      existing: ['value'],
-      kinto_provisioning_request: [requestId],
-    },
-  });
+  expect(mock).toHaveBeenCalledTimes(3);
 });
 
 it('refuses ambiguous, disabled-unmarked, and untrusted provider identities', async () => {

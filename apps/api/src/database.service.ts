@@ -11,6 +11,8 @@ import {
   reconcileCompanyOwnerProvider,
   markCompanyOwnerInvitationDelivered,
   requestEmployeeAccountProvisioning,
+  reconcileEmployeeAccountProvider,
+  markEmployeeInvitationDelivered,
 } from '@kinto/database';
 import {
   type AuthenticatedIdentity,
@@ -68,6 +70,21 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       requestKey,
       input,
     );
+  }
+  reconcileEmployeeAccount(
+    requestId: string,
+    providerIdentity: { issuer: string; subject: string },
+    expiresAt: Date,
+  ) {
+    return reconcileEmployeeAccountProvider(
+      this.db,
+      requestId,
+      providerIdentity,
+      expiresAt,
+    );
+  }
+  markEmployeeInvitationDelivered(requestId: string, expiresAt: Date) {
+    return markEmployeeInvitationDelivered(this.db, requestId, expiresAt);
   }
   async onModuleDestroy() {
     await this.db.$disconnect();

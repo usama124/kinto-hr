@@ -31,6 +31,6 @@ Executed locally on 31 August 2026 with synthetic fixtures:
 
 The request remains `pending_identity_provider`. This slice deliberately does not call Keycloak, send setup email, store a provider subject, activate a login, create an `employee` membership, expose resend/revoke operations or add an employee-facing UI. A successful `202` is therefore not active employee access.
 
-The next bounded increment is exact provider reconciliation and expiring employee setup delivery, followed by exact-invitation trusted-MFA activation that links one provider identity, one employee and one fixed `employee` membership without affecting owner/HR roles. Membership administration, last-owner protection, security-audit UI and production delivery/reconciliation remain later gates.
+The subsequent [employee activation increment](employee-account-activation.md) now implements exact provider reconciliation, expiring setup delivery and trusted-MFA activation that links one provider identity, one employee and one fixed `employee` membership without affecting owner/HR roles. Membership administration, last-owner protection, security-audit UI and production delivery/reconciliation remain later gates.
 
 See [authentication operations](../../operations/authentication.md) and the [Phase 1 specification](../../implementation/PHASE-01-PLATFORM-PEOPLE.md).

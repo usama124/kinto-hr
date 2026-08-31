@@ -14,6 +14,9 @@ import {
   requestCompanyProvisioning,
   reconcileCompanyOwnerProvider,
   markCompanyOwnerInvitationDelivered,
+  findActiveIdentity,
+  reconcileEmployeeAccountProvider,
+  markEmployeeInvitationDelivered,
   requestEmployeeAccountProvisioning,
   type PrismaClient,
 } from '@kinto/database';
@@ -38,6 +41,8 @@ async function snapshot(db: PrismaClient) {
       'company_provisioning_requests',
       'consumer_receipts',
       'employee_account_requests',
+      'employee_identity_links',
+      'employee_invitations',
       'employees',
       'identities',
       'job_deliveries',
@@ -61,6 +66,12 @@ async function snapshot(db: PrismaClient) {
       orderBy: { id: 'asc' },
     }),
     employeeAccountRequests: await db.employeeAccountRequest.findMany({
+      orderBy: { id: 'asc' },
+    }),
+    employeeInvitations: await db.employeeInvitation.findMany({
+      orderBy: { id: 'asc' },
+    }),
+    employeeIdentityLinks: await db.employeeIdentityLink.findMany({
       orderBy: { id: 'asc' },
     }),
     platformAudit: await db.platformAuditEvent.findMany({
@@ -206,14 +217,39 @@ async function main() {
       });
       accountActors.push({ identityId: identity.id, employeeId: employee.id });
     }
-    await requestEmployeeAccountProvisioning(
+    const accountRequests = [];
+    for (const [index, account] of accountActors.entries())
+      accountRequests.push(
+        await requestEmployeeAccountProvisioning(
+          sourceApp,
+          { identityId: account.identityId, mfaVerified: true },
+          tenants[index],
+          account.employeeId,
+          randomUUID(),
+          { email: `employee-${index}@recovery.example` },
+        ),
+      );
+    const employeeProvider = {
+      issuer: 'https://recovery.example/realm',
+      subject: 'synthetic-active-employee',
+    };
+    const employeeExpiry = new Date(Date.now() + 48 * 60 * 60 * 1000);
+    await reconcileEmployeeAccountProvider(
       sourceApp,
-      { identityId: accountActors[0].identityId, mfaVerified: true },
-      tenants[0],
-      accountActors[0].employeeId,
-      randomUUID(),
-      { email: 'employee@recovery.example' },
+      accountRequests[0].accountRequestId,
+      employeeProvider,
+      employeeExpiry,
     );
+    await markEmployeeInvitationDelivered(
+      sourceApp,
+      accountRequests[0].accountRequestId,
+      employeeExpiry,
+    );
+    await findActiveIdentity(sourceApp, {
+      ...employeeProvider,
+      mfaVerified: true,
+    });
+    assert.equal(await source.employeeIdentityLink.count(), 1);
     const operator = await source.identity.create({
       data: {
         issuer: 'https://recovery.example/realm',
@@ -322,7 +358,7 @@ async function main() {
     const policies = await restored.$queryRaw<
       { enabled: boolean; forced: boolean }[]
     >`SELECT relrowsecurity AS enabled, relforcerowsecurity AS forced FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND relkind='r' AND relname <> '_prisma_migrations'`;
-    assert.equal(policies.length, 13);
+    assert.equal(policies.length, 15);
     assert.ok(policies.every((row) => row.enabled && row.forced));
     assert.deepEqual(await restoredApp.employee.findMany(), []);
     for (const tenantId of tenants) {
@@ -403,6 +439,7 @@ async function main() {
       deadPreserved: true,
       pendingCompanyProvisioningPreserved: true,
       pendingEmployeeAccountRequestPreserved: true,
+      activeEmployeeIdentityLinkPreserved: true,
     };
     await writeFile(
       join(directory, 'report.json'),
