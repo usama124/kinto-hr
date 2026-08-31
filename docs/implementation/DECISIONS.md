@@ -50,6 +50,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 31 August 2026 — owner membership administration and last-owner invariant
+
+Engineering implemented the next bounded P01-02 increment. An active owner with trusted MFA no older than five minutes can list the selected tenant's memberships, replace an active administrative membership's explicit role set or revoke it. Mutations accept only an expected version, an allowed administrative role set where applicable and a mandatory audit reason; identity, tenant, status and platform authority are server-controlled. A constrained fixed-search-path database function rechecks active owner authority, locks the tenant and refuses any mutation that would leave no active owner. Concurrent owner demotions therefore permit at most one to succeed. Employee-linked memberships remain fixed and must later be revoked through coordinated employee offboarding. These endpoints do not invite/reactivate administrators or expose the audit-event feed. See [evidence](../evidence/phase-01/membership-administration.md).
+
 ### 31 August 2026 — employee provider delivery and activation
 
 Engineering implemented the next bounded P01-02 increment. The disabled-first Keycloak adapter now reconciles an approved employee request, persists a forced-RLS invitation, requests provider-managed 48-hour setup delivery and grants access only after exact issuer/subject trusted MFA. Activation atomically creates one `employee` membership and one durable employee/identity link; an existing same-company membership, owner/employee pending collision, wrong identity, missing MFA, expiry, replay, concurrency or provider failure grants none. Established enabled accounts require exact provider-verified email and are not mutated with Kinto marker attributes; disabled retries require their request marker. Delivery remains synchronous and local-only, so durable reconciliation, revoke/resend, identity-disable synchronization, least-privilege production provider roles and operational approval remain gates. See [evidence](../evidence/phase-01/employee-account-activation.md).

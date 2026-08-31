@@ -11,6 +11,10 @@ import {
   type CompanyProvisioning,
   employeeAccountProvisioningSchema,
   type EmployeeAccountProvisioning,
+  membershipRoleUpdateSchema,
+  type MembershipRoleUpdate,
+  membershipRevocationSchema,
+  type MembershipRevocation,
 } from '@kinto/contracts';
 import {
   assertCanActivate,
@@ -372,6 +376,155 @@ export async function requestEmployeeAccountProvisioning(
     status: row.provisioning_status,
     replayed: row.outcome === 'existing',
   };
+}
+
+type MembershipAdministrationActor = {
+  identityId: string;
+  mfaVerified: boolean;
+};
+
+export async function listTenantMemberships(
+  db: PrismaClient,
+  actor: MembershipAdministrationActor,
+  tenantId: string,
+) {
+  tenantIdSchema.parse(actor.identityId);
+  tenantIdSchema.parse(tenantId);
+  const rows = await db.$queryRaw<
+    {
+      outcome: 'ok' | 'forbidden';
+      membership_id: string | null;
+      identity_id: string | null;
+      membership_status: string | null;
+      membership_roles: string[] | null;
+      membership_version: number | null;
+      employee_id: string | null;
+      membership_created_at: Date | null;
+    }[]
+  >`SELECT * FROM public.list_tenant_memberships(
+    ${actor.identityId}::uuid,
+    ${actor.mfaVerified},
+    ${tenantId}::uuid
+  )`;
+  if (rows[0]?.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  return rows.map((row) => {
+    if (
+      row.outcome !== 'ok' ||
+      !row.membership_id ||
+      !row.identity_id ||
+      !row.membership_status ||
+      !row.membership_roles ||
+      !row.membership_version ||
+      !row.membership_created_at
+    )
+      throw new Error('Invalid membership list result');
+    return {
+      id: row.membership_id,
+      identityId: row.identity_id,
+      status: row.membership_status,
+      roles: tenantRoleSchema.array().min(1).max(5).parse(row.membership_roles),
+      version: row.membership_version,
+      employeeId: row.employee_id,
+      createdAt: row.membership_created_at,
+    };
+  });
+}
+
+async function mutateTenantMembership(
+  db: PrismaClient,
+  actor: MembershipAdministrationActor,
+  tenantId: string,
+  membershipId: string,
+  change: MembershipRoleUpdate | MembershipRevocation,
+  revoke: boolean,
+) {
+  tenantIdSchema.parse(actor.identityId);
+  tenantIdSchema.parse(tenantId);
+  tenantIdSchema.parse(membershipId);
+  const roles = 'roles' in change ? change.roles : null;
+  const rows = await db.$queryRaw<
+    {
+      outcome:
+        | 'updated'
+        | 'forbidden'
+        | 'not_found'
+        | 'stale'
+        | 'invalid_state'
+        | 'employee_linked'
+        | 'last_owner'
+        | 'conflict';
+      membership_status: string | null;
+      membership_roles: string[] | null;
+      membership_version: number | null;
+    }[]
+  >`SELECT * FROM public.mutate_tenant_membership(
+    ${actor.identityId}::uuid,
+    ${actor.mfaVerified},
+    ${tenantId}::uuid,
+    ${membershipId}::uuid,
+    ${change.expectedVersion}::integer,
+    ${roles}::text[],
+    ${revoke},
+    ${change.reason}::varchar,
+    ${randomUUID()}::uuid
+  )`;
+  const row = rows[0];
+  if (!row || row.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (row.outcome === 'not_found') throw new DomainError('NOT_FOUND');
+  if (row.outcome === 'stale') throw new DomainError('STALE_VERSION');
+  if (
+    row.outcome === 'invalid_state' ||
+    row.outcome === 'employee_linked' ||
+    row.outcome === 'last_owner'
+  )
+    throw new DomainError('INVALID_STATE');
+  if (row.outcome === 'conflict') throw new DomainError('CONFLICT');
+  if (
+    !row.membership_status ||
+    !row.membership_roles ||
+    !row.membership_version
+  )
+    throw new Error('Invalid membership mutation result');
+  return {
+    id: membershipId,
+    status: row.membership_status,
+    roles: tenantRoleSchema.array().min(1).max(5).parse(row.membership_roles),
+    version: row.membership_version,
+  };
+}
+
+export function updateTenantMembershipRoles(
+  db: PrismaClient,
+  actor: MembershipAdministrationActor,
+  tenantId: string,
+  membershipId: string,
+  input: MembershipRoleUpdate,
+) {
+  return mutateTenantMembership(
+    db,
+    actor,
+    tenantId,
+    membershipId,
+    membershipRoleUpdateSchema.parse(input),
+    false,
+  );
+}
+
+export function revokeTenantMembership(
+  db: PrismaClient,
+  actor: MembershipAdministrationActor,
+  tenantId: string,
+  membershipId: string,
+  input: MembershipRevocation,
+) {
+  return mutateTenantMembership(
+    db,
+    actor,
+    tenantId,
+    membershipId,
+    membershipRevocationSchema.parse(input),
+    true,
+  );
 }
 export async function createEmployeeDraft(
   db: PrismaClient,

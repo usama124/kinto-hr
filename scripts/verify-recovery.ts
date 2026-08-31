@@ -18,6 +18,7 @@ import {
   reconcileEmployeeAccountProvider,
   markEmployeeInvitationDelivered,
   requestEmployeeAccountProvisioning,
+  updateTenantMembershipRoles,
   type PrismaClient,
 } from '@kinto/database';
 import { processEvent } from '../apps/worker/src/processor';
@@ -189,7 +190,12 @@ async function main() {
     const tenants = [randomUUID(), randomUUID()];
     const actor = randomUUID();
     const refs: { tenantId: string; eventId: string }[] = [];
-    const accountActors: { identityId: string; employeeId: string }[] = [];
+    const accountActors: {
+      identityId: string;
+      membershipId: string;
+      employeeId: string;
+    }[] = [];
+    const membershipOwners: string[] = [];
     for (const tenantId of tenants) {
       await source.tenant.create({
         data: {
@@ -212,10 +218,24 @@ async function main() {
       const identity = await source.identity.create({
         data: { issuer: 'https://recovery.example/realm', subject: tenantId },
       });
-      await source.membership.create({
+      const membership = await source.membership.create({
         data: { tenantId, identityId: identity.id, roles: ['hr_admin'] },
       });
-      accountActors.push({ identityId: identity.id, employeeId: employee.id });
+      accountActors.push({
+        identityId: identity.id,
+        membershipId: membership.id,
+        employeeId: employee.id,
+      });
+      const owner = await source.identity.create({
+        data: {
+          issuer: 'https://recovery.example/realm',
+          subject: `owner-${tenantId}`,
+        },
+      });
+      await source.membership.create({
+        data: { tenantId, identityId: owner.id, roles: ['owner'] },
+      });
+      membershipOwners.push(owner.id);
     }
     const accountRequests = [];
     for (const [index, account] of accountActors.entries())
@@ -229,6 +249,17 @@ async function main() {
           { email: `employee-${index}@recovery.example` },
         ),
       );
+    await updateTenantMembershipRoles(
+      sourceApp,
+      { identityId: membershipOwners[0], mfaVerified: true },
+      tenants[0],
+      accountActors[0].membershipId,
+      {
+        expectedVersion: 1,
+        roles: ['hr_admin', 'payroll_preparer'],
+        reason: 'Synthetic recovery membership change',
+      },
+    );
     const employeeProvider = {
       issuer: 'https://recovery.example/realm',
       subject: 'synthetic-active-employee',
@@ -440,6 +471,7 @@ async function main() {
       pendingCompanyProvisioningPreserved: true,
       pendingEmployeeAccountRequestPreserved: true,
       activeEmployeeIdentityLinkPreserved: true,
+      membershipAdministrationAuditPreserved: true,
     };
     await writeFile(
       join(directory, 'report.json'),
