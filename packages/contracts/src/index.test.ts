@@ -7,6 +7,8 @@ import {
   tenantIdSchema,
   companyProvisioningSchema,
   employeeAccountProvisioningSchema,
+  membershipRoleUpdateSchema,
+  membershipRevocationSchema,
 } from './index';
 it('trims names while preserving employee identifiers as strings', () => {
   expect(
@@ -106,4 +108,46 @@ it('requires explicit authenticated identity claims without accepting supplied r
       .success,
   ).toBe(false);
   expect(tenantRoleSchema.safeParse('platform_operator').success).toBe(false);
+});
+it('accepts only canonical administrative membership mutations', () => {
+  expect(
+    membershipRoleUpdateSchema.parse({
+      expectedVersion: 2,
+      roles: ['payroll_approver', 'owner'],
+      reason: 'Owner approved access change',
+    }),
+  ).toEqual({
+    expectedVersion: 2,
+    roles: ['owner', 'payroll_approver'],
+    reason: 'Owner approved access change',
+  });
+  for (const input of [
+    { expectedVersion: 1, roles: ['employee'], reason: 'Invalid role' },
+    {
+      expectedVersion: 1,
+      roles: ['owner', 'owner'],
+      reason: 'Duplicate role',
+    },
+    { expectedVersion: 1, roles: ['owner'], reason: 'ok' },
+    {
+      expectedVersion: 1,
+      roles: ['owner'],
+      reason: 'Valid reason',
+      tenantId: crypto.randomUUID(),
+    },
+  ])
+    expect(membershipRoleUpdateSchema.safeParse(input).success).toBe(false);
+  expect(
+    membershipRevocationSchema.safeParse({
+      expectedVersion: 1,
+      reason: 'Access is no longer required',
+    }).success,
+  ).toBe(true);
+  expect(
+    membershipRevocationSchema.safeParse({
+      expectedVersion: 1,
+      reason: 'Valid reason',
+      status: 'revoked',
+    }).success,
+  ).toBe(false);
 });

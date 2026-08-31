@@ -13,11 +13,16 @@ import {
   requestEmployeeAccountProvisioning,
   reconcileEmployeeAccountProvider,
   markEmployeeInvitationDelivered,
+  listTenantMemberships,
+  updateTenantMembershipRoles,
+  revokeTenantMembership,
 } from '@kinto/database';
 import {
   type AuthenticatedIdentity,
   type CompanyProvisioning,
   type EmployeeAccountProvisioning,
+  type MembershipRoleUpdate,
+  type MembershipRevocation,
 } from '@kinto/contracts';
 import { readConfig } from './config';
 @Injectable()
@@ -85,6 +90,40 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
   }
   markEmployeeInvitationDelivered(requestId: string, expiresAt: Date) {
     return markEmployeeInvitationDelivered(this.db, requestId, expiresAt);
+  }
+  listMemberships(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+  ) {
+    return listTenantMemberships(this.db, actor, tenantId);
+  }
+  updateMembershipRoles(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    membershipId: string,
+    input: MembershipRoleUpdate,
+  ) {
+    return updateTenantMembershipRoles(
+      this.db,
+      actor,
+      tenantId,
+      membershipId,
+      input,
+    );
+  }
+  revokeMembership(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    membershipId: string,
+    input: MembershipRevocation,
+  ) {
+    return revokeTenantMembership(
+      this.db,
+      actor,
+      tenantId,
+      membershipId,
+      input,
+    );
   }
   async onModuleDestroy() {
     await this.db.$disconnect();

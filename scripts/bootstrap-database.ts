@@ -115,7 +115,7 @@ try {
     'GRANT SELECT, INSERT, UPDATE ON company_provisioning_requests, owner_invitations TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
-    'GRANT SELECT, INSERT ON memberships TO kinto_control_owner',
+    'GRANT SELECT, INSERT, UPDATE ON memberships TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
     'GRANT SELECT ON employees TO kinto_control_owner',
@@ -142,6 +142,8 @@ try {
     'public.request_employee_account_provisioning(uuid, boolean, uuid, uuid, uuid, uuid, uuid, varchar)',
     'public.reconcile_employee_account_provider(uuid, uuid, uuid, varchar, varchar, timestamptz, uuid)',
     'public.mark_employee_invitation_delivered(uuid, timestamptz, uuid)',
+    'public.list_tenant_memberships(uuid, boolean, uuid)',
+    'public.mutate_tenant_membership(uuid, boolean, uuid, uuid, integer, text[], boolean, varchar, uuid)',
   ]) {
     await database.$executeRawUnsafe(
       `ALTER FUNCTION ${signature} OWNER TO kinto_control_owner`,
