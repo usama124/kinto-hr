@@ -92,6 +92,10 @@ try {
     'CREATE POLICY platform_control_select ON employees FOR SELECT TO kinto_control_owner USING (true)',
     'DROP POLICY IF EXISTS platform_control ON employee_account_requests',
     'CREATE POLICY platform_control ON employee_account_requests FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
+    'DROP POLICY IF EXISTS platform_control ON employee_invitations',
+    'CREATE POLICY platform_control ON employee_invitations FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
+    'DROP POLICY IF EXISTS platform_control ON employee_identity_links',
+    'CREATE POLICY platform_control ON employee_identity_links FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control_insert ON audit_events',
     'CREATE POLICY platform_control_insert ON audit_events FOR INSERT TO kinto_control_owner WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control_insert ON platform_audit_events',
@@ -117,7 +121,10 @@ try {
     'GRANT SELECT ON employees TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
-    'GRANT SELECT, INSERT ON employee_account_requests TO kinto_control_owner',
+    'GRANT SELECT, INSERT, UPDATE ON employee_account_requests, employee_invitations TO kinto_control_owner',
+  );
+  await database.$executeRawUnsafe(
+    'GRANT SELECT, INSERT ON employee_identity_links TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
     'GRANT INSERT ON audit_events, platform_audit_events TO kinto_control_owner',
@@ -131,8 +138,10 @@ try {
   for (const signature of [
     'public.reconcile_company_owner_provider(uuid, uuid, uuid, varchar, varchar, timestamptz, uuid, uuid)',
     'public.mark_company_owner_invitation_delivered(uuid, timestamptz, uuid, uuid)',
-    'public.resolve_login_identity(varchar, varchar, boolean, uuid, uuid, uuid, uuid)',
+    'public.resolve_login_identity(varchar, varchar, boolean, uuid, uuid, uuid, uuid, uuid)',
     'public.request_employee_account_provisioning(uuid, boolean, uuid, uuid, uuid, uuid, uuid, varchar)',
+    'public.reconcile_employee_account_provider(uuid, uuid, uuid, varchar, varchar, timestamptz, uuid)',
+    'public.mark_employee_invitation_delivered(uuid, timestamptz, uuid)',
   ]) {
     await database.$executeRawUnsafe(
       `ALTER FUNCTION ${signature} OWNER TO kinto_control_owner`,

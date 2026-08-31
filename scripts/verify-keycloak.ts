@@ -54,7 +54,11 @@ const realm = `kinto_test_${id}`;
 const container = `kinto-keycloak-test-${id}`;
 const tenantId = randomUUID();
 const userId = randomUUID();
+const employeeUserId = randomUUID();
+const employeeId = randomUUID();
 const username = 'synthetic-owner';
+const employeeUsername = 'synthetic-invited-employee';
+const employeeEmail = `${employeeUsername}@kinto.test`;
 const password = randomBytes(24).toString('base64url');
 const newPassword = randomBytes(24).toString('base64url');
 const otpSecret = randomBytes(20).toString('hex');
@@ -70,6 +74,7 @@ let preResetContext: Awaited<ReturnType<Browser['newContext']>> | undefined;
 let store: AuthStore | undefined;
 let identityId: string | undefined;
 let invitedIdentityId: string | undefined;
+let employeeIdentityId: string | undefined;
 let invitedTenantId: string | undefined;
 let stage = 'setup';
 let scenarios = 0;
@@ -197,6 +202,12 @@ try {
         password,
         otpSecret,
       },
+      {
+        id: employeeUserId,
+        username: employeeUsername,
+        password,
+        otpSecret,
+      },
     ],
   });
   await mkdir(`${directory}/import`, { mode: 0o700 });
@@ -276,6 +287,15 @@ try {
   });
   await db.membership.create({
     data: { tenantId, identityId, roles: ['owner'] },
+  });
+  await db.employee.create({
+    data: {
+      id: employeeId,
+      tenantId,
+      employeeNumber: 'KEYCLOAK-EMPLOYEE-001',
+      name: 'Synthetic invited employee',
+      status: 'active',
+    },
   });
   const api = start(['apps/api/dist/main.cjs'], {
     NODE_ENV: 'test',
@@ -571,6 +591,84 @@ try {
     },
   );
   await scenario(
+    'company owner delivers and activates one fixed employee account',
+    async () => {
+      const { cookie, session } = await sessionFor(page);
+      const messageCount = mail.messages.length;
+      const response = await fetch(
+        `http://127.0.0.1:${apiPort}/api/v1/tenants/${tenantId}/employees/${employeeId}/account-invitations`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Cookie: `__Host-kinto-session=${cookie.value}`,
+            Origin: proxy!.origin,
+            'X-CSRF-Token': session.csrf,
+            'Idempotency-Key': randomUUID(),
+          },
+          body: JSON.stringify({ email: employeeEmail }),
+        },
+      );
+      assert.equal(response.status, 202);
+      const result = (await response.json()) as {
+        accountRequestId: string;
+        status: string;
+      };
+      assert.equal(result.status, 'pending_activation');
+      assert(!JSON.stringify(result).includes(employeeEmail));
+      await until(async () => mail.messages.length === messageCount + 1);
+      assert.equal(await db.membership.count({ where: { tenantId } }), 1);
+
+      const employeeContext = await isolatedContext();
+      const employeePage = await employeeContext.newPage();
+      await employeePage.goto(`${proxy!.origin}/login`);
+      await employeePage
+        .getByRole('link', { name: 'Continue to sign in' })
+        .click();
+      await employeePage.locator('#username').fill(employeeUsername);
+      await employeePage.locator('#password').fill(password);
+      await employeePage.locator('#kc-login').click();
+      await expect(employeePage.locator('#otp')).toBeVisible();
+      const windowRemaining = 30000 - (Date.now() % 30000);
+      if (windowRemaining < 6000)
+        await employeePage.waitForTimeout(windowRemaining + 250);
+      await employeePage.locator('#otp').fill(totp(otpSecret));
+      await employeePage.locator('#kc-login').click();
+      await expect(employeePage).toHaveURL(`${proxy!.origin}/login`);
+      const employeeSession = await sessionFor(employeePage);
+      const membership = await db.membership.findFirstOrThrow({
+        where: { tenantId, identityId: employeeSession.session.identityId },
+      });
+      employeeIdentityId = membership.identityId;
+      assert.deepEqual(membership.roles, ['employee']);
+      assert.equal(membership.status, 'active');
+      assert.deepEqual(
+        await db.employeeIdentityLink.findUniqueOrThrow({
+          where: { tenantId_employeeId: { tenantId, employeeId } },
+          select: { identityId: true, membershipId: true },
+        }),
+        { identityId: employeeIdentityId, membershipId: membership.id },
+      );
+      assert.equal(
+        (
+          await db.employeeAccountRequest.findUniqueOrThrow({
+            where: { id: result.accountRequestId },
+          })
+        ).status,
+        'active',
+      );
+      assert.equal(
+        (
+          await db.employeeInvitation.findUniqueOrThrow({
+            where: { requestId: result.accountRequestId },
+          })
+        ).status,
+        'accepted',
+      );
+      await employeeContext.close();
+    },
+  );
+  await scenario(
     'logout clears the Secure browser cookie and the Redis session',
     async () => {
       const { cookie } = await sessionFor(page);
@@ -855,9 +953,18 @@ try {
         select: { identityId: true },
       })
     )?.identityId;
-  const fixtureIdentityIds = [identityId, invitedIdentityId].filter(
-    (value): value is string => Boolean(value),
-  );
+  if (!employeeIdentityId)
+    employeeIdentityId = (
+      await db.employeeInvitation.findFirst({
+        where: { tenantId },
+        select: { identityId: true },
+      })
+    )?.identityId;
+  const fixtureIdentityIds = [
+    identityId,
+    invitedIdentityId,
+    employeeIdentityId,
+  ].filter((value): value is string => Boolean(value));
   if (fixtureIdentityIds.length)
     await db.platformAuditEvent.deleteMany({
       where: { actorId: { in: fixtureIdentityIds } },
@@ -868,7 +975,19 @@ try {
   await db.auditEvent.deleteMany({
     where: { tenantId: { in: fixtureTenantIds } },
   });
+  await db.employeeIdentityLink.deleteMany({
+    where: { tenantId: { in: fixtureTenantIds } },
+  });
+  await db.employeeInvitation.deleteMany({
+    where: { tenantId: { in: fixtureTenantIds } },
+  });
+  await db.employeeAccountRequest.deleteMany({
+    where: { tenantId: { in: fixtureTenantIds } },
+  });
   await db.membership.deleteMany({
+    where: { tenantId: { in: fixtureTenantIds } },
+  });
+  await db.employee.deleteMany({
     where: { tenantId: { in: fixtureTenantIds } },
   });
   if (invitedTenantId) {

@@ -22,12 +22,15 @@ import {
   type AuthRequest,
 } from '../auth/controller';
 import { DatabaseService } from '../database.service';
+import { OwnerProvisioningService } from '../provisioning/service';
 
 @Controller('tenants/:tenantId/employees/:employeeId/account-invitations')
 export class EmployeeAccountsController {
   constructor(
     @Inject(AuthService) private readonly auth: AuthService,
     @Inject(DatabaseService) private readonly database: DatabaseService,
+    @Inject(OwnerProvisioningService)
+    private readonly accountProvisioning: OwnerProvisioningService,
   ) {}
 
   @Post()
@@ -56,7 +59,7 @@ export class EmployeeAccountsController {
     )
       throw new BadRequestException();
     const now = Math.floor(Date.now() / 1000);
-    return this.database.provisionEmployeeAccount(
+    const provisioned = await this.database.provisionEmployeeAccount(
       {
         identityId: session.identityId,
         mfaVerified:
@@ -69,5 +72,10 @@ export class EmployeeAccountsController {
       parsedKey.data,
       input.data,
     );
+    const employee = await this.accountProvisioning.attemptEmployee(
+      provisioned.accountRequestId,
+      input.data.email,
+    );
+    return employee ? { ...provisioned, status: employee.status } : provisioned;
   }
 }

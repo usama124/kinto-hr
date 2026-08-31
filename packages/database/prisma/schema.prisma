@@ -20,6 +20,8 @@ model Tenant {
   provisioningRequest CompanyProvisioningRequest?
   ownerInvitations OwnerInvitation[]
   employeeAccountRequests EmployeeAccountRequest[]
+  employeeInvitations EmployeeInvitation[]
+  employeeIdentityLinks EmployeeIdentityLink[]
   @@map("tenants")
 }
 model Identity {
@@ -34,6 +36,8 @@ model Identity {
   platformAuditEvents PlatformAuditEvent[]
   ownerInvitations OwnerInvitation[]
   employeeAccountRequests EmployeeAccountRequest[]
+  employeeInvitations EmployeeInvitation[]
+  employeeIdentityLinks EmployeeIdentityLink[]
   @@unique([issuer, subject])
   @@map("identities")
 }
@@ -97,7 +101,9 @@ model Membership {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   identity Identity @relation(fields: [identityId], references: [id], onDelete: Restrict)
+  employeeIdentityLink EmployeeIdentityLink?
   @@unique([tenantId, identityId])
+  @@unique([tenantId, id])
   @@map("memberships")
 }
 model Employee {
@@ -110,6 +116,8 @@ model Employee {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   employeeAccountRequest EmployeeAccountRequest?
+  employeeInvitation EmployeeInvitation?
+  employeeIdentityLink EmployeeIdentityLink?
   @@unique([tenantId, id])
   @@unique([tenantId, employeeNumber])
   @@index([tenantId, status])
@@ -128,9 +136,50 @@ model EmployeeAccountRequest {
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   employee Employee @relation(fields: [tenantId, employeeId], references: [tenantId, id], onDelete: Restrict)
   requestedBy Identity @relation(fields: [requestedByIdentityId], references: [id], onDelete: Restrict)
+  invitation EmployeeInvitation?
   @@unique([tenantId, requestKey])
   @@unique([tenantId, employeeId])
   @@map("employee_account_requests")
+}
+model EmployeeInvitation {
+  id String @id @db.Uuid
+  requestId String @unique @map("request_id") @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  employeeId String @map("employee_id") @db.Uuid
+  identityId String @map("identity_id") @db.Uuid
+  status String @default("pending_delivery") @db.VarChar(30)
+  expiresAt DateTime @map("expires_at") @db.Timestamptz()
+  deliveredAt DateTime? @map("delivered_at") @db.Timestamptz()
+  acceptedAt DateTime? @map("accepted_at") @db.Timestamptz()
+  version Int @default(1)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  request EmployeeAccountRequest @relation(fields: [requestId], references: [id], onDelete: Restrict)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  employee Employee @relation(fields: [tenantId, employeeId], references: [tenantId, id], onDelete: Restrict)
+  identity Identity @relation(fields: [identityId], references: [id], onDelete: Restrict)
+  employeeIdentityLink EmployeeIdentityLink?
+  @@unique([tenantId, employeeId])
+  @@unique([tenantId, identityId])
+  @@index([status, expiresAt])
+  @@map("employee_invitations")
+}
+model EmployeeIdentityLink {
+  id String @id @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  employeeId String @map("employee_id") @db.Uuid
+  identityId String @map("identity_id") @db.Uuid
+  membershipId String @unique @map("membership_id") @db.Uuid
+  invitationId String @unique @map("invitation_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  employee Employee @relation(fields: [tenantId, employeeId], references: [tenantId, id], onDelete: Restrict)
+  identity Identity @relation(fields: [identityId], references: [id], onDelete: Restrict)
+  membership Membership @relation(fields: [tenantId, membershipId], references: [tenantId, id], onDelete: Restrict)
+  invitation EmployeeInvitation @relation(fields: [invitationId], references: [id], onDelete: Restrict)
+  @@unique([tenantId, employeeId])
+  @@unique([tenantId, identityId])
+  @@unique([tenantId, membershipId])
+  @@map("employee_identity_links")
 }
 model AuditEvent {
   id String @id @default(uuid()) @db.Uuid

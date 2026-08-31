@@ -50,6 +50,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 31 August 2026 — employee provider delivery and activation
+
+Engineering implemented the next bounded P01-02 increment. The disabled-first Keycloak adapter now reconciles an approved employee request, persists a forced-RLS invitation, requests provider-managed 48-hour setup delivery and grants access only after exact issuer/subject trusted MFA. Activation atomically creates one `employee` membership and one durable employee/identity link; an existing same-company membership, owner/employee pending collision, wrong identity, missing MFA, expiry, replay, concurrency or provider failure grants none. Established enabled accounts require exact provider-verified email and are not mutated with Kinto marker attributes; disabled retries require their request marker. Delivery remains synchronous and local-only, so durable reconciliation, revoke/resend, identity-disable synchronization, least-privilege production provider roles and operational approval remain gates. See [evidence](../evidence/phase-01/employee-account-activation.md).
+
 ### 31 August 2026 — protected employee-account request
 
 Engineering implemented the next bounded P01-02 increment. An active owner or `hr_admin` with trusted MFA no older than five minutes can request account access only for an existing draft/active employee in the same tenant. The request accepts only a normalized email; the eventual role is fixed to `employee`. A forced-RLS table and constrained control-owner function serialize concurrent requests, make exact retries idempotent, reject changed bindings and write one tenant audit event. The boundary deliberately creates no provider identity or membership, so a successful request grants no access. Provider reconciliation, expiring setup delivery and exact-subject activation remain the next P01-02 gate. See [evidence](../evidence/phase-01/employee-account-requests.md).
