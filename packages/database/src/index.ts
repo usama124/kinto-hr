@@ -9,6 +9,8 @@ import {
   type AuthenticatedIdentity,
   companyProvisioningSchema,
   type CompanyProvisioning,
+  employeeAccountProvisioningSchema,
+  type EmployeeAccountProvisioning,
 } from '@kinto/contracts';
 import {
   assertCanActivate,
@@ -245,6 +247,47 @@ export async function requestCompanyProvisioning(
   return {
     tenantId: row.tenant_id,
     provisioningRequestId: row.provisioning_request_id,
+    status: row.provisioning_status,
+    replayed: row.outcome === 'existing',
+  };
+}
+export async function requestEmployeeAccountProvisioning(
+  db: PrismaClient,
+  actor: { identityId: string; mfaVerified: boolean },
+  tenantId: string,
+  employeeId: string,
+  requestKey: string,
+  input: EmployeeAccountProvisioning,
+) {
+  tenantIdSchema.parse(actor.identityId);
+  tenantIdSchema.parse(tenantId);
+  tenantIdSchema.parse(employeeId);
+  tenantIdSchema.parse(requestKey);
+  const account = employeeAccountProvisioningSchema.parse(input);
+  const rows = await db.$queryRaw<
+    {
+      outcome: 'created' | 'existing' | 'forbidden' | 'not_found' | 'conflict';
+      account_request_id: string | null;
+      provisioning_status: string | null;
+    }[]
+  >`SELECT * FROM public.request_employee_account_provisioning(
+    ${actor.identityId}::uuid,
+    ${actor.mfaVerified},
+    ${tenantId}::uuid,
+    ${employeeId}::uuid,
+    ${requestKey}::uuid,
+    ${randomUUID()}::uuid,
+    ${randomUUID()}::uuid,
+    ${account.email}::varchar
+  )`;
+  const row = rows[0];
+  if (!row || row.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (row.outcome === 'not_found') throw new DomainError('NOT_FOUND');
+  if (row.outcome === 'conflict') throw new DomainError('CONFLICT');
+  if (!row.account_request_id || !row.provisioning_status)
+    throw new Error('Invalid employee account provisioning result');
+  return {
+    accountRequestId: row.account_request_id,
     status: row.provisioning_status,
     replayed: row.outcome === 'existing',
   };

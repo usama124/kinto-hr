@@ -10,10 +10,12 @@ import {
   requestCompanyProvisioning,
   reconcileCompanyOwnerProvider,
   markCompanyOwnerInvitationDelivered,
+  requestEmployeeAccountProvisioning,
 } from '@kinto/database';
 import {
   type AuthenticatedIdentity,
   type CompanyProvisioning,
+  type EmployeeAccountProvisioning,
 } from '@kinto/contracts';
 import { readConfig } from './config';
 @Injectable()
@@ -50,6 +52,22 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
   }
   markOwnerInvitationDelivered(requestId: string, expiresAt: Date) {
     return markCompanyOwnerInvitationDelivered(this.db, requestId, expiresAt);
+  }
+  provisionEmployeeAccount(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    employeeId: string,
+    requestKey: string,
+    input: EmployeeAccountProvisioning,
+  ) {
+    return requestEmployeeAccountProvisioning(
+      this.db,
+      actor,
+      tenantId,
+      employeeId,
+      requestKey,
+      input,
+    );
   }
   async onModuleDestroy() {
     await this.db.$disconnect();

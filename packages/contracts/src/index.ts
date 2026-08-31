@@ -39,3 +39,9 @@ export const companyProvisioningSchema = z.strictObject({
   initialOwnerEmail: z.string().trim().toLowerCase().pipe(z.email().max(320)),
 });
 export type CompanyProvisioning = z.infer<typeof companyProvisioningSchema>;
+export const employeeAccountProvisioningSchema = z.strictObject({
+  email: z.string().trim().toLowerCase().pipe(z.email().max(320)),
+});
+export type EmployeeAccountProvisioning = z.infer<
+  typeof employeeAccountProvisioningSchema
+>;

@@ -6,6 +6,7 @@ import {
   healthSchema,
   tenantIdSchema,
   companyProvisioningSchema,
+  employeeAccountProvisioningSchema,
 } from './index';
 it('trims names while preserving employee identifiers as strings', () => {
   expect(
@@ -48,6 +49,19 @@ it('normalizes only approved company provisioning fields', () => {
     },
   ])
     expect(companyProvisioningSchema.safeParse(input).success).toBe(false);
+});
+it('accepts only a normalized email for employee account requests', () => {
+  expect(
+    employeeAccountProvisioningSchema.parse({ email: ' Staff@Example.COM ' }),
+  ).toEqual({ email: 'staff@example.com' });
+  for (const input of [
+    { email: 'invalid' },
+    { email: 'staff@example.com', role: 'owner' },
+    { email: 'staff@example.com', tenantId: crypto.randomUUID() },
+  ])
+    expect(employeeAccountProvisioningSchema.safeParse(input).success).toBe(
+      false,
+    );
 });
 it.each([
   { employeeNumber: '', name: 'Name' },
