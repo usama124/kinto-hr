@@ -50,6 +50,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 30 August 2026 — initial-owner provider invitation
+
+Engineering implemented the next bounded P01-02 increment. Account provisioning stays disabled unless the reviewed Keycloak LoA 2 profile and a dedicated management client are both configured. Provider creation is disabled-first; exact-email reconciliation requires an unambiguous identity and request marker. Kinto stores no setup token/password and records the provider identity/invitation before requesting 48-hour verify-password-TOTP delivery. Exact-subject trusted MFA atomically grants the only first-owner membership; wrong identity, missing MFA, expiry, replay, concurrency and partial provider failure grant none. The synchronous adapter is a local foundation boundary, not durable production delivery: least-privilege provider roles, retry/reconciliation, revoke/resend, identity-disable synchronization, email infrastructure and operational approval remain gates. See [evidence](../evidence/phase-01/owner-invitations.md).
+
 ### 30 August 2026 — protected company-provisioning request
 
 Engineering implemented the first bounded administrator-provisioning increment. Platform operators are global, separate from customer memberships, and the first operator requires an explicit migration-authorized, audited setup operation with exact OIDC identity. The protected API requires an existing session, same-origin CSRF, recent trusted MFA, active operator authority and a caller idempotency key. One constrained PostgreSQL function atomically creates the company, a `pending_identity_provider` intended-owner request and tenant/platform audit events; concurrent replay cannot duplicate them. No owner identity or membership is created yet, so provider failure grants no access. Provider account reconciliation, digest-only invitation delivery/activation, first-owner membership and later-operator administration remain the next P01-02 gate. See [evidence](../evidence/phase-01/company-provisioning.md).

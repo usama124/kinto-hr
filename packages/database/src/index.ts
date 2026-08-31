@@ -33,24 +33,113 @@ export async function assertSafeRuntimeRole(db: PrismaClient): Promise<void> {
   if (rows.length !== 1 || rows[0].unsafe)
     throw new Error('Unsafe runtime database role');
 }
-// Login only resolves previously provisioned identities. It never creates users
-// or memberships; company authorization remains in inAuthorizedTenant.
+// Login resolves an active identity and may atomically accept its single
+// pre-provisioned first-owner invitation after trusted MFA. It never creates a
+// provider identity or tenant; company authorization remains in inAuthorizedTenant.
 export async function findActiveIdentity(
   db: PrismaClient,
   authenticatedIdentity: AuthenticatedIdentity,
-): Promise<{ id: string } | null> {
+  invitationId?: string,
+): Promise<{ id: string; ownerActivated: boolean } | null> {
   const principal = authenticatedIdentitySchema.parse(authenticatedIdentity);
+  if (invitationId) tenantIdSchema.parse(invitationId);
   return db.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT set_config('app.identity_issuer', ${principal.issuer}, true), set_config('app.identity_subject', ${principal.subject}, true)`;
-    return tx.identity.findFirst({
-      where: {
-        issuer: principal.issuer,
-        subject: principal.subject,
-        status: 'active',
-      },
-      select: { id: true },
-    });
+    const rows = await tx.$queryRaw<
+      { identity_id: string; owner_activated: boolean }[]
+    >`SELECT * FROM public.resolve_login_identity(
+      ${principal.issuer}::varchar,
+      ${principal.subject}::varchar,
+      ${principal.mfaVerified},
+      ${invitationId ?? null}::uuid,
+      ${randomUUID()}::uuid,
+      ${randomUUID()}::uuid,
+      ${randomUUID()}::uuid
+    )`;
+    return rows[0]
+      ? {
+          id: rows[0].identity_id,
+          ownerActivated: rows[0].owner_activated,
+        }
+      : null;
   });
+}
+
+export async function reconcileCompanyOwnerProvider(
+  db: PrismaClient,
+  requestId: string,
+  providerIdentity: { issuer: string; subject: string },
+  expiresAt: Date,
+) {
+  tenantIdSchema.parse(requestId);
+  const principal = authenticatedIdentitySchema.parse({
+    ...providerIdentity,
+    mfaVerified: false,
+  });
+  if (!Number.isFinite(expiresAt.getTime())) throw new DomainError('CONFLICT');
+  const rows = await db.$queryRaw<
+    {
+      outcome: 'created' | 'existing' | 'not_found' | 'forbidden' | 'conflict';
+      invitation_id: string | null;
+      invitation_status: string | null;
+      invitation_expires_at: Date | null;
+    }[]
+  >`SELECT * FROM public.reconcile_company_owner_provider(
+    ${requestId}::uuid,
+    ${randomUUID()}::uuid,
+    ${randomUUID()}::uuid,
+    ${principal.issuer}::varchar,
+    ${principal.subject}::varchar,
+    ${expiresAt}::timestamptz,
+    ${randomUUID()}::uuid,
+    ${randomUUID()}::uuid
+  )`;
+  const row = rows[0];
+  if (!row || row.outcome === 'not_found') throw new DomainError('NOT_FOUND');
+  if (row.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (row.outcome === 'conflict') throw new DomainError('CONFLICT');
+  if (
+    !row.invitation_id ||
+    !row.invitation_status ||
+    !row.invitation_expires_at
+  )
+    throw new Error('Invalid provider reconciliation result');
+  return {
+    invitationId: row.invitation_id,
+    status: row.invitation_status,
+    expiresAt: row.invitation_expires_at,
+    replayed: row.outcome === 'existing',
+  };
+}
+
+export async function markCompanyOwnerInvitationDelivered(
+  db: PrismaClient,
+  requestId: string,
+  expiresAt: Date,
+) {
+  tenantIdSchema.parse(requestId);
+  if (!Number.isFinite(expiresAt.getTime())) throw new DomainError('CONFLICT');
+  const rows = await db.$queryRaw<
+    {
+      outcome: 'updated' | 'existing' | 'not_found' | 'forbidden' | 'conflict';
+      invitation_status: string | null;
+    }[]
+  >`SELECT * FROM public.mark_company_owner_invitation_delivered(
+    ${requestId}::uuid,
+    ${expiresAt}::timestamptz,
+    ${randomUUID()}::uuid,
+    ${randomUUID()}::uuid
+  )`;
+  const row = rows[0];
+  if (!row || row.outcome === 'not_found') throw new DomainError('NOT_FOUND');
+  if (row.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (row.outcome === 'conflict') throw new DomainError('CONFLICT');
+  if (!row.invitation_status)
+    throw new Error('Invalid invitation delivery result');
+  return {
+    status: row.invitation_status,
+    replayed: row.outcome === 'existing',
+  };
 }
 // Membership must be authenticated before this persistence boundary is called.
 // No employee HTTP endpoint is exposed in the foundation release.

@@ -8,6 +8,8 @@ import {
   createDatabase,
   findActiveIdentity,
   requestCompanyProvisioning,
+  reconcileCompanyOwnerProvider,
+  markCompanyOwnerInvitationDelivered,
 } from '@kinto/database';
 import {
   type AuthenticatedIdentity,
@@ -33,6 +35,21 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     input: CompanyProvisioning,
   ) {
     return requestCompanyProvisioning(this.db, actor, requestKey, input);
+  }
+  reconcileCompanyOwner(
+    requestId: string,
+    providerIdentity: { issuer: string; subject: string },
+    expiresAt: Date,
+  ) {
+    return reconcileCompanyOwnerProvider(
+      this.db,
+      requestId,
+      providerIdentity,
+      expiresAt,
+    );
+  }
+  markOwnerInvitationDelivered(requestId: string, expiresAt: Date) {
+    return markCompanyOwnerInvitationDelivered(this.db, requestId, expiresAt);
   }
   async onModuleDestroy() {
     await this.db.$disconnect();

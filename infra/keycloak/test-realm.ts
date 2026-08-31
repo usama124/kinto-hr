@@ -6,6 +6,7 @@ export interface KeycloakFixture {
   smtpPort: number;
   backchannelUrl: string;
   clientSecret: string;
+  provisioningClientSecret?: string;
   users: {
     id: string;
     username: string;
@@ -119,7 +120,10 @@ export function testRealm(input: KeycloakFixture) {
         directAccessGrantsEnabled: false,
         implicitFlowEnabled: false,
         serviceAccountsEnabled: false,
-        redirectUris: [`${input.origin}/api/v1/auth/callback`],
+        redirectUris: [
+          `${input.origin}/api/v1/auth/callback`,
+          `${input.origin}/api/v1/auth/login`,
+        ],
         webOrigins: [input.origin],
         fullScopeAllowed: false,
         attributes: {
@@ -138,34 +142,70 @@ export function testRealm(input: KeycloakFixture) {
           },
         ],
       },
+      ...(input.provisioningClientSecret
+        ? [
+            {
+              clientId: 'kinto-provisioner',
+              enabled: true,
+              protocol: 'openid-connect',
+              publicClient: false,
+              secret: input.provisioningClientSecret,
+              standardFlowEnabled: false,
+              directAccessGrantsEnabled: false,
+              implicitFlowEnabled: false,
+              serviceAccountsEnabled: true,
+              // Disposable fixture only. Production must explicitly scope the
+              // service account to its reviewed user-management permissions.
+              fullScopeAllowed: true,
+            },
+          ]
+        : []),
     ],
-    users: input.users.map((user) => ({
-      id: user.id,
-      username: user.username,
-      enabled: true,
-      email: `${user.username}@kinto.test`,
-      emailVerified: true,
-      firstName: 'Synthetic',
-      lastName: 'Fixture',
-      credentials: [
-        { type: 'password', value: user.password, temporary: false },
-        ...(user.otpSecret
-          ? [
-              {
-                type: 'otp',
-                userLabel: 'Synthetic TOTP',
-                secretData: JSON.stringify({ value: user.otpSecret }),
-                credentialData: JSON.stringify({
-                  subType: 'totp',
-                  digits: 6,
-                  counter: 0,
-                  period: 30,
-                  algorithm: 'HmacSHA1',
-                }),
+    users: [
+      ...input.users.map((user) => ({
+        id: user.id,
+        username: user.username,
+        enabled: true,
+        email: `${user.username}@kinto.test`,
+        emailVerified: true,
+        firstName: 'Synthetic',
+        lastName: 'Fixture',
+        credentials: [
+          { type: 'password', value: user.password, temporary: false },
+          ...(user.otpSecret
+            ? [
+                {
+                  type: 'otp',
+                  userLabel: 'Synthetic TOTP',
+                  secretData: JSON.stringify({ value: user.otpSecret }),
+                  credentialData: JSON.stringify({
+                    subType: 'totp',
+                    digits: 6,
+                    counter: 0,
+                    period: 30,
+                    algorithm: 'HmacSHA1',
+                  }),
+                },
+              ]
+            : []),
+        ],
+      })),
+      ...(input.provisioningClientSecret
+        ? [
+            {
+              username: 'service-account-kinto-provisioner',
+              enabled: true,
+              serviceAccountClientId: 'kinto-provisioner',
+              clientRoles: {
+                'realm-management': [
+                  'manage-users',
+                  'query-users',
+                  'view-users',
+                ],
               },
-            ]
-          : []),
-      ],
-    })),
+            },
+          ]
+        : []),
+    ],
   };
 }

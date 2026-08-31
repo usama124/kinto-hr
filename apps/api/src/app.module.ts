@@ -10,6 +10,7 @@ import { DatabaseService } from './database.service';
 import { AuthService } from './auth/service';
 import { AuthController } from './auth/controller';
 import { PlatformController } from './platform/controller';
+import { OwnerProvisioningService } from './provisioning/service';
 @Controller('health')
 export class HealthController {
   constructor(
@@ -31,6 +32,6 @@ export class HealthController {
 }
 @Module({
   controllers: [HealthController, AuthController, PlatformController],
-  providers: [DatabaseService, AuthService],
+  providers: [DatabaseService, AuthService, OwnerProvisioningService],
 })
 export class AppModule {}
