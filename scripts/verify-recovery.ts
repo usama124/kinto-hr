@@ -14,6 +14,7 @@ import {
   requestCompanyProvisioning,
   reconcileCompanyOwnerProvider,
   markCompanyOwnerInvitationDelivered,
+  requestEmployeeAccountProvisioning,
   type PrismaClient,
 } from '@kinto/database';
 import { processEvent } from '../apps/worker/src/processor';
@@ -36,6 +37,7 @@ async function snapshot(db: PrismaClient) {
       'audit_events',
       'company_provisioning_requests',
       'consumer_receipts',
+      'employee_account_requests',
       'employees',
       'identities',
       'job_deliveries',
@@ -56,6 +58,9 @@ async function snapshot(db: PrismaClient) {
       orderBy: { id: 'asc' },
     }),
     ownerInvitations: await db.ownerInvitation.findMany({
+      orderBy: { id: 'asc' },
+    }),
+    employeeAccountRequests: await db.employeeAccountRequest.findMany({
       orderBy: { id: 'asc' },
     }),
     platformAudit: await db.platformAuditEvent.findMany({
@@ -173,6 +178,7 @@ async function main() {
     const tenants = [randomUUID(), randomUUID()];
     const actor = randomUUID();
     const refs: { tenantId: string; eventId: string }[] = [];
+    const accountActors: { identityId: string; employeeId: string }[] = [];
     for (const tenantId of tenants) {
       await source.tenant.create({
         data: {
@@ -198,7 +204,16 @@ async function main() {
       await source.membership.create({
         data: { tenantId, identityId: identity.id, roles: ['hr_admin'] },
       });
+      accountActors.push({ identityId: identity.id, employeeId: employee.id });
     }
+    await requestEmployeeAccountProvisioning(
+      sourceApp,
+      { identityId: accountActors[0].identityId, mfaVerified: true },
+      tenants[0],
+      accountActors[0].employeeId,
+      randomUUID(),
+      { email: 'employee@recovery.example' },
+    );
     const operator = await source.identity.create({
       data: {
         issuer: 'https://recovery.example/realm',
@@ -307,7 +322,7 @@ async function main() {
     const policies = await restored.$queryRaw<
       { enabled: boolean; forced: boolean }[]
     >`SELECT relrowsecurity AS enabled, relforcerowsecurity AS forced FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND relkind='r' AND relname <> '_prisma_migrations'`;
-    assert.equal(policies.length, 12);
+    assert.equal(policies.length, 13);
     assert.ok(policies.every((row) => row.enabled && row.forced));
     assert.deepEqual(await restoredApp.employee.findMany(), []);
     for (const tenantId of tenants) {
@@ -387,6 +402,7 @@ async function main() {
       pendingResumedOnce: true,
       deadPreserved: true,
       pendingCompanyProvisioningPreserved: true,
+      pendingEmployeeAccountRequestPreserved: true,
     };
     await writeFile(
       join(directory, 'report.json'),

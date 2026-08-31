@@ -42,6 +42,7 @@ const admin = createDatabase(adminUrl);
 const runtime = createDatabase(runtimeUrl);
 const subject = randomUUID();
 const tenantId = randomUUID();
+const accountEmployeeId = randomUUID();
 const origin = 'https://kinto.example';
 const clientId = 'synthetic-kinto';
 const clientSecret = 'synthetic-client-secret';
@@ -213,6 +214,14 @@ beforeAll(async () => {
   await admin.membership.create({
     data: { tenantId, identityId, roles: ['owner'] },
   });
+  await admin.employee.create({
+    data: {
+      id: accountEmployeeId,
+      tenantId,
+      employeeNumber: 'account-fixture',
+      name: 'Synthetic account fixture',
+    },
+  });
   const module = await Test.createTestingModule({
     imports: [AppModule],
   }).compile();
@@ -255,7 +264,12 @@ afterAll(async () => {
     where: { id: { in: provisionedTenantIds } },
   });
   await admin.platformOperator.deleteMany({ where: { identityId } });
+  await admin.employeeAccountRequest.deleteMany({ where: { tenantId } });
+  await admin.auditEvent.deleteMany({
+    where: { tenantId, action: 'employee.account_provisioning_requested' },
+  });
   await admin.membership.deleteMany({ where: { tenantId } });
+  await admin.employee.deleteMany({ where: { tenantId } });
   await admin.tenant.deleteMany({ where: { id: tenantId } });
   await admin.identity.deleteMany({ where: { issuer, subject } });
   await Promise.all([admin.$disconnect(), runtime.$disconnect()]);
@@ -774,6 +788,108 @@ it('allows only an MFA-verified active platform operator to request a company id
   await admin.platformOperator.update({
     where: { identityId },
     data: { status: 'active' },
+  });
+});
+it('allows only a recent-MFA owner or HR to request an employee account', async () => {
+  const route = `/api/v1/tenants/${tenantId}/employees/${accountEmployeeId}/account-invitations`;
+  const body = { email: ' Employee@Synthetic.Example ' };
+  await request(app.getHttpServer())
+    .post(route)
+    .set('Origin', origin)
+    .set('Idempotency-Key', randomUUID())
+    .send(body)
+    .expect(401);
+
+  const stale = await store.createSession({
+    principal: { issuer, subject, mfaVerified: true },
+    identityId,
+    authTime: Math.floor(Date.now() / 1000) - 301,
+  });
+  await request(app.getHttpServer())
+    .post(route)
+    .set('Cookie', `${SESSION_COOKIE}=${stale.token}`)
+    .set('Origin', origin)
+    .set('X-CSRF-Token', stale.session.csrf)
+    .set('Idempotency-Key', randomUUID())
+    .send(body)
+    .expect(403);
+
+  const elevated = await store.createSession({
+    principal: { issuer, subject, mfaVerified: true },
+    identityId,
+    authTime: Math.floor(Date.now() / 1000),
+  });
+  const cookie = `${SESSION_COOKIE}=${elevated.token}`;
+  await request(app.getHttpServer())
+    .post(route)
+    .set('Cookie', cookie)
+    .set('Origin', origin)
+    .set('Idempotency-Key', randomUUID())
+    .send(body)
+    .expect(403);
+  await request(app.getHttpServer())
+    .post(route)
+    .set('Cookie', cookie)
+    .set('Origin', origin)
+    .set('X-CSRF-Token', elevated.session.csrf)
+    .set('Idempotency-Key', randomUUID())
+    .send({ ...body, roles: ['owner'] })
+    .expect(400);
+
+  const key = randomUUID();
+  const created = await request(app.getHttpServer())
+    .post(route)
+    .set('Cookie', cookie)
+    .set('Origin', origin)
+    .set('X-CSRF-Token', elevated.session.csrf)
+    .set('Idempotency-Key', key)
+    .send(body)
+    .expect(202);
+  expect(created.body).toMatchObject({
+    status: 'pending_identity_provider',
+    replayed: false,
+  });
+  expect(Object.keys(created.body).sort()).toEqual([
+    'accountRequestId',
+    'replayed',
+    'status',
+  ]);
+  expect(JSON.stringify(created.body)).not.toContain('Employee@');
+  const replay = await request(app.getHttpServer())
+    .post(route)
+    .set('Cookie', cookie)
+    .set('Origin', origin)
+    .set('X-CSRF-Token', elevated.session.csrf)
+    .set('Idempotency-Key', key)
+    .send({ email: 'employee@synthetic.example' })
+    .expect(202);
+  expect(replay.body).toEqual({ ...created.body, replayed: true });
+  await request(app.getHttpServer())
+    .post(route)
+    .set('Cookie', cookie)
+    .set('Origin', origin)
+    .set('X-CSRF-Token', elevated.session.csrf)
+    .set('Idempotency-Key', key)
+    .send({ email: 'changed@synthetic.example' })
+    .expect(409);
+
+  await admin.membership.updateMany({
+    where: { tenantId, identityId },
+    data: { roles: ['employee'] },
+  });
+  await request(app.getHttpServer())
+    .post(
+      `/api/v1/tenants/${tenantId}/employees/${randomUUID()}/account-invitations`,
+    )
+    .set('Cookie', cookie)
+    .set('Origin', origin)
+    .set('X-CSRF-Token', elevated.session.csrf)
+    .set('Idempotency-Key', randomUUID())
+    .send({ email: 'denied@synthetic.example' })
+    .expect(403);
+  await admin.membership.updateMany({
+    where: { tenantId, identityId },
+    data: { roles: ['owner'] },
   });
 });
 it('rate-limits auth requests without trusting forwarded IPs', async () => {

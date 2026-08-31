@@ -11,6 +11,7 @@ import { AuthService } from './auth/service';
 import { AuthController } from './auth/controller';
 import { PlatformController } from './platform/controller';
 import { OwnerProvisioningService } from './provisioning/service';
+import { EmployeeAccountsController } from './employee-accounts/controller';
 @Controller('health')
 export class HealthController {
   constructor(
@@ -31,7 +32,12 @@ export class HealthController {
   }
 }
 @Module({
-  controllers: [HealthController, AuthController, PlatformController],
+  controllers: [
+    HealthController,
+    AuthController,
+    PlatformController,
+    EmployeeAccountsController,
+  ],
   providers: [DatabaseService, AuthService, OwnerProvisioningService],
 })
 export class AppModule {}

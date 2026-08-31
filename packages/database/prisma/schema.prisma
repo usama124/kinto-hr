@@ -19,6 +19,7 @@ model Tenant {
   memberships Membership[]
   provisioningRequest CompanyProvisioningRequest?
   ownerInvitations OwnerInvitation[]
+  employeeAccountRequests EmployeeAccountRequest[]
   @@map("tenants")
 }
 model Identity {
@@ -32,6 +33,7 @@ model Identity {
   companyProvisioningRequests CompanyProvisioningRequest[]
   platformAuditEvents PlatformAuditEvent[]
   ownerInvitations OwnerInvitation[]
+  employeeAccountRequests EmployeeAccountRequest[]
   @@unique([issuer, subject])
   @@map("identities")
 }
@@ -107,10 +109,28 @@ model Employee {
   version Int @default(1)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  employeeAccountRequest EmployeeAccountRequest?
   @@unique([tenantId, id])
   @@unique([tenantId, employeeNumber])
   @@index([tenantId, status])
   @@map("employees")
+}
+model EmployeeAccountRequest {
+  id String @id @db.Uuid
+  requestKey String @map("request_key") @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  employeeId String @map("employee_id") @db.Uuid
+  requestedByIdentityId String @map("requested_by_identity_id") @db.Uuid
+  email String @db.VarChar(320)
+  status String @default("pending_identity_provider") @db.VarChar(40)
+  version Int @default(1)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  employee Employee @relation(fields: [tenantId, employeeId], references: [tenantId, id], onDelete: Restrict)
+  requestedBy Identity @relation(fields: [requestedByIdentityId], references: [id], onDelete: Restrict)
+  @@unique([tenantId, requestKey])
+  @@unique([tenantId, employeeId])
+  @@map("employee_account_requests")
 }
 model AuditEvent {
   id String @id @default(uuid()) @db.Uuid
