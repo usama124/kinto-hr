@@ -13,6 +13,7 @@ import { PlatformController } from './platform/controller';
 import { OwnerProvisioningService } from './provisioning/service';
 import { EmployeeAccountsController } from './employee-accounts/controller';
 import { MembershipsController } from './memberships/controller';
+import { AdministratorInvitationsController } from './administrator-invitations/controller';
 @Controller('health')
 export class HealthController {
   constructor(
@@ -39,6 +40,7 @@ export class HealthController {
     PlatformController,
     EmployeeAccountsController,
     MembershipsController,
+    AdministratorInvitationsController,
   ],
   providers: [DatabaseService, AuthService, OwnerProvisioningService],
 })

@@ -50,6 +50,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 1 September 2026 — owner-created administrator invitations
+
+Engineering implemented the next bounded P01-02 increment. Only an active owner with trusted MFA no older than five minutes may request another tenant administrator. The request fixes a normalized email, explicit owner/HR/payroll role set and audit reason before provider work; it creates no access by itself. Disabled-first Keycloak reconciliation and setup delivery reuse the reviewed adapter, while exact provider subject plus trusted MFA atomically creates the fixed membership. HR, employee/platform roles, changed idempotency bindings, existing same-tenant access, revoked-access reactivation and overlapping pending owner/employee/administrator invitations are refused. Existing identities may join another tenant. Tenant selection and customer-visible security audit remain next. See [evidence](../evidence/phase-01/administrator-invitations.md).
+
 ### 31 August 2026 — owner membership administration and last-owner invariant
 
 Engineering implemented the next bounded P01-02 increment. An active owner with trusted MFA no older than five minutes can list the selected tenant's memberships, replace an active administrative membership's explicit role set or revoke it. Mutations accept only an expected version, an allowed administrative role set where applicable and a mandatory audit reason; identity, tenant, status and platform authority are server-controlled. A constrained fixed-search-path database function rechecks active owner authority, locks the tenant and refuses any mutation that would leave no active owner. Concurrent owner demotions therefore permit at most one to succeed. Employee-linked memberships remain fixed and must later be revoked through coordinated employee offboarding. These endpoints do not invite/reactivate administrators or expose the audit-event feed. See [evidence](../evidence/phase-01/membership-administration.md).

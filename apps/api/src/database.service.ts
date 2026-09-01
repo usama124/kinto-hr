@@ -16,6 +16,9 @@ import {
   listTenantMemberships,
   updateTenantMembershipRoles,
   revokeTenantMembership,
+  requestAdministratorInvitation,
+  reconcileAdministratorInvitationProvider,
+  markAdministratorInvitationDelivered,
 } from '@kinto/database';
 import {
   type AuthenticatedIdentity,
@@ -23,6 +26,7 @@ import {
   type EmployeeAccountProvisioning,
   type MembershipRoleUpdate,
   type MembershipRevocation,
+  type AdministratorInvitation,
 } from '@kinto/contracts';
 import { readConfig } from './config';
 @Injectable()
@@ -90,6 +94,35 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
   }
   markEmployeeInvitationDelivered(requestId: string, expiresAt: Date) {
     return markEmployeeInvitationDelivered(this.db, requestId, expiresAt);
+  }
+  provisionAdministrator(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    requestKey: string,
+    input: AdministratorInvitation,
+  ) {
+    return requestAdministratorInvitation(
+      this.db,
+      actor,
+      tenantId,
+      requestKey,
+      input,
+    );
+  }
+  reconcileAdministrator(
+    requestId: string,
+    providerIdentity: { issuer: string; subject: string },
+    expiresAt: Date,
+  ) {
+    return reconcileAdministratorInvitationProvider(
+      this.db,
+      requestId,
+      providerIdentity,
+      expiresAt,
+    );
+  }
+  markAdministratorInvitationDelivered(requestId: string, expiresAt: Date) {
+    return markAdministratorInvitationDelivered(this.db, requestId, expiresAt);
   }
   listMemberships(
     actor: { identityId: string; mfaVerified: boolean },
