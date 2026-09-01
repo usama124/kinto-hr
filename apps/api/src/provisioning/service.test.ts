@@ -131,6 +131,55 @@ it('uses the same provider boundary for a fixed employee invitation', async () =
   );
 });
 
+it('uses the same provider boundary for a fixed administrator invitation', async () => {
+  configure();
+  const reconcileAdministrator = vi.fn().mockResolvedValue({
+    invitationId,
+    status: 'pending_delivery',
+    expiresAt: new Date(Date.now() + 1000),
+    replayed: false,
+  });
+  const markAdministratorInvitationDelivered = vi
+    .fn()
+    .mockResolvedValue({ status: 'pending_activation', replayed: false });
+  const database = {
+    reconcileAdministrator,
+    markAdministratorInvitationDelivered,
+  } as unknown as DatabaseService;
+  const fetcher = vi
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(token())
+    .mockResolvedValueOnce(
+      new Response(null, {
+        status: 201,
+        headers: {
+          Location: `https://identity.example/admin/realms/kinto/users/${subject}`,
+        },
+      }),
+    )
+    .mockResolvedValueOnce(token())
+    .mockResolvedValueOnce(new Response(null, { status: 204 }))
+    .mockResolvedValueOnce(new Response(null, { status: 204 }));
+  vi.stubGlobal('fetch', fetcher);
+  await expect(
+    new OwnerProvisioningService(database).attemptAdministrator(
+      requestId,
+      'administrator@example.com',
+    ),
+  ).resolves.toEqual({ status: 'pending_activation' });
+  expect(reconcileAdministrator).toHaveBeenCalledWith(
+    requestId,
+    {
+      issuer: 'https://identity.example/realms/kinto',
+      subject,
+    },
+    expect.any(Date),
+  );
+  expect(markAdministratorInvitationDelivered).toHaveBeenCalledAfter(
+    reconcileAdministrator,
+  );
+});
+
 it('keeps partial provider or persistence failures pending and retryable', async () => {
   configure();
   const database = {

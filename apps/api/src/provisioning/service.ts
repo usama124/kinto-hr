@@ -75,4 +75,13 @@ export class OwnerProvisioningService {
       this.database.markEmployeeInvitationDelivered.bind(this.database),
     );
   }
+
+  attemptAdministrator(requestId: string, email: string) {
+    return this.provision(
+      requestId,
+      email,
+      this.database.reconcileAdministrator.bind(this.database),
+      this.database.markAdministratorInvitationDelivered.bind(this.database),
+    );
+  }
 }

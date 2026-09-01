@@ -15,6 +15,8 @@ import {
   type MembershipRoleUpdate,
   membershipRevocationSchema,
   type MembershipRevocation,
+  administratorInvitationSchema,
+  type AdministratorInvitation,
 } from '@kinto/contracts';
 import {
   assertCanActivate,
@@ -146,6 +148,119 @@ export async function markEmployeeInvitationDelivered(
   if (row.outcome === 'conflict') throw new DomainError('CONFLICT');
   if (!row.invitation_status)
     throw new Error('Invalid employee invitation delivery result');
+  return {
+    status: row.invitation_status,
+    replayed: row.outcome === 'existing',
+  };
+}
+
+export async function requestAdministratorInvitation(
+  db: PrismaClient,
+  actor: { identityId: string; mfaVerified: boolean },
+  tenantId: string,
+  requestKey: string,
+  input: AdministratorInvitation,
+) {
+  tenantIdSchema.parse(actor.identityId);
+  tenantIdSchema.parse(tenantId);
+  tenantIdSchema.parse(requestKey);
+  const invitation = administratorInvitationSchema.parse(input);
+  const rows = await db.$queryRaw<
+    {
+      outcome: 'created' | 'existing' | 'forbidden' | 'conflict';
+      account_request_id: string | null;
+      provisioning_status: string | null;
+    }[]
+  >`SELECT * FROM public.request_administrator_invitation(
+    ${actor.identityId}::uuid,
+    ${actor.mfaVerified},
+    ${tenantId}::uuid,
+    ${requestKey}::uuid,
+    ${randomUUID()}::uuid,
+    ${randomUUID()}::uuid,
+    ${invitation.email}::varchar,
+    ${invitation.roles}::text[],
+    ${invitation.reason}::varchar
+  )`;
+  const row = rows[0];
+  if (!row || row.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (row.outcome === 'conflict') throw new DomainError('CONFLICT');
+  if (!row.account_request_id || !row.provisioning_status)
+    throw new Error('Invalid administrator invitation result');
+  return {
+    accountRequestId: row.account_request_id,
+    status: row.provisioning_status,
+    replayed: row.outcome === 'existing',
+  };
+}
+
+export async function reconcileAdministratorInvitationProvider(
+  db: PrismaClient,
+  requestId: string,
+  providerIdentity: { issuer: string; subject: string },
+  expiresAt: Date,
+) {
+  tenantIdSchema.parse(requestId);
+  const principal = authenticatedIdentitySchema.parse({
+    ...providerIdentity,
+    mfaVerified: false,
+  });
+  if (!Number.isFinite(expiresAt.getTime())) throw new DomainError('CONFLICT');
+  const rows = await db.$queryRaw<
+    {
+      outcome: 'created' | 'existing' | 'not_found' | 'forbidden' | 'conflict';
+      invitation_id: string | null;
+      invitation_status: string | null;
+      invitation_expires_at: Date | null;
+    }[]
+  >`SELECT * FROM public.reconcile_administrator_invitation_provider(
+    ${requestId}::uuid,
+    ${randomUUID()}::uuid,
+    ${randomUUID()}::uuid,
+    ${principal.issuer}::varchar,
+    ${principal.subject}::varchar,
+    ${expiresAt}::timestamptz,
+    ${randomUUID()}::uuid
+  )`;
+  const row = rows[0];
+  if (!row || row.outcome === 'not_found') throw new DomainError('NOT_FOUND');
+  if (row.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (row.outcome === 'conflict') throw new DomainError('CONFLICT');
+  if (
+    !row.invitation_id ||
+    !row.invitation_status ||
+    !row.invitation_expires_at
+  )
+    throw new Error('Invalid administrator provider result');
+  return {
+    invitationId: row.invitation_id,
+    status: row.invitation_status,
+    expiresAt: row.invitation_expires_at,
+    replayed: row.outcome === 'existing',
+  };
+}
+
+export async function markAdministratorInvitationDelivered(
+  db: PrismaClient,
+  requestId: string,
+  expiresAt: Date,
+) {
+  tenantIdSchema.parse(requestId);
+  if (!Number.isFinite(expiresAt.getTime())) throw new DomainError('CONFLICT');
+  const rows = await db.$queryRaw<
+    {
+      outcome: 'updated' | 'existing' | 'not_found' | 'forbidden' | 'conflict';
+      invitation_status: string | null;
+    }[]
+  >`SELECT * FROM public.mark_administrator_invitation_delivered(
+    ${requestId}::uuid, ${expiresAt}::timestamptz, ${randomUUID()}::uuid
+  )`;
+  const row = rows[0];
+  if (!row || row.outcome === 'not_found') throw new DomainError('NOT_FOUND');
+  if (row.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (row.outcome === 'conflict') throw new DomainError('CONFLICT');
+  if (!row.invitation_status)
+    throw new Error('Invalid administrator delivery result');
   return {
     status: row.invitation_status,
     replayed: row.outcome === 'existing',

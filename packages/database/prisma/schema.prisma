@@ -22,6 +22,8 @@ model Tenant {
   employeeAccountRequests EmployeeAccountRequest[]
   employeeInvitations EmployeeInvitation[]
   employeeIdentityLinks EmployeeIdentityLink[]
+  administratorAccountRequests AdministratorAccountRequest[]
+  administratorInvitations AdministratorInvitation[]
   @@map("tenants")
 }
 model Identity {
@@ -38,6 +40,8 @@ model Identity {
   employeeAccountRequests EmployeeAccountRequest[]
   employeeInvitations EmployeeInvitation[]
   employeeIdentityLinks EmployeeIdentityLink[]
+  administratorAccountRequests AdministratorAccountRequest[]
+  administratorInvitations AdministratorInvitation[]
   @@unique([issuer, subject])
   @@map("identities")
 }
@@ -105,6 +109,42 @@ model Membership {
   @@unique([tenantId, identityId])
   @@unique([tenantId, id])
   @@map("memberships")
+}
+model AdministratorAccountRequest {
+  id String @id @db.Uuid
+  requestKey String @map("request_key") @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  requestedByIdentityId String @map("requested_by_identity_id") @db.Uuid
+  email String @db.VarChar(320)
+  roles String[]
+  reason String @db.VarChar(240)
+  status String @default("pending_identity_provider") @db.VarChar(40)
+  version Int @default(1)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  requestedBy Identity @relation(fields: [requestedByIdentityId], references: [id], onDelete: Restrict)
+  invitation AdministratorInvitation?
+  @@unique([tenantId, requestKey])
+  @@unique([tenantId, email])
+  @@map("administrator_account_requests")
+}
+model AdministratorInvitation {
+  id String @id @db.Uuid
+  requestId String @unique @map("request_id") @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  identityId String @map("identity_id") @db.Uuid
+  status String @default("pending_delivery") @db.VarChar(30)
+  expiresAt DateTime @map("expires_at") @db.Timestamptz()
+  deliveredAt DateTime? @map("delivered_at") @db.Timestamptz()
+  acceptedAt DateTime? @map("accepted_at") @db.Timestamptz()
+  version Int @default(1)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  request AdministratorAccountRequest @relation(fields: [requestId], references: [id], onDelete: Restrict)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  identity Identity @relation(fields: [identityId], references: [id], onDelete: Restrict)
+  @@unique([tenantId, identityId])
+  @@index([status, expiresAt])
+  @@map("administrator_invitations")
 }
 model Employee {
   id String @id @default(uuid()) @db.Uuid

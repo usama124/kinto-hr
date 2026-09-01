@@ -19,6 +19,9 @@ import {
   markEmployeeInvitationDelivered,
   requestEmployeeAccountProvisioning,
   updateTenantMembershipRoles,
+  requestAdministratorInvitation,
+  reconcileAdministratorInvitationProvider,
+  markAdministratorInvitationDelivered,
   type PrismaClient,
 } from '@kinto/database';
 import { processEvent } from '../apps/worker/src/processor';
@@ -38,6 +41,8 @@ async function snapshot(db: PrismaClient) {
   assert.deepEqual(
     tables.map((row) => row.name),
     [
+      'administrator_account_requests',
+      'administrator_invitations',
       'audit_events',
       'company_provisioning_requests',
       'consumer_receipts',
@@ -64,6 +69,12 @@ async function snapshot(db: PrismaClient) {
       orderBy: { id: 'asc' },
     }),
     ownerInvitations: await db.ownerInvitation.findMany({
+      orderBy: { id: 'asc' },
+    }),
+    administratorAccountRequests: await db.administratorAccountRequest.findMany(
+      { orderBy: { id: 'asc' } },
+    ),
+    administratorInvitations: await db.administratorInvitation.findMany({
       orderBy: { id: 'asc' },
     }),
     employeeAccountRequests: await db.employeeAccountRequest.findMany({
@@ -260,6 +271,32 @@ async function main() {
         reason: 'Synthetic recovery membership change',
       },
     );
+    const administratorRequest = await requestAdministratorInvitation(
+      sourceApp,
+      { identityId: membershipOwners[0], mfaVerified: true },
+      tenants[0],
+      randomUUID(),
+      {
+        email: 'administrator@recovery.example',
+        roles: ['hr_admin'],
+        reason: 'Synthetic recovery administrator invitation',
+      },
+    );
+    const administratorExpiry = new Date(Date.now() + 48 * 60 * 60 * 1000);
+    await reconcileAdministratorInvitationProvider(
+      sourceApp,
+      administratorRequest.accountRequestId,
+      {
+        issuer: 'https://recovery.example/realm',
+        subject: 'synthetic-pending-administrator',
+      },
+      administratorExpiry,
+    );
+    await markAdministratorInvitationDelivered(
+      sourceApp,
+      administratorRequest.accountRequestId,
+      administratorExpiry,
+    );
     const employeeProvider = {
       issuer: 'https://recovery.example/realm',
       subject: 'synthetic-active-employee',
@@ -389,7 +426,7 @@ async function main() {
     const policies = await restored.$queryRaw<
       { enabled: boolean; forced: boolean }[]
     >`SELECT relrowsecurity AS enabled, relforcerowsecurity AS forced FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND relkind='r' AND relname <> '_prisma_migrations'`;
-    assert.equal(policies.length, 15);
+    assert.equal(policies.length, 17);
     assert.ok(policies.every((row) => row.enabled && row.forced));
     assert.deepEqual(await restoredApp.employee.findMany(), []);
     for (const tenantId of tenants) {
@@ -472,6 +509,7 @@ async function main() {
       pendingEmployeeAccountRequestPreserved: true,
       activeEmployeeIdentityLinkPreserved: true,
       membershipAdministrationAuditPreserved: true,
+      pendingAdministratorInvitationPreserved: true,
     };
     await writeFile(
       join(directory, 'report.json'),

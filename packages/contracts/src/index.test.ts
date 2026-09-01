@@ -9,11 +9,41 @@ import {
   employeeAccountProvisioningSchema,
   membershipRoleUpdateSchema,
   membershipRevocationSchema,
+  administratorInvitationSchema,
 } from './index';
 it('trims names while preserving employee identifiers as strings', () => {
   expect(
     employeeDraftSchema.parse({ employeeNumber: '0012', name: ' Sana Khan ' }),
   ).toEqual({ employeeNumber: '0012', name: 'Sana Khan' });
+});
+it('accepts only explicit administrator invitation authority', () => {
+  expect(
+    administratorInvitationSchema.parse({
+      email: ' Admin@Example.COM ',
+      roles: ['payroll_approver', 'hr_admin'],
+      reason: 'Approved operational access',
+    }),
+  ).toEqual({
+    email: 'admin@example.com',
+    roles: ['hr_admin', 'payroll_approver'],
+    reason: 'Approved operational access',
+  });
+  for (const input of [
+    { email: 'admin@example.com', roles: ['employee'], reason: 'Invalid role' },
+    {
+      email: 'admin@example.com',
+      roles: ['owner', 'owner'],
+      reason: 'Duplicate',
+    },
+    { email: 'admin@example.com', roles: ['owner'], reason: 'ok' },
+    {
+      email: 'admin@example.com',
+      roles: ['owner'],
+      reason: 'Approved owner',
+      tenantId: crypto.randomUUID(),
+    },
+  ])
+    expect(administratorInvitationSchema.safeParse(input).success).toBe(false);
 });
 it('normalizes only approved company provisioning fields', () => {
   expect(

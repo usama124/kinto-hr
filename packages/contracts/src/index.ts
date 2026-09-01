@@ -56,6 +56,21 @@ export const membershipRevocationSchema = z.strictObject({
   reason: z.string().trim().min(3).max(240),
 });
 export type MembershipRevocation = z.infer<typeof membershipRevocationSchema>;
+export const administratorInvitationSchema = z.strictObject({
+  email: z.string().trim().toLowerCase().pipe(z.email().max(320)),
+  roles: administrativeTenantRoleSchema
+    .array()
+    .min(1)
+    .max(administrativeRoleOrder.length)
+    .refine((roles) => new Set(roles).size === roles.length)
+    .transform((roles) =>
+      administrativeRoleOrder.filter((role) => roles.includes(role)),
+    ),
+  reason: z.string().trim().min(3).max(240),
+});
+export type AdministratorInvitation = z.infer<
+  typeof administratorInvitationSchema
+>;
 
 export const companyProvisioningSchema = z.strictObject({
   companyName: z.string().trim().min(1).max(160),

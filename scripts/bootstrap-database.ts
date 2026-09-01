@@ -96,6 +96,10 @@ try {
     'CREATE POLICY platform_control ON employee_invitations FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON employee_identity_links',
     'CREATE POLICY platform_control ON employee_identity_links FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
+    'DROP POLICY IF EXISTS platform_control ON administrator_account_requests',
+    'CREATE POLICY platform_control ON administrator_account_requests FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
+    'DROP POLICY IF EXISTS platform_control ON administrator_invitations',
+    'CREATE POLICY platform_control ON administrator_invitations FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control_insert ON audit_events',
     'CREATE POLICY platform_control_insert ON audit_events FOR INSERT TO kinto_control_owner WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control_insert ON platform_audit_events',
@@ -127,6 +131,9 @@ try {
     'GRANT SELECT, INSERT ON employee_identity_links TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
+    'GRANT SELECT, INSERT, UPDATE ON administrator_account_requests, administrator_invitations TO kinto_control_owner',
+  );
+  await database.$executeRawUnsafe(
     'GRANT INSERT ON audit_events, platform_audit_events TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
@@ -144,6 +151,9 @@ try {
     'public.mark_employee_invitation_delivered(uuid, timestamptz, uuid)',
     'public.list_tenant_memberships(uuid, boolean, uuid)',
     'public.mutate_tenant_membership(uuid, boolean, uuid, uuid, integer, text[], boolean, varchar, uuid)',
+    'public.request_administrator_invitation(uuid, boolean, uuid, uuid, uuid, uuid, varchar, text[], varchar)',
+    'public.reconcile_administrator_invitation_provider(uuid, uuid, uuid, varchar, varchar, timestamptz, uuid)',
+    'public.mark_administrator_invitation_delivered(uuid, timestamptz, uuid)',
   ]) {
     await database.$executeRawUnsafe(
       `ALTER FUNCTION ${signature} OWNER TO kinto_control_owner`,
@@ -152,6 +162,13 @@ try {
       `GRANT EXECUTE ON FUNCTION ${signature} TO kinto_app`,
     );
   }
+  for (const signature of [
+    'public.resolve_login_identity_pre_administrator(varchar, varchar, boolean, uuid, uuid, uuid, uuid, uuid)',
+    'public.enforce_one_pending_identity_invitation()',
+  ])
+    await database.$executeRawUnsafe(
+      `ALTER FUNCTION ${signature} OWNER TO kinto_control_owner`,
+    );
   await assertSafeRuntimeRole(appDatabase);
   // The dispatcher can call reviewed metadata functions only. The worker has
   // tenant-scoped delivery access, but no employee, salary or audit privileges.
