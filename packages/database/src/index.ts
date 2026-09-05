@@ -17,6 +17,7 @@ import {
   type MembershipRevocation,
   administratorInvitationSchema,
   type AdministratorInvitation,
+  type SecurityAuditQuery,
 } from '@kinto/contracts';
 import {
   assertCanActivate,
@@ -660,6 +661,89 @@ export function revokeTenantMembership(
     membershipRevocationSchema.parse(input),
     true,
   );
+}
+
+type SecurityAuditActor = { identityId: string; mfaVerified: boolean };
+
+const encodeSecurityAuditCursor = (eventId: string) =>
+  Buffer.from(eventId, 'utf8').toString('base64url');
+
+function decodeSecurityAuditCursor(cursor?: string) {
+  if (!cursor) return null;
+  let decoded: string;
+  try {
+    decoded = Buffer.from(cursor, 'base64url').toString('utf8');
+  } catch {
+    throw new DomainError('CONFLICT');
+  }
+  if (
+    encodeSecurityAuditCursor(decoded) !== cursor ||
+    !tenantIdSchema.safeParse(decoded).success
+  )
+    throw new DomainError('CONFLICT');
+  return decoded;
+}
+
+export async function listTenantSecurityAudit(
+  db: PrismaClient,
+  actor: SecurityAuditActor,
+  tenantId: string,
+  query: SecurityAuditQuery,
+) {
+  tenantIdSchema.parse(actor.identityId);
+  tenantIdSchema.parse(tenantId);
+  const limit = query.limit ?? 50;
+  const cursorId = decodeSecurityAuditCursor(query.cursor);
+  const rows = await db.$queryRaw<
+    {
+      outcome: 'ok' | 'forbidden' | 'not_found' | 'conflict';
+      event_id: string | null;
+      actor_id: string | null;
+      action: string | null;
+      reason: string | null;
+      resource_id: string | null;
+      event_created_at: Date | null;
+    }[]
+  >`SELECT * FROM public.list_tenant_security_audit(
+    ${actor.identityId}::uuid,
+    ${actor.mfaVerified},
+    ${tenantId}::uuid,
+    ${limit}::integer,
+    ${query.action ?? null}::varchar,
+    ${query.from ? new Date(query.from) : null}::timestamptz,
+    ${query.to ? new Date(query.to) : null}::timestamptz,
+    ${cursorId}::uuid
+  )`;
+  if (rows[0]?.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (rows[0]?.outcome === 'not_found') throw new DomainError('NOT_FOUND');
+  if (rows[0]?.outcome === 'conflict') throw new DomainError('CONFLICT');
+  const items = rows.map((row) => {
+    if (
+      row.outcome !== 'ok' ||
+      !row.event_id ||
+      !row.actor_id ||
+      !row.action ||
+      !row.resource_id ||
+      !row.event_created_at
+    )
+      throw new Error('Invalid security audit result');
+    return {
+      id: row.event_id,
+      actorId: row.actor_id,
+      action: row.action,
+      reason: row.reason,
+      resourceId: row.resource_id,
+      createdAt: row.event_created_at,
+    };
+  });
+  const page = items.slice(0, limit);
+  return {
+    items: page,
+    nextCursor:
+      items.length > limit && page.length
+        ? encodeSecurityAuditCursor(page[page.length - 1].id)
+        : null,
+  };
 }
 export async function createEmployeeDraft(
   db: PrismaClient,

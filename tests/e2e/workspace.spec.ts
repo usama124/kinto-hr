@@ -183,3 +183,72 @@ test('account access selects a company without browser-side session storage', as
   ).toBeDisabled();
   expect(await page.evaluate(() => localStorage.length)).toBe(0);
 });
+
+test('owner can review and paginate tenant security activity', async ({
+  page,
+}) => {
+  const tenantId = '9d2ea3ef-3938-42d0-84f9-d2248f692f67';
+  const actorId = '44c4bf77-58bb-42ea-9886-5db47c1c3de5';
+  const firstId = '82ffbc9e-febd-4a62-bdaf-fd8740ee6982';
+  const secondId = '2415cafa-d6dc-45ae-8b50-4cd2d0035cdd';
+  const cursor = 'a'.repeat(48);
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        csrfToken: 'b'.repeat(43),
+        selectedTenantId: tenantId,
+        tenants: [
+          { id: tenantId, name: 'Synthetic Company', roles: ['owner'] },
+        ],
+      }),
+    }),
+  );
+  await page.route(
+    `**/api/v1/tenants/${tenantId}/security-audit?*`,
+    (route) => {
+      const url = new URL(route.request().url());
+      const isNext = url.searchParams.get('cursor') === cursor;
+      const filtered = url.searchParams.get('action') === 'membership.revoked';
+      const item = {
+        id: isNext ? secondId : firstId,
+        actorId,
+        action: filtered
+          ? 'membership.revoked'
+          : isNext
+            ? 'company.created'
+            : 'membership.roles_changed',
+        reason: filtered ? 'Access ended' : isNext ? null : 'Approved access',
+        resourceId: tenantId,
+        createdAt: isNext
+          ? '2026-09-01T00:00:00.000Z'
+          : '2026-09-02T00:00:00.000Z',
+      };
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          items: [item],
+          nextCursor: !isNext && !filtered ? cursor : null,
+        }),
+      });
+    },
+  );
+  await page.goto('/security-audit');
+  await expect(
+    page.getByRole('heading', { name: 'Synthetic Company' }),
+  ).toBeVisible();
+  await expect(page.getByText('membership.roles changed')).toBeVisible();
+  await page.getByRole('button', { name: 'Load more activity' }).click();
+  await expect(page.getByText('company.created')).toBeVisible();
+  await page.getByLabel('Action').fill('membership.revoked');
+  await page.getByRole('button', { name: 'Apply filter' }).click();
+  await expect(page.getByText('membership.revoked')).toBeVisible();
+  await expect(page.getByText('company.created')).toHaveCount(0);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+});
