@@ -2,6 +2,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  ForbiddenException,
   UnauthorizedException,
   ServiceUnavailableException,
   HttpException,
@@ -75,21 +76,52 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     }
     const identity = await this.database.findIdentity(verified.principal);
     if (!identity) throw new UnauthorizedException();
+    const tenants = await this.database.discoverTenants(identity.id);
     return store.createSession(
-      { ...verified, identityId: identity.id },
+      {
+        ...verified,
+        identityId: identity.id,
+        ...(tenants.length === 1 ? { selectedTenantId: tenants[0].id } : {}),
+      },
       oldSession,
     );
   }
-  async session(token: string) {
+  async access(token: string) {
     const { store } = this.resources();
-    const session = await store.readSession(token);
+    let session = await store.readSession(token);
     if (!session) throw new UnauthorizedException();
     const identity = await this.database.findIdentity(session.principal);
     if (!identity || identity.id !== session.identityId) {
       await store.deleteSession(token);
       throw new UnauthorizedException();
     }
-    return session;
+    const tenants = await this.database.discoverTenants(identity.id);
+    const selectedTenantId = session.selectedTenantId;
+    if (
+      selectedTenantId &&
+      !tenants.some((tenant) => tenant.id === selectedTenantId)
+    ) {
+      const updated = await store.setSelectedTenant(token);
+      if (!updated) throw new UnauthorizedException();
+      session = updated;
+    }
+    return { session, tenants };
+  }
+  async session(token: string) {
+    return (await this.access(token)).session;
+  }
+  async selectTenant(token: string, tenantId: string, expectedCsrf: string) {
+    const { store } = this.resources();
+    const { tenants } = await this.access(token);
+    const tenant = tenants.find((candidate) => candidate.id === tenantId);
+    if (!tenant) throw new ForbiddenException();
+    const session = await store.setSelectedTenant(
+      token,
+      tenantId,
+      expectedCsrf,
+    );
+    if (!session) throw new ForbiddenException();
+    return { session, tenant };
   }
   async logout(token: string) {
     await this.resources().store.deleteSession(token);

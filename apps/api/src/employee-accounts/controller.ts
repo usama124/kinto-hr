@@ -17,6 +17,7 @@ import {
 import { AuthService } from '../auth/service';
 import {
   assertSessionMutation,
+  assertSelectedTenant,
   readCookie,
   SESSION_COOKIE,
   type AuthRequest,
@@ -58,6 +59,7 @@ export class EmployeeAccountsController {
       !input.success
     )
       throw new BadRequestException();
+    assertSelectedTenant(session, parsedTenant.data);
     const now = Math.floor(Date.now() / 1000);
     const provisioned = await this.database.provisionEmployeeAccount(
       {

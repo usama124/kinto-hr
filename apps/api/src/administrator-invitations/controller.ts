@@ -16,6 +16,7 @@ import {
 } from '@kinto/contracts';
 import {
   assertSessionMutation,
+  assertSelectedTenant,
   readCookie,
   SESSION_COOKIE,
   type AuthRequest,
@@ -51,6 +52,7 @@ export class AdministratorInvitationsController {
     const input = administratorInvitationSchema.safeParse(body);
     if (!parsedTenant.success || !parsedKey.success || !input.success)
       throw new BadRequestException();
+    assertSelectedTenant(session, parsedTenant.data);
     const now = Math.floor(Date.now() / 1000);
     const requested = await this.database.provisionAdministrator(
       {

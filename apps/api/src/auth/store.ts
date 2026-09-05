@@ -21,6 +21,7 @@ const sessionSchema = z.strictObject({
   csrf: z.string(),
   authTime: z.number().int(),
   providerSessionId: z.string().min(1).max(255).optional(),
+  selectedTenantId: z.uuid().optional(),
   createdAt: z.number().int(),
   expiresAt: z.number().int(),
   subjectIndex: z.string(),
@@ -89,7 +90,11 @@ export class AuthStore {
   async createSession(
     data: Pick<
       Session,
-      'principal' | 'identityId' | 'authTime' | 'providerSessionId'
+      | 'principal'
+      | 'identityId'
+      | 'authTime'
+      | 'providerSessionId'
+      | 'selectedTenantId'
     >,
     oldToken?: string,
   ) {
@@ -157,6 +162,39 @@ export class AuthStore {
       1,
       this.key('session', token),
       IDLE_SECONDS,
+    );
+    return raw ? sessionSchema.parse(JSON.parse(String(raw))) : undefined;
+  }
+  async setSelectedTenant(
+    token: string,
+    tenantId?: string,
+    expectedCsrf?: string,
+  ) {
+    const raw = await this.redis.eval(
+      `local raw = redis.call('GET', KEYS[1])
+      if not raw then return nil end
+      local s = cjson.decode(raw)
+      local now = tonumber(redis.call('TIME')[1])
+      local remaining = s.expiresAt - now
+      if remaining <= 0 then
+        if s.subjectIndex then redis.call('SREM', s.subjectIndex, KEYS[1]) end
+        if s.providerSessionIndex then redis.call('SREM', s.providerSessionIndex, KEYS[1]) end
+        redis.call('DEL', KEYS[1])
+        return nil
+      end
+      if ARGV[4] ~= '' and s.csrf ~= ARGV[4] then return nil end
+      if ARGV[1] == '' then s.selectedTenantId = nil
+      else s.selectedTenantId = ARGV[1] end
+      s.csrf = ARGV[2]
+      local encoded = cjson.encode(s)
+      redis.call('SET', KEYS[1], encoded, 'EX', math.min(remaining, tonumber(ARGV[3])))
+      return encoded`,
+      1,
+      this.key('session', token),
+      tenantId ?? '',
+      opaqueToken(),
+      IDLE_SECONDS,
+      expectedCsrf ?? '',
     );
     return raw ? sessionSchema.parse(JSON.parse(String(raw))) : undefined;
   }

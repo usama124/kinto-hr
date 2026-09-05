@@ -1,5 +1,9 @@
 import { z } from 'zod';
 export const tenantIdSchema = z.uuid();
+export const tenantSelectionSchema = z.strictObject({
+  tenantId: tenantIdSchema,
+});
+export type TenantSelection = z.infer<typeof tenantSelectionSchema>;
 export const employeeDraftSchema = z
   .object({
     employeeNumber: z

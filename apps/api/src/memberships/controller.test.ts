@@ -18,6 +18,7 @@ const membershipId = randomUUID();
 const now = Math.floor(Date.now() / 1000);
 const session = {
   identityId,
+  selectedTenantId: tenantId,
   csrf,
   authTime: now,
   expiresAt: now + 300,
@@ -92,6 +93,17 @@ it('passes only the server session actor to membership listing', async () => {
     { identityId, mfaVerified: true },
     tenantId,
   );
+});
+
+it('rejects a tenant path that is not the selected session workspace', async () => {
+  getSession.mockResolvedValueOnce({
+    ...session,
+    selectedTenantId: randomUUID(),
+  });
+  await authenticated('get', `/api/v1/tenants/${tenantId}/memberships`).expect(
+    403,
+  );
+  expect(listMemberships).not.toHaveBeenCalled();
 });
 
 it('requires exact origin and CSRF before changing roles', async () => {

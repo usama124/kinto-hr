@@ -3,13 +3,31 @@
 import { useEffect, useState } from 'react';
 
 type AccessState = 'loading' | 'disabled' | 'anonymous' | 'signed-in' | 'error';
+type Tenant = {
+  id: string;
+  name: string;
+  roles: string[];
+};
+const uuid =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const tenantRoles = new Set([
+  'owner',
+  'hr_admin',
+  'payroll_preparer',
+  'payroll_approver',
+  'employee',
+]);
 export default function Login() {
   const [state, setState] = useState<AccessState>('loading');
   const [csrf, setCsrf] = useState('');
   const [busy, setBusy] = useState(false);
+  const [tenants, setTenants] = useState<Tenant[]>([]);
+  const [selectedTenantId, setSelectedTenantId] = useState<string | null>(null);
   async function refresh() {
     setState('loading');
     setCsrf('');
+    setTenants([]);
+    setSelectedTenantId(null);
     try {
       const response = await fetch('/api/v1/auth/session', {
         cache: 'no-store',
@@ -23,13 +41,80 @@ export default function Login() {
         typeof data !== 'object' ||
         !('csrfToken' in data) ||
         typeof data.csrfToken !== 'string' ||
-        !/^[A-Za-z0-9_-]{43}$/.test(data.csrfToken)
+        !/^[A-Za-z0-9_-]{43}$/.test(data.csrfToken) ||
+        !('selectedTenantId' in data) ||
+        (data.selectedTenantId !== null &&
+          (typeof data.selectedTenantId !== 'string' ||
+            !uuid.test(data.selectedTenantId))) ||
+        !('tenants' in data) ||
+        !Array.isArray(data.tenants) ||
+        !data.tenants.every(
+          (tenant): tenant is Tenant =>
+            !!tenant &&
+            typeof tenant === 'object' &&
+            'id' in tenant &&
+            typeof tenant.id === 'string' &&
+            uuid.test(tenant.id) &&
+            'name' in tenant &&
+            typeof tenant.name === 'string' &&
+            tenant.name.length >= 1 &&
+            tenant.name.length <= 160 &&
+            'roles' in tenant &&
+            Array.isArray(tenant.roles) &&
+            tenant.roles.length >= 1 &&
+            tenant.roles.length <= tenantRoles.size &&
+            new Set(tenant.roles).size === tenant.roles.length &&
+            tenant.roles.every(
+              (role: unknown) =>
+                typeof role === 'string' && tenantRoles.has(role),
+            ),
+        )
       )
         throw new Error('Invalid session');
+      if (
+        data.selectedTenantId !== null &&
+        !data.tenants.some(
+          (tenant: Tenant) => tenant.id === data.selectedTenantId,
+        )
+      )
+        throw new Error('Invalid selection');
       setCsrf(data.csrfToken);
+      setTenants(data.tenants);
+      setSelectedTenantId(data.selectedTenantId);
       setState('signed-in');
     } catch {
       setState('error');
+    }
+  }
+  async function selectTenant(tenantId: string) {
+    setBusy(true);
+    try {
+      const response = await fetch('/api/v1/auth/tenant', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-Token': csrf,
+        },
+        body: JSON.stringify({ tenantId }),
+      });
+      if (!response.ok) throw new Error('Unavailable');
+      const data: unknown = await response.json();
+      if (
+        !data ||
+        typeof data !== 'object' ||
+        !('selectedTenantId' in data) ||
+        data.selectedTenantId !== tenantId ||
+        !('csrfToken' in data) ||
+        typeof data.csrfToken !== 'string' ||
+        !/^[A-Za-z0-9_-]{43}$/.test(data.csrfToken)
+      )
+        throw new Error('Invalid selection');
+      setSelectedTenantId(tenantId);
+      setCsrf(data.csrfToken);
+    } catch {
+      setState('error');
+    } finally {
+      setBusy(false);
     }
   }
   useEffect(() => {
@@ -70,7 +155,11 @@ export default function Login() {
           {state === 'anonymous' &&
             'Continue to your identity provider to sign in.'}
           {state === 'signed-in' &&
-            'You are signed in. Company workspaces are not available yet.'}
+            (selectedTenantId
+              ? `You are signed in to ${tenants.find((tenant) => tenant.id === selectedTenantId)?.name ?? 'your company'}.`
+              : tenants.length
+                ? 'You are signed in. Choose a company workspace.'
+                : 'You are signed in, but no active company access is available.')}
           {state === 'error' &&
             'Account access is unavailable. Please try again.'}
         </p>
@@ -79,14 +168,24 @@ export default function Login() {
             Continue to sign in
           </a>
         )}
-        {state === 'signed-in' && (
-          <button
-            className="primary-button"
-            disabled={busy}
-            onClick={() => void logout()}
-          >
-            {busy ? 'Signing out…' : 'Sign out of Kinto'}
-          </button>
+        {state === 'signed-in' && tenants.length > 0 && (
+          <div className="workspace-choices" aria-label="Company workspaces">
+            {tenants.map((tenant) => (
+              <button
+                className={
+                  tenant.id === selectedTenantId
+                    ? 'workspace-choice selected'
+                    : 'workspace-choice'
+                }
+                disabled={busy || tenant.id === selectedTenantId}
+                key={tenant.id}
+                onClick={() => void selectTenant(tenant.id)}
+              >
+                <strong>{tenant.name}</strong>
+                <span>{tenant.roles.join(', ').replaceAll('_', ' ')}</span>
+              </button>
+            ))}
+          </div>
         )}
         {state === 'error' && (
           <button className="primary-button" onClick={() => void refresh()}>
@@ -99,15 +198,24 @@ export default function Login() {
         </p>
         <p>
           Password recovery is available only when an approved identity provider
-          is configured. Account activation and administrator provisioning are
-          still pending. Contact your administrator if you cannot access your
-          account.
+          is configured. Company access appears only after an administrator has
+          provisioned and activated your account. Contact your administrator if
+          you cannot access your account.
         </p>
         {state === 'signed-in' && (
-          <p>
-            Signing out ends this Kinto session; it does not sign you out of
-            your identity provider.
-          </p>
+          <>
+            <button
+              className="primary-button"
+              disabled={busy}
+              onClick={() => void logout()}
+            >
+              {busy ? 'Updating session…' : 'Sign out of Kinto'}
+            </button>
+            <p>
+              Signing out ends this Kinto session; it does not sign you out of
+              your identity provider.
+            </p>
+          </>
         )}
       </section>
     </>

@@ -92,11 +92,24 @@ test('account access handles outage, login and logout states without storing cre
   let signedIn = false;
   let unavailable = true;
   const csrf = 'a'.repeat(43);
+  const tenantId = '9d2ea3ef-3938-42d0-84f9-d2248f692f67';
   await page.route('**/api/v1/auth/session', (route) =>
     route.fulfill({
       status: unavailable ? 503 : signedIn ? 200 : 401,
       contentType: 'application/json',
-      body: signedIn ? JSON.stringify({ csrfToken: csrf }) : '{}',
+      body: signedIn
+        ? JSON.stringify({
+            csrfToken: csrf,
+            selectedTenantId: tenantId,
+            tenants: [
+              {
+                id: tenantId,
+                name: 'Synthetic Company',
+                roles: ['owner'],
+              },
+            ],
+          })
+        : '{}',
     }),
   );
   await page.goto('/login');
@@ -110,7 +123,9 @@ test('account access handles outage, login and logout states without storing cre
   ).toHaveAttribute('href', '/api/v1/auth/login');
   signedIn = true;
   await page.reload();
-  await expect(page.getByRole('status')).toContainText('You are signed in.');
+  await expect(page.getByRole('status')).toHaveText(
+    'You are signed in to Synthetic Company.',
+  );
   await page.route('**/api/v1/auth/logout', async (route) => {
     expect(route.request().method()).toBe('POST');
     expect(route.request().headers()['x-csrf-token']).toBe(csrf);
@@ -121,5 +136,50 @@ test('account access handles outage, login and logout states without storing cre
   await expect(
     page.getByRole('link', { name: 'Continue to sign in' }),
   ).toBeVisible();
+  expect(await page.evaluate(() => localStorage.length)).toBe(0);
+});
+
+test('account access selects a company without browser-side session storage', async ({
+  page,
+}) => {
+  let csrf = 'a'.repeat(43);
+  const tenantA = '9d2ea3ef-3938-42d0-84f9-d2248f692f67';
+  const tenantB = 'c223af99-e60b-4f4e-aad5-728b02e57d09';
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        csrfToken: csrf,
+        selectedTenantId: null,
+        tenants: [
+          { id: tenantA, name: 'Alpha Company', roles: ['owner'] },
+          { id: tenantB, name: 'Beta Company', roles: ['hr_admin'] },
+        ],
+      }),
+    }),
+  );
+  await page.route('**/api/v1/auth/tenant', async (route) => {
+    expect(route.request().method()).toBe('PUT');
+    expect(route.request().headers()['x-csrf-token']).toBe(csrf);
+    expect(route.request().postDataJSON()).toEqual({ tenantId: tenantB });
+    csrf = 'b'.repeat(43);
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ selectedTenantId: tenantB, csrfToken: csrf }),
+    });
+  });
+  await page.goto('/login');
+  await expect(page.getByRole('status')).toHaveText(
+    'You are signed in. Choose a company workspace.',
+  );
+  await page.getByRole('button', { name: /Beta Company/ }).click();
+  await expect(page.getByRole('status')).toHaveText(
+    'You are signed in to Beta Company.',
+  );
+  await expect(
+    page.getByRole('button', { name: /Beta Company/ }),
+  ).toBeDisabled();
   expect(await page.evaluate(() => localStorage.length)).toBe(0);
 });

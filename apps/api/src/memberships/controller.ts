@@ -18,6 +18,7 @@ import {
 } from '@kinto/contracts';
 import {
   assertSessionMutation,
+  assertSelectedTenant,
   readCookie,
   SESSION_COOKIE,
   type AuthRequest,
@@ -54,7 +55,8 @@ export class MembershipsController {
   async list(@Req() req: AuthRequest, @Param('tenantId') tenantId: unknown) {
     const parsedTenant = tenantIdSchema.safeParse(tenantId);
     if (!parsedTenant.success) throw new BadRequestException();
-    const { actor } = await this.actor(req);
+    const { session, actor } = await this.actor(req);
+    assertSelectedTenant(session, parsedTenant.data);
     return {
       memberships: await this.database.listMemberships(
         actor,
@@ -77,6 +79,7 @@ export class MembershipsController {
       throw new BadRequestException();
     const { session, actor } = await this.actor(req);
     assertSessionMutation(req, this.auth.origin(), session.csrf);
+    assertSelectedTenant(session, parsedTenant.data);
     return this.database.updateMembershipRoles(
       actor,
       parsedTenant.data,
@@ -100,6 +103,7 @@ export class MembershipsController {
       throw new BadRequestException();
     const { session, actor } = await this.actor(req);
     assertSessionMutation(req, this.auth.origin(), session.csrf);
+    assertSelectedTenant(session, parsedTenant.data);
     return this.database.revokeMembership(
       actor,
       parsedTenant.data,
