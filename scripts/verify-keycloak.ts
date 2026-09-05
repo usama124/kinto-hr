@@ -156,7 +156,7 @@ async function otpStep(page: Page) {
   await page.locator('#otp').fill(totp(otpSecret));
   await page.locator('#kc-login').click();
   await expect(page).toHaveURL(`${proxy!.origin}/login`);
-  await expect(page.getByRole('status')).toContainText('You are signed in.');
+  await expect(page.getByRole('status')).toContainText('You are signed in');
   lastAcceptedTotpCounter = counter;
 }
 
@@ -436,7 +436,7 @@ try {
           new URL(invitationPage.url()).origin === proxy!.origin &&
           (await invitationPage.getByRole('status').count()) &&
           (await invitationPage.getByRole('status').innerText()).includes(
-            'You are signed in.',
+            'You are signed in',
           )
         )
           break;

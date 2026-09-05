@@ -41,6 +41,26 @@ export async function assertSafeRuntimeRole(db: PrismaClient): Promise<void> {
   if (rows.length !== 1 || rows[0].unsafe)
     throw new Error('Unsafe runtime database role');
 }
+export async function discoverIdentityTenants(
+  db: PrismaClient,
+  identityId: string,
+) {
+  tenantIdSchema.parse(identityId);
+  const rows = await db.$queryRaw<
+    {
+      tenant_id: string;
+      tenant_name: string;
+      membership_id: string;
+      membership_roles: string[];
+    }[]
+  >`SELECT * FROM public.discover_identity_tenants(${identityId}::uuid)`;
+  return rows.map((row) => ({
+    id: row.tenant_id,
+    name: row.tenant_name,
+    membershipId: row.membership_id,
+    roles: tenantRoleSchema.array().parse(row.membership_roles),
+  }));
+}
 // Login resolves an active identity and may atomically accept its single
 // pre-provisioned owner or employee invitation after trusted MFA. It never
 // creates a provider identity or tenant; company authorization remains in

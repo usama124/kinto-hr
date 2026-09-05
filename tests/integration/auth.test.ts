@@ -375,8 +375,18 @@ it('authenticates a provisioned identity with signed OIDC and returns only safe 
     'csrfToken',
     'expiresAt',
     'identityId',
+    'selectedTenantId',
+    'tenants',
   ]);
   expect(response.body.identityId).toBe(identityId);
+  expect(response.body.selectedTenantId).toBe(tenantId);
+  expect(response.body.tenants).toEqual([
+    {
+      id: tenantId,
+      name: 'Synthetic auth company',
+      roles: ['owner'],
+    },
+  ]);
   expect(response.headers['cache-control']).toBe('no-store');
   const session = await store.readSession(handle(result.sessionCookie));
   expect(session?.principal).toEqual({ issuer, subject, mfaVerified: false });
@@ -390,6 +400,100 @@ it('authenticates a provisioned identity with signed OIDC and returns only safe 
       async () => true,
     ),
   ).rejects.toThrow('FORBIDDEN');
+});
+it('discovers active companies, requires CSRF selection and clears revoked context', async () => {
+  const secondTenantId = randomUUID();
+  await admin.tenant.create({
+    data: {
+      id: secondTenantId,
+      name: 'Another synthetic company',
+      employeeLimit: 5,
+    },
+  });
+  await admin.membership.create({
+    data: {
+      tenantId: secondTenantId,
+      identityId,
+      roles: ['hr_admin'],
+    },
+  });
+  try {
+    const result = await login();
+    const token = handle(result.sessionCookie);
+    const initial = await request(app.getHttpServer())
+      .get('/api/v1/auth/session')
+      .set('Cookie', result.sessionCookie)
+      .expect(200);
+    expect(initial.body.selectedTenantId).toBeNull();
+    expect(
+      initial.body.tenants.map((tenant: { id: string }) => tenant.id),
+    ).toEqual([secondTenantId, tenantId]);
+    await request(app.getHttpServer())
+      .put('/api/v1/auth/tenant')
+      .set('Cookie', result.sessionCookie)
+      .set('Origin', 'https://attacker.example')
+      .set('X-CSRF-Token', initial.body.csrfToken)
+      .send({ tenantId: secondTenantId })
+      .expect(403);
+    await request(app.getHttpServer())
+      .put('/api/v1/auth/tenant')
+      .set('Cookie', result.sessionCookie)
+      .set('Origin', origin)
+      .set('X-CSRF-Token', initial.body.csrfToken)
+      .send({ tenantId: secondTenantId, roles: ['owner'] })
+      .expect(400);
+    await request(app.getHttpServer())
+      .put('/api/v1/auth/tenant')
+      .set('Cookie', result.sessionCookie)
+      .set('Origin', origin)
+      .set('X-CSRF-Token', initial.body.csrfToken)
+      .send({ tenantId: randomUUID() })
+      .expect(403);
+    const concurrent = await Promise.all(
+      [0, 1].map(() =>
+        request(app.getHttpServer())
+          .put('/api/v1/auth/tenant')
+          .set('Cookie', result.sessionCookie)
+          .set('Origin', origin)
+          .set('X-CSRF-Token', initial.body.csrfToken)
+          .send({ tenantId: secondTenantId }),
+      ),
+    );
+    expect(concurrent.map((response) => response.status).sort()).toEqual([
+      200, 403,
+    ]);
+    const selected = concurrent.find((response) => response.status === 200)!;
+    expect(selected.body.selectedTenantId).toBe(secondTenantId);
+    expect(selected.body.csrfToken).not.toBe(initial.body.csrfToken);
+    expect((await store.readSession(token))?.selectedTenantId).toBe(
+      secondTenantId,
+    );
+    await request(app.getHttpServer())
+      .put('/api/v1/auth/tenant')
+      .set('Cookie', result.sessionCookie)
+      .set('Origin', origin)
+      .set('X-CSRF-Token', initial.body.csrfToken)
+      .send({ tenantId })
+      .expect(403);
+    await admin.membership.update({
+      where: {
+        tenantId_identityId: { tenantId: secondTenantId, identityId },
+      },
+      data: { status: 'revoked' },
+    });
+    const cleared = await request(app.getHttpServer())
+      .get('/api/v1/auth/session')
+      .set('Cookie', result.sessionCookie)
+      .expect(200);
+    expect(cleared.body.selectedTenantId).toBeNull();
+    expect(
+      cleared.body.tenants.map((tenant: { id: string }) => tenant.id),
+    ).toEqual([tenantId]);
+    expect(cleared.body.csrfToken).not.toBe(selected.body.csrfToken);
+  } finally {
+    await admin.membership.deleteMany({ where: { tenantId: secondTenantId } });
+    await admin.tenant.delete({ where: { id: secondTenantId } });
+  }
 });
 it.each([
   'issuer',
@@ -804,6 +908,7 @@ it('allows only a recent-MFA owner or HR to request an employee account', async 
     principal: { issuer, subject, mfaVerified: true },
     identityId,
     authTime: Math.floor(Date.now() / 1000) - 301,
+    selectedTenantId: tenantId,
   });
   await request(app.getHttpServer())
     .post(route)
@@ -818,6 +923,7 @@ it('allows only a recent-MFA owner or HR to request an employee account', async 
     principal: { issuer, subject, mfaVerified: true },
     identityId,
     authTime: Math.floor(Date.now() / 1000),
+    selectedTenantId: tenantId,
   });
   const cookie = `${SESSION_COOKIE}=${elevated.token}`;
   await request(app.getHttpServer())

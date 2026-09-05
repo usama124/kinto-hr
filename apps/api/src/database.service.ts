@@ -19,6 +19,7 @@ import {
   requestAdministratorInvitation,
   reconcileAdministratorInvitationProvider,
   markAdministratorInvitationDelivered,
+  discoverIdentityTenants,
 } from '@kinto/database';
 import {
   type AuthenticatedIdentity,
@@ -41,6 +42,9 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
   }
   findIdentity(principal: AuthenticatedIdentity) {
     return findActiveIdentity(this.db, principal);
+  }
+  discoverTenants(identityId: string) {
+    return discoverIdentityTenants(this.db, identityId);
   }
   provisionCompany(
     actor: { identityId: string; mfaVerified: boolean },

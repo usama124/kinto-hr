@@ -4,13 +4,16 @@ import {
   Body,
   Get,
   Post,
+  Put,
   Req,
   Res,
   Inject,
   HttpCode,
   ForbiddenException,
+  BadRequestException,
   UnauthorizedException,
 } from '@nestjs/common';
+import { tenantSelectionSchema } from '@kinto/contracts';
 import { AuthService } from './service';
 import { ABSOLUTE_SECONDS, LOGIN_SECONDS } from './store';
 
@@ -58,6 +61,12 @@ export function assertSessionMutation(
   )
     throw new ForbiddenException();
 }
+export function assertSelectedTenant(
+  session: { selectedTenantId?: string },
+  tenantId: string,
+) {
+  if (session.selectedTenantId !== tenantId) throw new ForbiddenException();
+}
 @Controller('auth')
 export class AuthController {
   constructor(@Inject(AuthService) private readonly auth: AuthService) {}
@@ -98,12 +107,35 @@ export class AuthController {
     await this.limit(req);
     const token = readCookie(req, SESSION_COOKIE);
     if (!token) throw new UnauthorizedException();
-    const session = await this.auth.session(token);
+    const { session, tenants } = await this.auth.access(token);
     // No provider tokens, subject, claims or roles reach the browser.
     return {
       identityId: session.identityId,
       csrfToken: session.csrf,
       expiresAt: session.expiresAt,
+      selectedTenantId: session.selectedTenantId ?? null,
+      tenants: tenants.map(({ id, name, roles }) => ({ id, name, roles })),
+    };
+  }
+  @Put('tenant') async selectTenant(
+    @Req() req: AuthRequest,
+    @Body() body: unknown,
+  ) {
+    await this.limit(req);
+    const token = readCookie(req, SESSION_COOKIE);
+    if (!token) throw new UnauthorizedException();
+    const session = await this.auth.session(token);
+    assertSessionMutation(req, this.auth.origin(), session.csrf);
+    const input = tenantSelectionSchema.safeParse(body);
+    if (!input.success) throw new BadRequestException();
+    const selected = await this.auth.selectTenant(
+      token,
+      input.data.tenantId,
+      session.csrf,
+    );
+    return {
+      selectedTenantId: selected.tenant.id,
+      csrfToken: selected.session.csrf,
     };
   }
   @Post('logout') async logout(

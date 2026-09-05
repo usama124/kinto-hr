@@ -19,6 +19,7 @@ const requestKey = randomUUID();
 const now = Math.floor(Date.now() / 1000);
 const session = {
   identityId,
+  selectedTenantId: tenantId,
   csrf,
   authTime: now,
   expiresAt: now + 300,

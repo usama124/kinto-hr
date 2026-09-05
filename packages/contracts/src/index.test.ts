@@ -5,6 +5,7 @@ import {
   employeeDraftSchema,
   healthSchema,
   tenantIdSchema,
+  tenantSelectionSchema,
   companyProvisioningSchema,
   employeeAccountProvisioningSchema,
   membershipRoleUpdateSchema,
@@ -107,6 +108,12 @@ it.each([
 });
 it('validates tenant IDs and health responses', () => {
   expect(tenantIdSchema.safeParse('not-a-uuid').success).toBe(false);
+  expect(
+    tenantSelectionSchema.safeParse({
+      tenantId: crypto.randomUUID(),
+      role: 'owner',
+    }).success,
+  ).toBe(false);
   expect(
     healthSchema.safeParse({ status: 'ok', service: 'kinto-api' }).success,
   ).toBe(true);

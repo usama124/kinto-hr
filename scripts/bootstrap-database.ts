@@ -154,6 +154,7 @@ try {
     'public.request_administrator_invitation(uuid, boolean, uuid, uuid, uuid, uuid, varchar, text[], varchar)',
     'public.reconcile_administrator_invitation_provider(uuid, uuid, uuid, varchar, varchar, timestamptz, uuid)',
     'public.mark_administrator_invitation_delivered(uuid, timestamptz, uuid)',
+    'public.discover_identity_tenants(uuid)',
   ]) {
     await database.$executeRawUnsafe(
       `ALTER FUNCTION ${signature} OWNER TO kinto_control_owner`,

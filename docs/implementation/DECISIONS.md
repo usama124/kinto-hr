@@ -50,9 +50,13 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 5 September 2026 — active-company discovery and session selection
+
+Engineering implemented the next bounded P01-02 increment. Login discovers only active memberships in active companies through a constrained database function. A single available company is selected automatically; multi-company users explicitly select one through an Origin/CSRF-protected request that rotates the session CSRF token. The selection remains only in the Redis server session and grants no authority by itself. Every tenant-scoped HTTP boundary requires its path tenant to match the session selection and still relies on the existing database role/MFA checks. Revoked membership or suspended-company access disappears from discovery and clears stale selection on the next session read. No browser storage, provider claim or forwarded tenant header selects authority. Customer-visible security-audit access remains next. See [evidence](../evidence/phase-01/tenant-selection.md).
+
 ### 1 September 2026 — owner-created administrator invitations
 
-Engineering implemented the next bounded P01-02 increment. Only an active owner with trusted MFA no older than five minutes may request another tenant administrator. The request fixes a normalized email, explicit owner/HR/payroll role set and audit reason before provider work; it creates no access by itself. Disabled-first Keycloak reconciliation and setup delivery reuse the reviewed adapter, while exact provider subject plus trusted MFA atomically creates the fixed membership. HR, employee/platform roles, changed idempotency bindings, existing same-tenant access, revoked-access reactivation and overlapping pending owner/employee/administrator invitations are refused. Existing identities may join another tenant. Tenant selection and customer-visible security audit remain next. See [evidence](../evidence/phase-01/administrator-invitations.md).
+Engineering implemented the next bounded P01-02 increment. Only an active owner with trusted MFA no older than five minutes may request another tenant administrator. The request fixes a normalized email, explicit owner/HR/payroll role set and audit reason before provider work; it creates no access by itself. Disabled-first Keycloak reconciliation and setup delivery reuse the reviewed adapter, while exact provider subject plus trusted MFA atomically creates the fixed membership. HR, employee/platform roles, changed idempotency bindings, existing same-tenant access, revoked-access reactivation and overlapping pending owner/employee/administrator invitations are refused. Existing identities may join another tenant. Subsequent work adds tenant selection; customer-visible security audit remains next. See [evidence](../evidence/phase-01/administrator-invitations.md).
 
 ### 31 August 2026 — owner membership administration and last-owner invariant
 
