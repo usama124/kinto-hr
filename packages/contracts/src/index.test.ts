@@ -11,6 +11,7 @@ import {
   membershipRoleUpdateSchema,
   membershipRevocationSchema,
   administratorInvitationSchema,
+  securityAuditQuerySchema,
 } from './index';
 it('trims names while preserving employee identifiers as strings', () => {
   expect(
@@ -124,6 +125,26 @@ it('validates tenant IDs and health responses', () => {
       password: 'secret',
     }).success,
   ).toBe(false);
+});
+it('accepts only bounded security audit filters and opaque cursors', () => {
+  expect(
+    securityAuditQuerySchema.parse({
+      limit: '25',
+      action: 'membership.roles_changed',
+      from: '2026-09-01T00:00:00+05:00',
+      to: '2026-09-02T00:00:00+05:00',
+      cursor: 'a'.repeat(48),
+    }),
+  ).toMatchObject({ limit: 25, action: 'membership.roles_changed' });
+  for (const input of [
+    { limit: '0' },
+    { limit: '101' },
+    { action: 'Membership changed' },
+    { cursor: 'not-opaque' },
+    { from: '2026-09-03T00:00:00Z', to: '2026-09-02T00:00:00Z' },
+    { limit: '10', tenantId: crypto.randomUUID() },
+  ])
+    expect(securityAuditQuerySchema.safeParse(input).success).toBe(false);
 });
 it('requires explicit authenticated identity claims without accepting supplied roles', () => {
   const principal = {

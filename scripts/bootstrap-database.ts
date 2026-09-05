@@ -102,6 +102,8 @@ try {
     'CREATE POLICY platform_control ON administrator_invitations FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control_insert ON audit_events',
     'CREATE POLICY platform_control_insert ON audit_events FOR INSERT TO kinto_control_owner WITH CHECK (true)',
+    'DROP POLICY IF EXISTS platform_control_select ON audit_events',
+    'CREATE POLICY platform_control_select ON audit_events FOR SELECT TO kinto_control_owner USING (true)',
     'DROP POLICY IF EXISTS platform_control_insert ON platform_audit_events',
     'CREATE POLICY platform_control_insert ON platform_audit_events FOR INSERT TO kinto_control_owner WITH CHECK (true)',
   ])
@@ -134,7 +136,10 @@ try {
     'GRANT SELECT, INSERT, UPDATE ON administrator_account_requests, administrator_invitations TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
-    'GRANT INSERT ON audit_events, platform_audit_events TO kinto_control_owner',
+    'GRANT SELECT, INSERT ON audit_events TO kinto_control_owner',
+  );
+  await database.$executeRawUnsafe(
+    'GRANT INSERT ON platform_audit_events TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
     'ALTER FUNCTION public.request_company_provisioning(uuid, boolean, uuid, uuid, uuid, uuid, uuid, varchar, integer, varchar, varchar) OWNER TO kinto_control_owner',
@@ -155,6 +160,7 @@ try {
     'public.reconcile_administrator_invitation_provider(uuid, uuid, uuid, varchar, varchar, timestamptz, uuid)',
     'public.mark_administrator_invitation_delivered(uuid, timestamptz, uuid)',
     'public.discover_identity_tenants(uuid)',
+    'public.list_tenant_security_audit(uuid, boolean, uuid, integer, varchar, timestamptz, timestamptz, uuid)',
   ]) {
     await database.$executeRawUnsafe(
       `ALTER FUNCTION ${signature} OWNER TO kinto_control_owner`,

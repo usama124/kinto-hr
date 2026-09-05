@@ -20,6 +20,7 @@ import {
   reconcileAdministratorInvitationProvider,
   markAdministratorInvitationDelivered,
   discoverIdentityTenants,
+  listTenantSecurityAudit,
 } from '@kinto/database';
 import {
   type AuthenticatedIdentity,
@@ -28,6 +29,7 @@ import {
   type MembershipRoleUpdate,
   type MembershipRevocation,
   type AdministratorInvitation,
+  type SecurityAuditQuery,
 } from '@kinto/contracts';
 import { readConfig } from './config';
 @Injectable()
@@ -161,6 +163,13 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       membershipId,
       input,
     );
+  }
+  listSecurityAudit(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    query: SecurityAuditQuery,
+  ) {
+    return listTenantSecurityAudit(this.db, actor, tenantId, query);
   }
   async onModuleDestroy() {
     await this.db.$disconnect();

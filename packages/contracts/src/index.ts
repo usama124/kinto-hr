@@ -4,6 +4,34 @@ export const tenantSelectionSchema = z.strictObject({
   tenantId: tenantIdSchema,
 });
 export type TenantSelection = z.infer<typeof tenantSelectionSchema>;
+const auditActionSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(100)
+  .regex(/^[a-z][a-z0-9_.]*$/);
+const auditDateSchema = z.iso.datetime({ offset: true });
+export const securityAuditQuerySchema = z
+  .strictObject({
+    limit: z
+      .string()
+      .regex(/^(?:[1-9]|[1-9][0-9]|100)$/)
+      .transform(Number)
+      .optional(),
+    action: auditActionSchema.optional(),
+    from: auditDateSchema.optional(),
+    to: auditDateSchema.optional(),
+    cursor: z
+      .string()
+      .length(48)
+      .regex(/^[A-Za-z0-9_-]+$/)
+      .optional(),
+  })
+  .refine(
+    ({ from, to }) => !from || !to || Date.parse(from) <= Date.parse(to),
+    { message: 'from must not be later than to' },
+  );
+export type SecurityAuditQuery = z.infer<typeof securityAuditQuerySchema>;
 export const employeeDraftSchema = z
   .object({
     employeeNumber: z
