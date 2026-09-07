@@ -106,6 +106,10 @@ try {
     'CREATE POLICY platform_control ON branches FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON company_policy_versions',
     'CREATE POLICY platform_control ON company_policy_versions FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
+    'DROP POLICY IF EXISTS platform_control ON plan_versions',
+    'CREATE POLICY platform_control ON plan_versions FOR SELECT TO kinto_control_owner USING (true)',
+    'DROP POLICY IF EXISTS platform_control ON tenant_subscriptions',
+    'CREATE POLICY platform_control ON tenant_subscriptions FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control_insert ON audit_events',
     'CREATE POLICY platform_control_insert ON audit_events FOR INSERT TO kinto_control_owner WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control_select ON audit_events',
@@ -147,6 +151,15 @@ try {
     'GRANT SELECT, INSERT, UPDATE ON legal_entities, branches, company_policy_versions TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
+    'GRANT SELECT ON plan_versions TO kinto_control_owner',
+  );
+  await database.$executeRawUnsafe(
+    'GRANT SELECT, INSERT, UPDATE ON tenant_subscriptions TO kinto_control_owner',
+  );
+  await database.$executeRawUnsafe(
+    'GRANT SELECT ON tenant_subscriptions TO kinto_app',
+  );
+  await database.$executeRawUnsafe(
     'GRANT SELECT, INSERT ON audit_events TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
@@ -183,6 +196,7 @@ try {
     'public.create_organization_policy_draft(uuid, boolean, uuid, uuid, integer, date, uuid, varchar, uuid)',
     'public.preview_organization_policy(uuid, boolean, uuid, uuid)',
     'public.publish_organization_policy(uuid, boolean, uuid, uuid, integer, varchar, uuid, uuid)',
+    'public.read_tenant_entitlements(uuid, boolean, uuid)',
   ]) {
     await database.$executeRawUnsafe(
       `ALTER FUNCTION ${signature} OWNER TO kinto_control_owner`,

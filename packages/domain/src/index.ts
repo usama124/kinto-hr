@@ -1,9 +1,9 @@
 export const PLANS = {
-  free: { employeeLimit: 5 },
-  starter: { employeeLimit: 20 },
-  growth: { employeeLimit: 50 },
-  business: { employeeLimit: 100 },
-  scale: { employeeLimit: 250 },
+  free: { employeeLimit: 5, capabilities: ['company_setup'] },
+  starter: { employeeLimit: 20, capabilities: ['company_setup'] },
+  growth: { employeeLimit: 50, capabilities: ['company_setup'] },
+  business: { employeeLimit: 100, capabilities: ['company_setup'] },
+  scale: { employeeLimit: 250, capabilities: ['company_setup'] },
 } as const;
 export type Plan = keyof typeof PLANS;
 export type Role =
@@ -22,7 +22,8 @@ export type Permission =
   | 'organization.read'
   | 'organization.manage'
   | 'company_policies.read'
-  | 'company_policies.manage';
+  | 'company_policies.manage'
+  | 'entitlements.read';
 const permissions: Record<Role, readonly Permission[]> = {
   owner: [
     'employees.read',
@@ -32,12 +33,14 @@ const permissions: Record<Role, readonly Permission[]> = {
     'organization.manage',
     'company_policies.read',
     'company_policies.manage',
+    'entitlements.read',
   ],
   hr_admin: [
     'employees.read',
     'employees.write',
     'organization.read',
     'company_policies.read',
+    'entitlements.read',
   ],
   payroll_preparer: ['payroll.prepare'],
   payroll_approver: ['payroll.finalize'],

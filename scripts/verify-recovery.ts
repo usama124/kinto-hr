@@ -62,8 +62,10 @@ async function snapshot(db: PrismaClient) {
       'memberships',
       'outbox_events',
       'owner_invitations',
+      'plan_versions',
       'platform_audit_events',
       'platform_operators',
+      'tenant_subscriptions',
       'tenants',
     ],
   );
@@ -98,6 +100,10 @@ async function snapshot(db: PrismaClient) {
     }),
     memberships: await db.membership.findMany({ orderBy: { id: 'asc' } }),
     tenants: await db.tenant.findMany({ orderBy: { id: 'asc' } }),
+    planVersions: await db.planVersion.findMany({ orderBy: { id: 'asc' } }),
+    tenantSubscriptions: await db.tenantSubscription.findMany({
+      orderBy: { id: 'asc' },
+    }),
     legalEntities: await db.legalEntity.findMany({ orderBy: { id: 'asc' } }),
     branches: await db.branch.findMany({ orderBy: { id: 'asc' } }),
     companyPolicyVersions: await db.companyPolicyVersion.findMany({
@@ -488,7 +494,7 @@ async function main() {
     const policies = await restored.$queryRaw<
       { enabled: boolean; forced: boolean }[]
     >`SELECT relrowsecurity AS enabled, relforcerowsecurity AS forced FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND relkind='r' AND relname <> '_prisma_migrations'`;
-    assert.equal(policies.length, 20);
+    assert.equal(policies.length, 22);
     assert.ok(policies.every((row) => row.enabled && row.forced));
     assert.deepEqual(await restoredApp.employee.findMany(), []);
     for (const tenantId of tenants) {
@@ -572,6 +578,7 @@ async function main() {
       activeEmployeeIdentityLinkPreserved: true,
       membershipAdministrationAuditPreserved: true,
       organizationPolicyHistoryPreserved: true,
+      entitlementCatalogAndSubscriptionPreserved: true,
       pendingAdministratorInvitationPreserved: true,
     };
     await writeFile(

@@ -232,13 +232,42 @@ export type AdministratorInvitation = z.infer<
   typeof administratorInvitationSchema
 >;
 
-export const companyProvisioningSchema = z.strictObject({
-  companyName: z.string().trim().min(1).max(160),
-  employeeLimit: z.number().int().min(0).max(250),
-  billingMode: z.enum(['free', 'complimentary', 'manual_paid']),
-  initialOwnerEmail: z.string().trim().toLowerCase().pipe(z.email().max(320)),
-});
+export const companyProvisioningSchema = z
+  .strictObject({
+    companyName: z.string().trim().min(1).max(160),
+    employeeLimit: z.union([
+      z.literal(5),
+      z.literal(20),
+      z.literal(50),
+      z.literal(100),
+      z.literal(250),
+    ]),
+    billingMode: z.enum(['free', 'complimentary', 'manual_paid']),
+    initialOwnerEmail: z.string().trim().toLowerCase().pipe(z.email().max(320)),
+  })
+  .superRefine((value, context) => {
+    if (value.billingMode === 'free' && value.employeeLimit !== 5)
+      context.addIssue({
+        code: 'custom',
+        path: ['employeeLimit'],
+        message: 'Free provisioning requires the five-employee package',
+      });
+  });
 export type CompanyProvisioning = z.infer<typeof companyProvisioningSchema>;
+export const entitlementSnapshotSchema = z.strictObject({
+  plan: z.strictObject({
+    code: z.enum(['free', 'starter', 'growth', 'business', 'scale']),
+    version: z.number().int().positive(),
+  }),
+  billingMode: z.enum(['free', 'complimentary', 'manual_paid']),
+  employeeLimit: z.number().int().min(0).max(250),
+  activeEmployees: z.number().int().min(0),
+  availableEmployeeSeats: z.number().int().min(0),
+  capabilities: z.strictObject({ companySetup: z.literal(true) }),
+  entitlementVersion: z.number().int().positive(),
+  effectiveFrom: z.iso.datetime({ offset: true }),
+});
+export type EntitlementSnapshot = z.infer<typeof entitlementSnapshotSchema>;
 export const employeeAccountProvisioningSchema = z.strictObject({
   email: z.string().trim().toLowerCase().pipe(z.email().max(320)),
 });

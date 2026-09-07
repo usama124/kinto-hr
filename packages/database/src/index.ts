@@ -26,6 +26,7 @@ import {
   organizationPolicyPublishSchema,
   organizationSnapshotSchema,
   organizationPolicyPreviewSchema,
+  entitlementSnapshotSchema,
   type LegalEntityCreate,
   type LegalEntityUpdate,
   type BranchCreate,
@@ -968,6 +969,23 @@ export async function publishOrganizationPolicy(
     throw new Error('Invalid policy publication result');
   return { id: row.policy_id, version: row.policy_version };
 }
+export async function readTenantEntitlements(
+  db: PrismaClient,
+  actor: { identityId: string; mfaVerified: boolean },
+  tenantId: string,
+) {
+  tenantIdSchema.parse(actor.identityId);
+  tenantIdSchema.parse(tenantId);
+  const rows = await db.$queryRaw<
+    { outcome: 'ok' | 'forbidden' | 'not_found'; snapshot: unknown }[]
+  >`SELECT * FROM public.read_tenant_entitlements(
+    ${actor.identityId}::uuid, ${actor.mfaVerified}, ${tenantId}::uuid
+  )`;
+  const row = rows[0];
+  if (!row || row.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (row.outcome === 'not_found') throw new DomainError('NOT_FOUND');
+  return entitlementSnapshotSchema.parse(row.snapshot);
+}
 export async function createEmployeeDraft(
   db: PrismaClient,
   tenantId: string,
@@ -1010,9 +1028,15 @@ export async function activateEmployee(
       where: { id: tenantId },
     });
     if (tenant.status !== 'active') throw new DomainError('TENANT_UNAVAILABLE');
+    const [subscription] = await tx.$queryRaw<{ employee_limit: number }[]>`
+      SELECT employee_limit FROM public.tenant_subscriptions
+      WHERE tenant_id = ${tenantId}::uuid AND status = 'active'
+        AND effective_from <= now()
+      ORDER BY subscription_version DESC LIMIT 1
+    `;
     assertCanActivate(
       await tx.employee.count({ where: { tenantId, status: 'active' } }),
-      tenant.employeeLimit,
+      subscription?.employee_limit ?? tenant.employeeLimit,
     );
     const updated = await tx.employee.update({
       where: { tenantId_id: { tenantId, id: employeeId } },
