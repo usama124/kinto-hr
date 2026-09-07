@@ -7,6 +7,7 @@ import {
   tenantIdSchema,
   tenantSelectionSchema,
   companyProvisioningSchema,
+  entitlementSnapshotSchema,
   employeeAccountProvisioningSchema,
   membershipRoleUpdateSchema,
   membershipRevocationSchema,
@@ -76,6 +77,18 @@ it('normalizes only approved company provisioning fields', () => {
     },
     {
       companyName: 'Company',
+      employeeLimit: 10,
+      billingMode: 'complimentary',
+      initialOwnerEmail: 'owner@example.com',
+    },
+    {
+      companyName: 'Company',
+      employeeLimit: 20,
+      billingMode: 'free',
+      initialOwnerEmail: 'owner@example.com',
+    },
+    {
+      companyName: 'Company',
       employeeLimit: 5,
       billingMode: 'free',
       initialOwnerEmail: 'owner@example.com',
@@ -89,6 +102,25 @@ it('normalizes only approved company provisioning fields', () => {
     },
   ])
     expect(companyProvisioningSchema.safeParse(input).success).toBe(false);
+});
+it('accepts only the safe entitlement projection', () => {
+  const value = {
+    plan: { code: 'business', version: 1 },
+    billingMode: 'complimentary',
+    employeeLimit: 100,
+    activeEmployees: 32,
+    availableEmployeeSeats: 68,
+    capabilities: { companySetup: true },
+    entitlementVersion: 1,
+    effectiveFrom: '2026-09-08T00:00:00.000Z',
+  };
+  expect(entitlementSnapshotSchema.parse(value)).toEqual(value);
+  expect(
+    entitlementSnapshotSchema.safeParse({
+      ...value,
+      capabilities: { companySetup: true, payroll: true },
+    }).success,
+  ).toBe(false);
 });
 it('accepts only a normalized email for employee account requests', () => {
   expect(

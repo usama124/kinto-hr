@@ -16,6 +16,7 @@ import { MembershipsController } from './memberships/controller';
 import { AdministratorInvitationsController } from './administrator-invitations/controller';
 import { SecurityAuditController } from './security-audit/controller';
 import { OrganizationController } from './organization/controller';
+import { EntitlementsController } from './entitlements/controller';
 @Controller('health')
 export class HealthController {
   constructor(
@@ -45,6 +46,7 @@ export class HealthController {
     AdministratorInvitationsController,
     SecurityAuditController,
     OrganizationController,
+    EntitlementsController,
   ],
   providers: [DatabaseService, AuthService, OwnerProvisioningService],
 })

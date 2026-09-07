@@ -437,3 +437,54 @@ test('owner configures a legal employer, branch and published organization defau
     ),
   ).toBe(true);
 });
+
+test('owner reviews the effective complimentary plan and employee capacity', async ({
+  page,
+}) => {
+  const tenantId = '9d2ea3ef-3938-42d0-84f9-d2248f692f67';
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        csrfToken: 'b'.repeat(43),
+        selectedTenantId: tenantId,
+        tenants: [
+          { id: tenantId, name: 'Synthetic Company', roles: ['owner'] },
+        ],
+      }),
+    }),
+  );
+  await page.route(`**/api/v1/tenants/${tenantId}/entitlements`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        plan: { code: 'business', version: 1 },
+        billingMode: 'complimentary',
+        employeeLimit: 100,
+        activeEmployees: 32,
+        availableEmployeeSeats: 68,
+        capabilities: { companySetup: true },
+        entitlementVersion: 1,
+        effectiveFrom: '2026-09-08T00:00:00.000Z',
+      }),
+    }),
+  );
+  await page.goto('/entitlements');
+  await expect(
+    page.getByRole('heading', { name: 'Synthetic Company' }),
+  ).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'business' })).toBeVisible();
+  await expect(page.getByText('Complimentary · no collection')).toBeVisible();
+  await expect(
+    page.getByRole('progressbar', { name: 'Employee capacity used' }),
+  ).toHaveAttribute('aria-valuenow', '32');
+  await expect(page.getByText('68 seats available')).toBeVisible();
+  await expect(page.getByText(/have no production prices/)).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+});

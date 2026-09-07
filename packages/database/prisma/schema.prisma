@@ -29,6 +29,7 @@ model Tenant {
   legalEntity                  LegalEntity?
   branches                     Branch[]
   companyPolicyVersions        CompanyPolicyVersion[]
+  subscriptions                TenantSubscription[]
 
   @@map("tenants")
 }
@@ -118,6 +119,40 @@ model CompanyPolicyVersion {
   @@unique([tenantId, domain, policyVersion])
   @@index([tenantId, domain, status, effectiveFrom])
   @@map("company_policy_versions")
+}
+
+model PlanVersion {
+  id            String               @id @db.Uuid
+  code          String               @db.VarChar(30)
+  planVersion   Int                  @map("plan_version")
+  employeeLimit Int                  @map("employee_limit")
+  capabilities  Json                 @db.JsonB
+  status        String               @default("test_seed") @db.VarChar(20)
+  publishedAt   DateTime             @default(now()) @map("published_at") @db.Timestamptz()
+  subscriptions TenantSubscription[]
+
+  @@unique([code, planVersion])
+  @@map("plan_versions")
+}
+
+model TenantSubscription {
+  id                  String      @id @db.Uuid
+  tenantId            String      @map("tenant_id") @db.Uuid
+  subscriptionVersion Int         @map("subscription_version")
+  planVersionId       String      @map("plan_version_id") @db.Uuid
+  billingMode         String      @map("billing_mode") @db.VarChar(20)
+  employeeLimit       Int         @map("employee_limit")
+  status              String      @default("active") @db.VarChar(20)
+  effectiveFrom       DateTime    @default(now()) @map("effective_from") @db.Timestamptz()
+  endedAt             DateTime?   @map("ended_at") @db.Timestamptz()
+  reason              String      @db.VarChar(240)
+  createdAt           DateTime    @default(now()) @map("created_at") @db.Timestamptz()
+  tenant              Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  planVersion         PlanVersion @relation(fields: [planVersionId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, subscriptionVersion])
+  @@index([tenantId, status, effectiveFrom])
+  @@map("tenant_subscriptions")
 }
 
 model PlatformOperator {

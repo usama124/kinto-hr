@@ -29,6 +29,7 @@ import {
   createOrganizationPolicyDraft,
   previewOrganizationPolicy,
   publishOrganizationPolicy,
+  readTenantEntitlements,
 } from '@kinto/database';
 import {
   type AuthenticatedIdentity,
@@ -242,6 +243,12 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     input: OrganizationPolicyPublish,
   ) {
     return publishOrganizationPolicy(this.db, actor, tenantId, policyId, input);
+  }
+  readEntitlements(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+  ) {
+    return readTenantEntitlements(this.db, actor, tenantId);
   }
   async onModuleDestroy() {
     await this.db.$disconnect();

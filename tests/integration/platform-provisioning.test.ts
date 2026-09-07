@@ -26,7 +26,7 @@ const runtime = createDatabase(runtimeUrl);
 const issuer = 'https://platform.synthetic.example/realm';
 const input = {
   companyName: 'Synthetic Provisioned Company',
-  employeeLimit: 20,
+  employeeLimit: 20 as const,
   billingMode: 'complimentary' as const,
   initialOwnerEmail: 'owner@synthetic.example',
 };
@@ -150,6 +150,17 @@ describe('platform-only company provisioning boundary', () => {
       await admin.membership.count({ where: { tenantId: result.tenantId } }),
     ).toBe(0);
     expect(
+      await admin.tenantSubscription.findFirstOrThrow({
+        where: { tenantId: result.tenantId, status: 'active' },
+        include: { planVersion: true },
+      }),
+    ).toMatchObject({
+      subscriptionVersion: 1,
+      billingMode: 'complimentary',
+      employeeLimit: 20,
+      planVersion: { code: 'starter', planVersion: 1 },
+    });
+    expect(
       await admin.auditEvent.count({ where: { tenantId: result.tenantId } }),
     ).toBe(1);
     expect(
@@ -189,6 +200,14 @@ describe('platform-only company provisioning boundary', () => {
         { ...input, employeeLimit: 50 },
       ),
     ).rejects.toThrow('CONFLICT');
+    await expect(
+      requestCompanyProvisioning(
+        runtime,
+        { identityId: operatorId, mfaVerified: true },
+        randomUUID(),
+        { ...input, billingMode: 'free' },
+      ),
+    ).rejects.toThrow();
   });
 
   it('uses a constrained non-login function owner and grants only execution to the API role', async () => {
