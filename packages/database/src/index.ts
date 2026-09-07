@@ -18,6 +18,20 @@ import {
   administratorInvitationSchema,
   type AdministratorInvitation,
   type SecurityAuditQuery,
+  legalEntityCreateSchema,
+  legalEntityUpdateSchema,
+  branchCreateSchema,
+  branchUpdateSchema,
+  organizationPolicyDraftSchema,
+  organizationPolicyPublishSchema,
+  organizationSnapshotSchema,
+  organizationPolicyPreviewSchema,
+  type LegalEntityCreate,
+  type LegalEntityUpdate,
+  type BranchCreate,
+  type BranchUpdate,
+  type OrganizationPolicyDraft,
+  type OrganizationPolicyPublish,
 } from '@kinto/contracts';
 import {
   assertCanActivate,
@@ -744,6 +758,215 @@ export async function listTenantSecurityAudit(
         ? encodeSecurityAuditCursor(page[page.length - 1].id)
         : null,
   };
+}
+
+type OrganizationActor = { identityId: string; mfaVerified: boolean };
+type OrganizationMutationRow = {
+  outcome:
+    | 'created'
+    | 'updated'
+    | 'published'
+    | 'forbidden'
+    | 'not_found'
+    | 'stale'
+    | 'invalid_state'
+    | 'conflict';
+  entity_id?: string | null;
+  entity_version?: number | null;
+  branch_id?: string | null;
+  branch_version?: number | null;
+  policy_id?: string | null;
+  policy_version?: number | null;
+};
+
+function validateOrganizationActor(actor: OrganizationActor, tenantId: string) {
+  tenantIdSchema.parse(actor.identityId);
+  tenantIdSchema.parse(tenantId);
+}
+
+function assertOrganizationMutation(row?: OrganizationMutationRow) {
+  if (!row || row.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (row.outcome === 'not_found') throw new DomainError('NOT_FOUND');
+  if (row.outcome === 'stale') throw new DomainError('STALE_VERSION');
+  if (row.outcome === 'invalid_state') throw new DomainError('INVALID_STATE');
+  if (row.outcome === 'conflict') throw new DomainError('CONFLICT');
+  return row;
+}
+
+export async function readTenantOrganization(
+  db: PrismaClient,
+  actor: OrganizationActor,
+  tenantId: string,
+) {
+  validateOrganizationActor(actor, tenantId);
+  const rows = await db.$queryRaw<
+    { outcome: 'ok' | 'forbidden'; snapshot: unknown }[]
+  >`SELECT * FROM public.read_tenant_organization(
+    ${actor.identityId}::uuid, ${actor.mfaVerified}, ${tenantId}::uuid
+  )`;
+  const row = rows[0];
+  if (!row || row.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  return organizationSnapshotSchema.parse(row.snapshot);
+}
+
+export async function createTenantLegalEntity(
+  db: PrismaClient,
+  actor: OrganizationActor,
+  tenantId: string,
+  input: LegalEntityCreate,
+) {
+  validateOrganizationActor(actor, tenantId);
+  const value = legalEntityCreateSchema.parse(input);
+  const rows = await db.$queryRaw<OrganizationMutationRow[]>`
+    SELECT * FROM public.create_tenant_legal_entity(
+      ${actor.identityId}::uuid, ${actor.mfaVerified}, ${tenantId}::uuid,
+      ${randomUUID()}::uuid, ${value.legalName}::varchar,
+      ${value.registrationNumber ?? null}::varchar,
+      ${value.taxNumber ?? null}::varchar, ${value.provinceCode}::varchar,
+      ${value.reason}::varchar, ${randomUUID()}::uuid, ${randomUUID()}::uuid
+    )
+  `;
+  const row = assertOrganizationMutation(rows[0]);
+  if (!row.entity_id || !row.entity_version)
+    throw new Error('Invalid legal entity creation result');
+  return { id: row.entity_id, version: row.entity_version };
+}
+
+export async function updateTenantLegalEntity(
+  db: PrismaClient,
+  actor: OrganizationActor,
+  tenantId: string,
+  entityId: string,
+  input: LegalEntityUpdate,
+) {
+  validateOrganizationActor(actor, tenantId);
+  tenantIdSchema.parse(entityId);
+  const value = legalEntityUpdateSchema.parse(input);
+  const rows = await db.$queryRaw<OrganizationMutationRow[]>`
+    SELECT * FROM public.update_tenant_legal_entity(
+      ${actor.identityId}::uuid, ${actor.mfaVerified}, ${tenantId}::uuid,
+      ${entityId}::uuid, ${value.expectedVersion}::integer,
+      ${value.legalName}::varchar, ${value.registrationNumber ?? null}::varchar,
+      ${value.taxNumber ?? null}::varchar, ${value.provinceCode}::varchar,
+      ${value.reason}::varchar, ${randomUUID()}::uuid, ${randomUUID()}::uuid
+    )
+  `;
+  const row = assertOrganizationMutation(rows[0]);
+  if (!row.entity_id || !row.entity_version)
+    throw new Error('Invalid legal entity update result');
+  return { id: row.entity_id, version: row.entity_version };
+}
+
+export async function createTenantBranch(
+  db: PrismaClient,
+  actor: OrganizationActor,
+  tenantId: string,
+  input: BranchCreate,
+) {
+  validateOrganizationActor(actor, tenantId);
+  const value = branchCreateSchema.parse(input);
+  const rows = await db.$queryRaw<OrganizationMutationRow[]>`
+    SELECT * FROM public.create_tenant_branch(
+      ${actor.identityId}::uuid, ${actor.mfaVerified}, ${tenantId}::uuid,
+      ${randomUUID()}::uuid, ${value.code}::varchar, ${value.name}::varchar,
+      ${value.provinceCode}::varchar, ${value.reason}::varchar,
+      ${randomUUID()}::uuid, ${randomUUID()}::uuid
+    )
+  `;
+  const row = assertOrganizationMutation(rows[0]);
+  if (!row.branch_id || !row.branch_version)
+    throw new Error('Invalid branch creation result');
+  return { id: row.branch_id, version: row.branch_version };
+}
+
+export async function updateTenantBranch(
+  db: PrismaClient,
+  actor: OrganizationActor,
+  tenantId: string,
+  branchId: string,
+  input: BranchUpdate,
+) {
+  validateOrganizationActor(actor, tenantId);
+  tenantIdSchema.parse(branchId);
+  const value = branchUpdateSchema.parse(input);
+  const rows = await db.$queryRaw<OrganizationMutationRow[]>`
+    SELECT * FROM public.update_tenant_branch(
+      ${actor.identityId}::uuid, ${actor.mfaVerified}, ${tenantId}::uuid,
+      ${branchId}::uuid, ${value.expectedVersion}::integer,
+      ${value.code}::varchar, ${value.name}::varchar,
+      ${value.provinceCode}::varchar, ${value.status}::varchar,
+      ${value.reason}::varchar, ${randomUUID()}::uuid, ${randomUUID()}::uuid
+    )
+  `;
+  const row = assertOrganizationMutation(rows[0]);
+  if (!row.branch_id || !row.branch_version)
+    throw new Error('Invalid branch update result');
+  return { id: row.branch_id, version: row.branch_version };
+}
+
+export async function createOrganizationPolicyDraft(
+  db: PrismaClient,
+  actor: OrganizationActor,
+  tenantId: string,
+  input: OrganizationPolicyDraft,
+) {
+  validateOrganizationActor(actor, tenantId);
+  const value = organizationPolicyDraftSchema.parse(input);
+  const rows = await db.$queryRaw<OrganizationMutationRow[]>`
+    SELECT * FROM public.create_organization_policy_draft(
+      ${actor.identityId}::uuid, ${actor.mfaVerified}, ${tenantId}::uuid,
+      ${randomUUID()}::uuid, ${value.expectedCurrentVersion}::integer,
+      ${value.effectiveFrom}::date, ${value.settings.defaultBranchId}::uuid,
+      ${value.reason}::varchar, ${randomUUID()}::uuid
+    )
+  `;
+  const row = assertOrganizationMutation(rows[0]);
+  if (!row.policy_id || !row.policy_version)
+    throw new Error('Invalid policy draft result');
+  return { id: row.policy_id, version: row.policy_version };
+}
+
+export async function previewOrganizationPolicy(
+  db: PrismaClient,
+  actor: OrganizationActor,
+  tenantId: string,
+  policyId: string,
+) {
+  validateOrganizationActor(actor, tenantId);
+  tenantIdSchema.parse(policyId);
+  const rows = await db.$queryRaw<
+    { outcome: 'ok' | 'forbidden' | 'not_found'; preview: unknown }[]
+  >`SELECT * FROM public.preview_organization_policy(
+    ${actor.identityId}::uuid, ${actor.mfaVerified}, ${tenantId}::uuid,
+    ${policyId}::uuid
+  )`;
+  const row = rows[0];
+  if (!row || row.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (row.outcome === 'not_found') throw new DomainError('NOT_FOUND');
+  return organizationPolicyPreviewSchema.parse(row.preview);
+}
+
+export async function publishOrganizationPolicy(
+  db: PrismaClient,
+  actor: OrganizationActor,
+  tenantId: string,
+  policyId: string,
+  input: OrganizationPolicyPublish,
+) {
+  validateOrganizationActor(actor, tenantId);
+  tenantIdSchema.parse(policyId);
+  const value = organizationPolicyPublishSchema.parse(input);
+  const rows = await db.$queryRaw<OrganizationMutationRow[]>`
+    SELECT * FROM public.publish_organization_policy(
+      ${actor.identityId}::uuid, ${actor.mfaVerified}, ${tenantId}::uuid,
+      ${policyId}::uuid, ${value.expectedVersion}::integer,
+      ${value.reason}::varchar, ${randomUUID()}::uuid, ${randomUUID()}::uuid
+    )
+  `;
+  const row = assertOrganizationMutation(rows[0]);
+  if (!row.policy_id || !row.policy_version)
+    throw new Error('Invalid policy publication result');
+  return { id: row.policy_id, version: row.policy_version };
 }
 export async function createEmployeeDraft(
   db: PrismaClient,

@@ -12,6 +12,12 @@ import {
   membershipRevocationSchema,
   administratorInvitationSchema,
   securityAuditQuerySchema,
+  legalEntityCreateSchema,
+  legalEntityUpdateSchema,
+  branchCreateSchema,
+  branchUpdateSchema,
+  organizationPolicyDraftSchema,
+  organizationPolicyPublishSchema,
 } from './index';
 it('trims names while preserving employee identifiers as strings', () => {
   expect(
@@ -145,6 +151,85 @@ it('accepts only bounded security audit filters and opaque cursors', () => {
     { limit: '10', tenantId: crypto.randomUUID() },
   ])
     expect(securityAuditQuerySchema.safeParse(input).success).toBe(false);
+});
+it('validates Pakistan legal entity and branch setup without mass assignment', () => {
+  expect(
+    legalEntityCreateSchema.parse({
+      legalName: ' Acme (Private) Limited ',
+      registrationNumber: '0123456',
+      taxNumber: '1234567-8',
+      provinceCode: 'PK-PB',
+      reason: 'Initial company setup',
+    }),
+  ).toMatchObject({ legalName: 'Acme (Private) Limited' });
+  expect(
+    branchCreateSchema.parse({
+      code: ' lhr-01 ',
+      name: ' Lahore Head Office ',
+      provinceCode: 'PK-PB',
+      reason: 'Initial branch setup',
+    }),
+  ).toMatchObject({ code: 'LHR-01', name: 'Lahore Head Office' });
+  for (const input of [
+    { legalName: 'Acme', provinceCode: 'Punjab', reason: 'Invalid province' },
+    {
+      legalName: 'Acme',
+      provinceCode: 'PK-PB',
+      reason: 'Initial setup',
+      currencyCode: 'USD',
+    },
+  ])
+    expect(legalEntityCreateSchema.safeParse(input).success).toBe(false);
+  expect(
+    legalEntityUpdateSchema.safeParse({
+      expectedVersion: 0,
+      legalName: 'Acme',
+      provinceCode: 'PK-PB',
+      reason: 'Invalid version',
+    }).success,
+  ).toBe(false);
+  expect(
+    branchUpdateSchema.safeParse({
+      expectedVersion: 1,
+      code: '=CMD()',
+      name: 'Branch',
+      provinceCode: 'PK-PB',
+      status: 'active',
+      reason: 'Invalid branch code',
+    }).success,
+  ).toBe(false);
+});
+it('accepts only typed organization-default policy drafts and publication', () => {
+  const branchId = crypto.randomUUID();
+  expect(
+    organizationPolicyDraftSchema.parse({
+      expectedCurrentVersion: 0,
+      effectiveFrom: '2026-09-06',
+      settings: { defaultBranchId: branchId },
+      reason: 'Select the initial default branch',
+    }),
+  ).toMatchObject({ settings: { defaultBranchId: branchId } });
+  for (const input of [
+    {
+      expectedCurrentVersion: 0,
+      effectiveFrom: '06-09-2026',
+      settings: { defaultBranchId: branchId },
+      reason: 'Invalid date',
+    },
+    {
+      expectedCurrentVersion: 0,
+      effectiveFrom: '2026-09-06',
+      settings: { defaultBranchId: branchId, absenceRule: 'deduct' },
+      reason: 'Unsupported setting',
+    },
+  ])
+    expect(organizationPolicyDraftSchema.safeParse(input).success).toBe(false);
+  expect(
+    organizationPolicyPublishSchema.safeParse({
+      expectedVersion: 1,
+      reason: 'Publish approved defaults',
+    }).success,
+  ).toBe(true);
 });
 it('requires explicit authenticated identity claims without accepting supplied roles', () => {
   const principal = {

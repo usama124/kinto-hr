@@ -100,10 +100,18 @@ try {
     'CREATE POLICY platform_control ON administrator_account_requests FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON administrator_invitations',
     'CREATE POLICY platform_control ON administrator_invitations FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
+    'DROP POLICY IF EXISTS platform_control ON legal_entities',
+    'CREATE POLICY platform_control ON legal_entities FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
+    'DROP POLICY IF EXISTS platform_control ON branches',
+    'CREATE POLICY platform_control ON branches FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
+    'DROP POLICY IF EXISTS platform_control ON company_policy_versions',
+    'CREATE POLICY platform_control ON company_policy_versions FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control_insert ON audit_events',
     'CREATE POLICY platform_control_insert ON audit_events FOR INSERT TO kinto_control_owner WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control_select ON audit_events',
     'CREATE POLICY platform_control_select ON audit_events FOR SELECT TO kinto_control_owner USING (true)',
+    'DROP POLICY IF EXISTS platform_control_insert ON outbox_events',
+    'CREATE POLICY platform_control_insert ON outbox_events FOR INSERT TO kinto_control_owner WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control_insert ON platform_audit_events',
     'CREATE POLICY platform_control_insert ON platform_audit_events FOR INSERT TO kinto_control_owner WITH CHECK (true)',
   ])
@@ -136,10 +144,16 @@ try {
     'GRANT SELECT, INSERT, UPDATE ON administrator_account_requests, administrator_invitations TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
+    'GRANT SELECT, INSERT, UPDATE ON legal_entities, branches, company_policy_versions TO kinto_control_owner',
+  );
+  await database.$executeRawUnsafe(
     'GRANT SELECT, INSERT ON audit_events TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
     'GRANT INSERT ON platform_audit_events TO kinto_control_owner',
+  );
+  await database.$executeRawUnsafe(
+    'GRANT INSERT ON outbox_events TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
     'ALTER FUNCTION public.request_company_provisioning(uuid, boolean, uuid, uuid, uuid, uuid, uuid, varchar, integer, varchar, varchar) OWNER TO kinto_control_owner',
@@ -161,6 +175,14 @@ try {
     'public.mark_administrator_invitation_delivered(uuid, timestamptz, uuid)',
     'public.discover_identity_tenants(uuid)',
     'public.list_tenant_security_audit(uuid, boolean, uuid, integer, varchar, timestamptz, timestamptz, uuid)',
+    'public.read_tenant_organization(uuid, boolean, uuid)',
+    'public.create_tenant_legal_entity(uuid, boolean, uuid, uuid, varchar, varchar, varchar, varchar, varchar, uuid, uuid)',
+    'public.update_tenant_legal_entity(uuid, boolean, uuid, uuid, integer, varchar, varchar, varchar, varchar, varchar, uuid, uuid)',
+    'public.create_tenant_branch(uuid, boolean, uuid, uuid, varchar, varchar, varchar, varchar, uuid, uuid)',
+    'public.update_tenant_branch(uuid, boolean, uuid, uuid, integer, varchar, varchar, varchar, varchar, varchar, uuid, uuid)',
+    'public.create_organization_policy_draft(uuid, boolean, uuid, uuid, integer, date, uuid, varchar, uuid)',
+    'public.preview_organization_policy(uuid, boolean, uuid, uuid)',
+    'public.publish_organization_policy(uuid, boolean, uuid, uuid, integer, varchar, uuid, uuid)',
   ]) {
     await database.$executeRawUnsafe(
       `ALTER FUNCTION ${signature} OWNER TO kinto_control_owner`,
@@ -172,6 +194,7 @@ try {
   for (const signature of [
     'public.resolve_login_identity_pre_administrator(varchar, varchar, boolean, uuid, uuid, uuid, uuid, uuid)',
     'public.enforce_one_pending_identity_invitation()',
+    'public.tenant_organization_authorized(uuid, boolean, uuid, boolean)',
   ])
     await database.$executeRawUnsafe(
       `ALTER FUNCTION ${signature} OWNER TO kinto_control_owner`,

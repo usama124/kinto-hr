@@ -4,6 +4,134 @@ export const tenantSelectionSchema = z.strictObject({
   tenantId: tenantIdSchema,
 });
 export type TenantSelection = z.infer<typeof tenantSelectionSchema>;
+export const pakistanProvinceCodeSchema = z.enum([
+  'PK-BA',
+  'PK-GB',
+  'PK-IS',
+  'PK-JK',
+  'PK-KP',
+  'PK-PB',
+  'PK-SD',
+]);
+const organizationReasonSchema = z.string().trim().min(3).max(240);
+const registrationIdentifierSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(80)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9 ./_-]*$/)
+  .optional();
+const legalEntityFields = {
+  legalName: z.string().trim().min(1).max(160),
+  registrationNumber: registrationIdentifierSchema,
+  taxNumber: registrationIdentifierSchema,
+  provinceCode: pakistanProvinceCodeSchema,
+};
+export const legalEntityCreateSchema = z.strictObject({
+  ...legalEntityFields,
+  reason: organizationReasonSchema,
+});
+export const legalEntityUpdateSchema = z.strictObject({
+  expectedVersion: z.number().int().positive(),
+  ...legalEntityFields,
+  reason: organizationReasonSchema,
+});
+export type LegalEntityCreate = z.infer<typeof legalEntityCreateSchema>;
+export type LegalEntityUpdate = z.infer<typeof legalEntityUpdateSchema>;
+const branchFields = {
+  code: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .min(1)
+    .max(20)
+    .regex(/^[A-Z0-9][A-Z0-9_-]*$/),
+  name: z.string().trim().min(1).max(160),
+  provinceCode: pakistanProvinceCodeSchema,
+};
+export const branchCreateSchema = z.strictObject({
+  ...branchFields,
+  reason: organizationReasonSchema,
+});
+export const branchUpdateSchema = z.strictObject({
+  expectedVersion: z.number().int().positive(),
+  ...branchFields,
+  status: z.enum(['active', 'inactive']),
+  reason: organizationReasonSchema,
+});
+export type BranchCreate = z.infer<typeof branchCreateSchema>;
+export type BranchUpdate = z.infer<typeof branchUpdateSchema>;
+export const organizationPolicySettingsSchema = z.strictObject({
+  defaultBranchId: tenantIdSchema,
+});
+export const organizationPolicyDraftSchema = z.strictObject({
+  expectedCurrentVersion: z.number().int().min(0),
+  effectiveFrom: z.iso.date(),
+  settings: organizationPolicySettingsSchema,
+  reason: organizationReasonSchema,
+});
+export const organizationPolicyPublishSchema = z.strictObject({
+  expectedVersion: z.number().int().positive(),
+  reason: organizationReasonSchema,
+});
+export type OrganizationPolicyDraft = z.infer<
+  typeof organizationPolicyDraftSchema
+>;
+export type OrganizationPolicyPublish = z.infer<
+  typeof organizationPolicyPublishSchema
+>;
+export const legalEntityViewSchema = z.strictObject({
+  id: tenantIdSchema,
+  legalName: z.string().min(1).max(160),
+  registrationNumber: z.string().max(80).nullable(),
+  taxNumber: z.string().max(80).nullable(),
+  countryCode: z.literal('PK'),
+  currencyCode: z.literal('PKR'),
+  timeZone: z.literal('Asia/Karachi'),
+  provinceCode: pakistanProvinceCodeSchema,
+  version: z.number().int().positive(),
+});
+export const branchViewSchema = z.strictObject({
+  id: tenantIdSchema,
+  legalEntityId: tenantIdSchema,
+  code: z.string().min(1).max(20),
+  name: z.string().min(1).max(160),
+  provinceCode: pakistanProvinceCodeSchema,
+  status: z.enum(['active', 'inactive']),
+  version: z.number().int().positive(),
+});
+const organizationPolicyViewSchema = z.strictObject({
+  id: tenantIdSchema,
+  version: z.number().int().positive(),
+  effectiveFrom: z.iso.date(),
+  settings: organizationPolicySettingsSchema,
+});
+export const organizationPolicyDraftViewSchema = organizationPolicyViewSchema
+  .extend({
+    basedOnVersion: z.number().int().min(0),
+    reason: z.string().min(3).max(240),
+  })
+  .strict();
+export const organizationSnapshotSchema = z.strictObject({
+  legalEntity: legalEntityViewSchema.nullable(),
+  branches: branchViewSchema.array().max(250),
+  latestPublishedVersion: z.number().int().min(0),
+  publishedPolicy: organizationPolicyViewSchema.nullable(),
+  policyDrafts: organizationPolicyDraftViewSchema.array().max(20),
+});
+export const organizationPolicyPreviewSchema = z.strictObject({
+  id: tenantIdSchema,
+  version: z.number().int().positive(),
+  basedOnVersion: z.number().int().min(0),
+  effectiveFrom: z.iso.date(),
+  defaultBranch: z.strictObject({
+    id: tenantIdSchema,
+    code: z.string().min(1).max(20),
+    name: z.string().min(1).max(160),
+  }),
+  affectedOpenPeriods: z.array(z.never()).length(0),
+});
+export type OrganizationSnapshot = z.infer<typeof organizationSnapshotSchema>;
 const auditActionSchema = z
   .string()
   .trim()

@@ -50,6 +50,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 6 September 2026 — legal employer, branches and organization-default policy
+
+Engineering implemented the remaining bounded P01-02 organization setup application slice. Each tenant can have exactly one legal employer fixed to Pakistan, PKR and Asia/Karachi, with an explicit ISO Pakistan province/territory code and multiple tenant-scoped branches. An active owner with trusted MFA no older than five minutes can create/version these records and draft, preview and publish the typed `organization_defaults` policy; owner and HR can read it. Drafts are immutable proposals, publication preserves prior versions, optimistic version checks reject stale changes, and a published default prevents deactivating its branch. Runtime access uses constrained fixed-search-path functions under forced RLS with audit/outbox evidence, and exposes no hard delete. Only `defaultBranchId` is supported until attendance, leave and payroll validators exist. P01-03 immutable entitlements are next; production provider/recovery gates remain. See [evidence](../evidence/phase-01/organization-policies.md).
+
 ### 6 September 2026 — tenant security-audit access
 
 Engineering implemented the next bounded P01-02 increment. An active owner with trusted MFA no older than five minutes can read only the selected tenant's audit events through a constrained database function and responsive workspace screen. The response contains the existing safe event identifiers, action, optional reason and timestamp; platform-operator events remain separate. Strict exact-action/time filters, a 100-row ceiling and tenant-resolved opaque keyset cursors prevent unbounded or cross-company traversal. HR, payroll and employee roles are denied. Existing rows lack request-ID and changed-field metadata, so the UI does not invent them and the log is not called tamper-proof. Next is company/legal-entity, branch and effective-dated policy setup. See [evidence](../evidence/phase-01/security-audit.md).
