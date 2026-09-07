@@ -21,6 +21,14 @@ import {
   markAdministratorInvitationDelivered,
   discoverIdentityTenants,
   listTenantSecurityAudit,
+  readTenantOrganization,
+  createTenantLegalEntity,
+  updateTenantLegalEntity,
+  createTenantBranch,
+  updateTenantBranch,
+  createOrganizationPolicyDraft,
+  previewOrganizationPolicy,
+  publishOrganizationPolicy,
 } from '@kinto/database';
 import {
   type AuthenticatedIdentity,
@@ -30,6 +38,12 @@ import {
   type MembershipRevocation,
   type AdministratorInvitation,
   type SecurityAuditQuery,
+  type LegalEntityCreate,
+  type LegalEntityUpdate,
+  type BranchCreate,
+  type BranchUpdate,
+  type OrganizationPolicyDraft,
+  type OrganizationPolicyPublish,
 } from '@kinto/contracts';
 import { readConfig } from './config';
 @Injectable()
@@ -170,6 +184,64 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     query: SecurityAuditQuery,
   ) {
     return listTenantSecurityAudit(this.db, actor, tenantId, query);
+  }
+  readOrganization(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+  ) {
+    return readTenantOrganization(this.db, actor, tenantId);
+  }
+  createLegalEntity(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    input: LegalEntityCreate,
+  ) {
+    return createTenantLegalEntity(this.db, actor, tenantId, input);
+  }
+  updateLegalEntity(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    entityId: string,
+    input: LegalEntityUpdate,
+  ) {
+    return updateTenantLegalEntity(this.db, actor, tenantId, entityId, input);
+  }
+  createBranch(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    input: BranchCreate,
+  ) {
+    return createTenantBranch(this.db, actor, tenantId, input);
+  }
+  updateBranch(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    branchId: string,
+    input: BranchUpdate,
+  ) {
+    return updateTenantBranch(this.db, actor, tenantId, branchId, input);
+  }
+  createPolicyDraft(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    input: OrganizationPolicyDraft,
+  ) {
+    return createOrganizationPolicyDraft(this.db, actor, tenantId, input);
+  }
+  previewPolicy(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    policyId: string,
+  ) {
+    return previewOrganizationPolicy(this.db, actor, tenantId, policyId);
+  }
+  publishPolicy(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    policyId: string,
+    input: OrganizationPolicyPublish,
+  ) {
+    return publishOrganizationPolicy(this.db, actor, tenantId, policyId, input);
   }
   async onModuleDestroy() {
     await this.db.$disconnect();

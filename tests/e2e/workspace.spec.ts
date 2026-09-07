@@ -252,3 +252,188 @@ test('owner can review and paginate tenant security activity', async ({
     ),
   ).toBe(true);
 });
+
+test('owner configures a legal employer, branch and published organization default', async ({
+  page,
+}) => {
+  const tenantId = '9d2ea3ef-3938-42d0-84f9-d2248f692f67';
+  const legalEntityId = '44c4bf77-58bb-42ea-9886-5db47c1c3de5';
+  const branchId = '82ffbc9e-febd-4a62-bdaf-fd8740ee6982';
+  const policyId = '2415cafa-d6dc-45ae-8b50-4cd2d0035cdd';
+  const csrf = 'b'.repeat(43);
+  const effectiveFrom = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Karachi',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+  const snapshot: {
+    legalEntity: null | Record<string, unknown>;
+    branches: Record<string, unknown>[];
+    latestPublishedVersion: number;
+    publishedPolicy: null | Record<string, unknown>;
+    policyDrafts: Record<string, unknown>[];
+  } = {
+    legalEntity: null,
+    branches: [],
+    latestPublishedVersion: 0,
+    publishedPolicy: null,
+    policyDrafts: [],
+  };
+
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        csrfToken: csrf,
+        selectedTenantId: tenantId,
+        tenants: [
+          { id: tenantId, name: 'Synthetic Company', roles: ['owner'] },
+        ],
+      }),
+    }),
+  );
+  await page.route(
+    `**/api/v1/tenants/${tenantId}/organization**`,
+    async (route) => {
+      const request = route.request();
+      const path = new URL(request.url()).pathname;
+      const mutation =
+        request.method() === 'POST' || request.method() === 'PUT';
+      if (mutation) expect(request.headers()['x-csrf-token']).toBe(csrf);
+
+      if (request.method() === 'GET' && path.endsWith('/organization')) {
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(snapshot),
+        });
+      }
+      if (request.method() === 'POST' && path.endsWith('/legal-entities')) {
+        snapshot.legalEntity = {
+          id: legalEntityId,
+          legalName: 'Kinto Pakistan (Private) Limited',
+          registrationNumber: null,
+          taxNumber: null,
+          countryCode: 'PK',
+          currencyCode: 'PKR',
+          timeZone: 'Asia/Karachi',
+          provinceCode: 'PK-PB',
+          version: 1,
+        };
+        return route.fulfill({
+          status: 201,
+          contentType: 'application/json',
+          body: JSON.stringify({ id: legalEntityId, version: 1 }),
+        });
+      }
+      if (request.method() === 'POST' && path.endsWith('/branches')) {
+        snapshot.branches = [
+          {
+            id: branchId,
+            legalEntityId,
+            code: 'LHR-01',
+            name: 'Lahore Office',
+            provinceCode: 'PK-PB',
+            status: 'active',
+            version: 1,
+          },
+        ];
+        return route.fulfill({
+          status: 201,
+          contentType: 'application/json',
+          body: JSON.stringify({ id: branchId, version: 1 }),
+        });
+      }
+      if (request.method() === 'POST' && path.endsWith('/drafts')) {
+        snapshot.policyDrafts = [
+          {
+            id: policyId,
+            version: 1,
+            basedOnVersion: 0,
+            effectiveFrom,
+            settings: { defaultBranchId: branchId },
+            reason: 'Set initial company default',
+          },
+        ];
+        return route.fulfill({
+          status: 201,
+          contentType: 'application/json',
+          body: JSON.stringify({ id: policyId, version: 1 }),
+        });
+      }
+      if (request.method() === 'GET' && path.endsWith('/preview')) {
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            id: policyId,
+            version: 1,
+            basedOnVersion: 0,
+            effectiveFrom,
+            defaultBranch: {
+              id: branchId,
+              code: 'LHR-01',
+              name: 'Lahore Office',
+            },
+            affectedOpenPeriods: [],
+          }),
+        });
+      }
+      if (request.method() === 'POST' && path.endsWith('/publication')) {
+        snapshot.latestPublishedVersion = 1;
+        snapshot.publishedPolicy = {
+          id: policyId,
+          version: 1,
+          effectiveFrom,
+          settings: { defaultBranchId: branchId },
+        };
+        snapshot.policyDrafts = [];
+        return route.fulfill({
+          status: 201,
+          contentType: 'application/json',
+          body: JSON.stringify({ id: policyId, version: 1 }),
+        });
+      }
+      return route.fulfill({ status: 404, body: '{}' });
+    },
+  );
+
+  await page.goto('/organization');
+  await expect(
+    page.getByRole('heading', { name: 'Synthetic Company' }),
+  ).toBeVisible();
+  await expect(page.getByText('PK · PKR · Asia/Karachi')).toBeVisible();
+  await page.getByLabel('Legal name').fill('Kinto Pakistan (Private) Limited');
+  await page.getByLabel('Reason').first().fill('Create legal employer');
+  await page.getByRole('button', { name: 'Create legal employer' }).click();
+  await expect(
+    page.getByRole('button', { name: 'Save legal employer' }),
+  ).toBeVisible();
+
+  await page.getByLabel('Code').fill('LHR-01');
+  await page.getByLabel('Name', { exact: true }).fill('Lahore Office');
+  await page.getByLabel('Reason').last().fill('Create first branch');
+  await page.getByRole('button', { name: 'Add branch' }).click();
+  await expect(
+    page.getByRole('listitem').getByText('LHR-01 · Lahore Office'),
+  ).toBeVisible();
+
+  await page.getByLabel('Effective from').fill(effectiveFrom);
+  await page.getByLabel('Draft reason').fill('Set initial company default');
+  await page.getByRole('button', { name: 'Create policy draft' }).click();
+  await expect(page.getByText('Preview version 1')).toBeVisible();
+  await page
+    .getByLabel('Publication reason')
+    .fill('Approve initial company default');
+  await page.getByRole('button', { name: 'Publish policy' }).click();
+  await expect(page.getByText('Current default branch:')).toContainText(
+    'Lahore Office',
+  );
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+});

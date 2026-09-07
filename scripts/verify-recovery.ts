@@ -7,6 +7,9 @@ import assert from 'node:assert/strict';
 import {
   activateEmployee,
   assertSafeRuntimeRole,
+  createOrganizationPolicyDraft,
+  createTenantBranch,
+  createTenantLegalEntity,
   createDatabase,
   createEmployeeDraft,
   inTenant,
@@ -17,6 +20,7 @@ import {
   findActiveIdentity,
   reconcileEmployeeAccountProvider,
   markEmployeeInvitationDelivered,
+  publishOrganizationPolicy,
   requestEmployeeAccountProvisioning,
   updateTenantMembershipRoles,
   requestAdministratorInvitation,
@@ -44,6 +48,8 @@ async function snapshot(db: PrismaClient) {
       'administrator_account_requests',
       'administrator_invitations',
       'audit_events',
+      'branches',
+      'company_policy_versions',
       'company_provisioning_requests',
       'consumer_receipts',
       'employee_account_requests',
@@ -52,6 +58,7 @@ async function snapshot(db: PrismaClient) {
       'employees',
       'identities',
       'job_deliveries',
+      'legal_entities',
       'memberships',
       'outbox_events',
       'owner_invitations',
@@ -91,6 +98,11 @@ async function snapshot(db: PrismaClient) {
     }),
     memberships: await db.membership.findMany({ orderBy: { id: 'asc' } }),
     tenants: await db.tenant.findMany({ orderBy: { id: 'asc' } }),
+    legalEntities: await db.legalEntity.findMany({ orderBy: { id: 'asc' } }),
+    branches: await db.branch.findMany({ orderBy: { id: 'asc' } }),
+    companyPolicyVersions: await db.companyPolicyVersion.findMany({
+      orderBy: { id: 'asc' },
+    }),
     employees: await db.employee.findMany({ orderBy: { id: 'asc' } }),
     audit: await db.auditEvent.findMany({ orderBy: { id: 'asc' } }),
     outbox: await db.outboxEvent.findMany({ orderBy: { id: 'asc' } }),
@@ -247,6 +259,56 @@ async function main() {
         data: { tenantId, identityId: owner.id, roles: ['owner'] },
       });
       membershipOwners.push(owner.id);
+    }
+    for (const [index, tenantId] of tenants.entries()) {
+      const principal = {
+        identityId: membershipOwners[index],
+        mfaVerified: true,
+      };
+      const legalEntity = await createTenantLegalEntity(
+        sourceApp,
+        principal,
+        tenantId,
+        {
+          legalName: `Synthetic recovery employer ${index + 1}`,
+          provinceCode: 'PK-PB',
+          reason: 'Recovery fixture legal employer',
+        },
+      );
+      const branch = await createTenantBranch(sourceApp, principal, tenantId, {
+        code: 'LHR-01',
+        name: 'Synthetic recovery branch',
+        provinceCode: 'PK-PB',
+        reason: 'Recovery fixture branch',
+      });
+      const effectiveFrom = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Karachi',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(new Date());
+      const policy = await createOrganizationPolicyDraft(
+        sourceApp,
+        principal,
+        tenantId,
+        {
+          expectedCurrentVersion: 0,
+          effectiveFrom,
+          settings: { defaultBranchId: branch.id },
+          reason: 'Recovery fixture policy draft',
+        },
+      );
+      await publishOrganizationPolicy(
+        sourceApp,
+        principal,
+        tenantId,
+        policy.id,
+        {
+          expectedVersion: policy.version,
+          reason: 'Recovery fixture policy publication',
+        },
+      );
+      assert.equal(legalEntity.version, 1);
     }
     const accountRequests = [];
     for (const [index, account] of accountActors.entries())
@@ -426,7 +488,7 @@ async function main() {
     const policies = await restored.$queryRaw<
       { enabled: boolean; forced: boolean }[]
     >`SELECT relrowsecurity AS enabled, relforcerowsecurity AS forced FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND relkind='r' AND relname <> '_prisma_migrations'`;
-    assert.equal(policies.length, 17);
+    assert.equal(policies.length, 20);
     assert.ok(policies.every((row) => row.enabled && row.forced));
     assert.deepEqual(await restoredApp.employee.findMany(), []);
     for (const tenantId of tenants) {
@@ -509,6 +571,7 @@ async function main() {
       pendingEmployeeAccountRequestPreserved: true,
       activeEmployeeIdentityLinkPreserved: true,
       membershipAdministrationAuditPreserved: true,
+      organizationPolicyHistoryPreserved: true,
       pendingAdministratorInvitationPreserved: true,
     };
     await writeFile(

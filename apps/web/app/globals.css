@@ -75,6 +75,96 @@ button {
 .audit-note {
   margin-top: 24px;
 }
+.organization-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+.settings-card {
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 22px;
+}
+.settings-form,
+.policy-form {
+  display: grid;
+  gap: 13px;
+}
+.settings-form label,
+.policy-form label,
+.policy-preview label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.settings-form input,
+.settings-form select,
+.policy-form input,
+.policy-form select,
+.policy-preview input {
+  width: 100%;
+  padding: 9px 10px;
+  color: var(--ink);
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+.settings-form input:disabled,
+.settings-form select:disabled {
+  background: var(--paper);
+}
+.settings-form.compact {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+.settings-form h3,
+.policy-drafts h3 {
+  margin: 0;
+  font-size: 13px;
+}
+.branch-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.branch-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--line);
+}
+.branch-list small {
+  display: block;
+  color: var(--muted);
+}
+.policy-card {
+  margin-top: 20px;
+}
+.policy-form {
+  grid-template-columns: 1fr 180px 1fr auto;
+  align-items: end;
+  margin-top: 18px;
+}
+.policy-drafts,
+.policy-preview {
+  max-width: 640px;
+  margin-top: 20px;
+}
+.policy-preview {
+  padding: 18px;
+  background: var(--pale);
+  border-radius: 7px;
+}
+.form-message {
+  padding: 10px 12px;
+  background: var(--pale);
+  border-radius: 5px;
+}
 .workspace-choices {
   display: grid;
   gap: 10px;
@@ -733,5 +823,12 @@ footer span:last-child {
   }
   .audit-list small {
     overflow-wrap: anywhere;
+  }
+  .organization-grid {
+    grid-template-columns: 1fr;
+  }
+  .policy-form {
+    grid-template-columns: 1fr;
+    align-items: stretch;
   }
 }

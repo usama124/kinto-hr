@@ -43,6 +43,12 @@ describe('capacity and permissions', () => {
     ).toBe(false);
     expect(hasPermission(['employee'], 'employees.read')).toBe(false);
     expect(hasPermission([], 'billing.manage')).toBe(false);
+    expect(hasPermission(['owner'], 'organization.manage')).toBe(true);
+    expect(hasPermission(['owner'], 'company_policies.manage')).toBe(true);
+    expect(hasPermission(['hr_admin'], 'organization.read')).toBe(true);
+    expect(hasPermission(['hr_admin'], 'company_policies.read')).toBe(true);
+    expect(hasPermission(['hr_admin'], 'organization.manage')).toBe(false);
+    expect(hasPermission(['employee'], 'company_policies.read')).toBe(false);
   });
   it('requires a different eligible approver even with combined roles', () => {
     expect(
