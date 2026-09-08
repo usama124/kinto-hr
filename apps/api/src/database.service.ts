@@ -35,6 +35,11 @@ import {
   previewEntitlementChange,
   createEntitlementChange,
   revokeEntitlementChange,
+  readTenantEmployees,
+  readTenantEmployee,
+  createTenantEmployee,
+  updateTenantEmployeeProfile,
+  createTenantEmployeeAssignment,
 } from '@kinto/database';
 import {
   type AuthenticatedIdentity,
@@ -54,6 +59,9 @@ import {
   type OrganizationPolicyPublish,
   type EntitlementChange,
   type EntitlementRevocation,
+  type EmployeeRecordCreate,
+  type EmployeeProfileUpdate,
+  type EmployeeAssignmentCreate,
 } from '@kinto/contracts';
 import { readConfig } from './config';
 @Injectable()
@@ -316,6 +324,54 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       tenantId,
       kind,
       changeId,
+      input,
+    );
+  }
+  readEmployees(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+  ) {
+    return readTenantEmployees(this.db, actor, tenantId);
+  }
+  readEmployee(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    employeeId: string,
+  ) {
+    return readTenantEmployee(this.db, actor, tenantId, employeeId);
+  }
+  createEmployee(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    input: EmployeeRecordCreate,
+  ) {
+    return createTenantEmployee(this.db, actor, tenantId, input);
+  }
+  updateEmployeeProfile(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    employeeId: string,
+    input: EmployeeProfileUpdate,
+  ) {
+    return updateTenantEmployeeProfile(
+      this.db,
+      actor,
+      tenantId,
+      employeeId,
+      input,
+    );
+  }
+  createEmployeeAssignment(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    employeeId: string,
+    input: EmployeeAssignmentCreate,
+  ) {
+    return createTenantEmployeeAssignment(
+      this.db,
+      actor,
+      tenantId,
+      employeeId,
       input,
     );
   }

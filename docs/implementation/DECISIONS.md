@@ -50,6 +50,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 9 September 2026 — complete employee drafts and assignments
+
+Engineering continued P01-04 with the public employee record boundary. Owner/HR users with recent MFA can create only monthly-salaried drafts with a tenant-unique normalized employee number, joining date, active branch/department/designation and either an in-tenant manager or documented top-level exception. Creation atomically records the first employment period and assignment. Profile corrections use optimistic versions; assignment changes append effective-dated history, reject past or overlapping changes and recursively reject reporting cycles at the effective date. Reads intentionally mark payroll setup incomplete and contain no CNIC, contact, bank or salary data. Every mutation records its reason and outbox event under forced RLS. Lifecycle transitions, private details, compensation and checklists remain separate increments. See [evidence](../evidence/phase-01/employee-records.md).
+
 ### 8 September 2026 — department and designation catalogs
 
 Engineering started P01-04 with the organization identifiers required by later employee assignments. Departments and designations are independent tenant-scoped catalogs with normalized unique codes, names, active/inactive state and optimistic versions. Owners with recent MFA can create or update them with a reason; HR has read-only access through the existing organization projection. Each mutation is audited and emits an outbox event, direct runtime table access is denied, and forced RLS plus tenant-qualified uniqueness preserves isolation. Deactivation is reversible in this slice because no employee assignment can reference these records yet; the employee slice must reject inactive references and later prevent unsafe retirement of in-use entries. See [evidence](../evidence/phase-01/organization-catalogs.md).

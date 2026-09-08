@@ -89,7 +89,8 @@ try {
     'DROP POLICY IF EXISTS platform_control ON memberships',
     'CREATE POLICY platform_control ON memberships FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control_select ON employees',
-    'CREATE POLICY platform_control_select ON employees FOR SELECT TO kinto_control_owner USING (true)',
+    'DROP POLICY IF EXISTS platform_control ON employees',
+    'CREATE POLICY platform_control ON employees FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON employee_account_requests',
     'CREATE POLICY platform_control ON employee_account_requests FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON employee_invitations',
@@ -108,6 +109,10 @@ try {
     'CREATE POLICY platform_control ON departments FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON designations',
     'CREATE POLICY platform_control ON designations FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
+    'DROP POLICY IF EXISTS platform_control ON employment_periods',
+    'CREATE POLICY platform_control ON employment_periods FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
+    'DROP POLICY IF EXISTS platform_control ON employee_assignments',
+    'CREATE POLICY platform_control ON employee_assignments FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON company_policy_versions',
     'CREATE POLICY platform_control ON company_policy_versions FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON plan_versions',
@@ -146,7 +151,7 @@ try {
     'GRANT SELECT, INSERT, UPDATE ON memberships TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
-    'GRANT SELECT ON employees TO kinto_control_owner',
+    'GRANT SELECT, INSERT, UPDATE ON employees TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
     'GRANT SELECT, INSERT, UPDATE ON employee_account_requests, employee_invitations TO kinto_control_owner',
@@ -159,6 +164,9 @@ try {
   );
   await database.$executeRawUnsafe(
     'GRANT SELECT, INSERT, UPDATE ON legal_entities, branches, departments, designations, company_policy_versions TO kinto_control_owner',
+  );
+  await database.$executeRawUnsafe(
+    'GRANT SELECT, INSERT, UPDATE ON employment_periods, employee_assignments TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
     'GRANT SELECT ON plan_versions TO kinto_control_owner',
@@ -214,6 +222,10 @@ try {
     'public.preview_entitlement_change(uuid, boolean, uuid, varchar, timestamptz, timestamptz, integer, integer)',
     'public.create_entitlement_change(uuid, boolean, uuid, uuid, varchar, timestamptz, timestamptz, integer, integer, varchar, uuid, uuid)',
     'public.revoke_entitlement_change(uuid, boolean, uuid, varchar, uuid, integer, varchar, uuid, uuid)',
+    'public.read_tenant_employees(uuid, boolean, uuid, uuid)',
+    'public.create_tenant_employee(uuid, boolean, uuid, uuid, uuid, uuid, varchar, varchar, varchar, date, varchar, uuid, uuid, uuid, uuid, varchar, varchar, uuid, uuid)',
+    'public.update_tenant_employee_profile(uuid, boolean, uuid, uuid, integer, varchar, varchar, varchar, uuid, uuid)',
+    'public.create_tenant_employee_assignment(uuid, boolean, uuid, uuid, uuid, integer, date, uuid, uuid, uuid, uuid, varchar, varchar, uuid, uuid)',
   ]) {
     await database.$executeRawUnsafe(
       `ALTER FUNCTION ${signature} OWNER TO kinto_control_owner`,
@@ -229,6 +241,8 @@ try {
     'public.resolve_tenant_entitlements_at(uuid, timestamptz, varchar, integer, integer)',
     'public.ensure_tenant_entitlement_state()',
     'public.reject_overlapping_entitlement_override()',
+    'public.tenant_people_authorized(uuid, boolean, uuid, boolean)',
+    'public.employee_record_json(uuid, uuid)',
   ])
     await database.$executeRawUnsafe(
       `ALTER FUNCTION ${signature} OWNER TO kinto_control_owner`,

@@ -43,6 +43,14 @@ import {
   type OrganizationPolicyPublish,
   type EntitlementChange,
   type EntitlementRevocation,
+  employeeRecordCreateSchema,
+  employeeProfileUpdateSchema,
+  employeeAssignmentCreateSchema,
+  employeeRecordViewSchema,
+  employeeRosterSchema,
+  type EmployeeRecordCreate,
+  type EmployeeProfileUpdate,
+  type EmployeeAssignmentCreate,
 } from '@kinto/contracts';
 import {
   assertCanActivate,
@@ -1177,6 +1185,132 @@ export async function createEmployeeDraft(
     });
     return employee;
   });
+}
+
+type PeopleActor = { identityId: string; mfaVerified: boolean };
+type PeopleMutationRow = {
+  outcome:
+    | 'created'
+    | 'updated'
+    | 'forbidden'
+    | 'not_found'
+    | 'stale'
+    | 'invalid_state'
+    | 'conflict';
+  employee_id: string | null;
+  employee_version: number | null;
+};
+function validatePeopleActor(actor: PeopleActor, tenantId: string) {
+  tenantIdSchema.parse(actor.identityId);
+  tenantIdSchema.parse(tenantId);
+}
+function assertPeopleMutation(row?: PeopleMutationRow) {
+  if (!row || row.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (row.outcome === 'not_found') throw new DomainError('NOT_FOUND');
+  if (row.outcome === 'stale') throw new DomainError('STALE_VERSION');
+  if (row.outcome === 'invalid_state') throw new DomainError('INVALID_STATE');
+  if (row.outcome === 'conflict') throw new DomainError('CONFLICT');
+  if (!row.employee_id || !row.employee_version)
+    throw new Error('Invalid employee mutation result');
+  return { id: row.employee_id, version: row.employee_version };
+}
+export async function readTenantEmployees(
+  db: PrismaClient,
+  actor: PeopleActor,
+  tenantId: string,
+) {
+  validatePeopleActor(actor, tenantId);
+  const rows = await db.$queryRaw<
+    { outcome: 'ok' | 'forbidden'; snapshot: unknown }[]
+  >`SELECT * FROM public.read_tenant_employees(
+    ${actor.identityId}::uuid, ${actor.mfaVerified}, ${tenantId}::uuid, NULL::uuid
+  )`;
+  if (!rows[0] || rows[0].outcome === 'forbidden')
+    throw new DomainError('FORBIDDEN');
+  return employeeRosterSchema.parse(rows[0].snapshot);
+}
+export async function readTenantEmployee(
+  db: PrismaClient,
+  actor: PeopleActor,
+  tenantId: string,
+  employeeId: string,
+) {
+  validatePeopleActor(actor, tenantId);
+  tenantIdSchema.parse(employeeId);
+  const rows = await db.$queryRaw<
+    { outcome: 'ok' | 'forbidden' | 'not_found'; snapshot: unknown }[]
+  >`SELECT * FROM public.read_tenant_employees(
+    ${actor.identityId}::uuid, ${actor.mfaVerified}, ${tenantId}::uuid, ${employeeId}::uuid
+  )`;
+  if (!rows[0] || rows[0].outcome === 'forbidden')
+    throw new DomainError('FORBIDDEN');
+  if (rows[0].outcome === 'not_found') throw new DomainError('NOT_FOUND');
+  return employeeRecordViewSchema.parse(rows[0].snapshot);
+}
+export async function createTenantEmployee(
+  db: PrismaClient,
+  actor: PeopleActor,
+  tenantId: string,
+  input: EmployeeRecordCreate,
+) {
+  validatePeopleActor(actor, tenantId);
+  const value = employeeRecordCreateSchema.parse(input);
+  const rows = await db.$queryRaw<PeopleMutationRow[]>`
+    SELECT * FROM public.create_tenant_employee(
+      ${actor.identityId}::uuid, ${actor.mfaVerified}, ${tenantId}::uuid,
+      ${randomUUID()}::uuid, ${randomUUID()}::uuid, ${randomUUID()}::uuid,
+      ${value.employeeNumber}::varchar, ${value.name}::varchar,
+      ${value.legalName ?? null}::varchar, ${value.joiningDate}::date,
+      ${value.employmentType}::varchar, ${value.branchId}::uuid,
+      ${value.departmentId}::uuid, ${value.designationId}::uuid,
+      ${value.managerEmployeeId}::uuid, ${value.topLevelReason ?? null}::varchar,
+      ${value.reason}::varchar, ${randomUUID()}::uuid, ${randomUUID()}::uuid
+    )
+  `;
+  return assertPeopleMutation(rows[0]);
+}
+export async function updateTenantEmployeeProfile(
+  db: PrismaClient,
+  actor: PeopleActor,
+  tenantId: string,
+  employeeId: string,
+  input: EmployeeProfileUpdate,
+) {
+  validatePeopleActor(actor, tenantId);
+  tenantIdSchema.parse(employeeId);
+  const value = employeeProfileUpdateSchema.parse(input);
+  const rows = await db.$queryRaw<PeopleMutationRow[]>`
+    SELECT * FROM public.update_tenant_employee_profile(
+      ${actor.identityId}::uuid, ${actor.mfaVerified}, ${tenantId}::uuid,
+      ${employeeId}::uuid, ${value.expectedVersion}::integer,
+      ${value.name}::varchar, ${value.legalName ?? null}::varchar,
+      ${value.reason}::varchar, ${randomUUID()}::uuid, ${randomUUID()}::uuid
+    )
+  `;
+  return assertPeopleMutation(rows[0]);
+}
+export async function createTenantEmployeeAssignment(
+  db: PrismaClient,
+  actor: PeopleActor,
+  tenantId: string,
+  employeeId: string,
+  input: EmployeeAssignmentCreate,
+) {
+  validatePeopleActor(actor, tenantId);
+  tenantIdSchema.parse(employeeId);
+  const value = employeeAssignmentCreateSchema.parse(input);
+  const rows = await db.$queryRaw<PeopleMutationRow[]>`
+    SELECT * FROM public.create_tenant_employee_assignment(
+      ${actor.identityId}::uuid, ${actor.mfaVerified}, ${tenantId}::uuid,
+      ${employeeId}::uuid, ${randomUUID()}::uuid,
+      ${value.expectedVersion}::integer, ${value.effectiveFrom}::date,
+      ${value.branchId}::uuid, ${value.departmentId}::uuid,
+      ${value.designationId}::uuid, ${value.managerEmployeeId}::uuid,
+      ${value.topLevelReason ?? null}::varchar, ${value.reason}::varchar,
+      ${randomUUID()}::uuid, ${randomUUID()}::uuid
+    )
+  `;
+  return assertPeopleMutation(rows[0]);
 }
 export async function activateEmployee(
   db: PrismaClient,

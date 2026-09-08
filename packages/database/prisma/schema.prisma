@@ -16,6 +16,8 @@ model Tenant {
   billingMode                  String                        @default("free") @map("billing_mode") @db.VarChar(20)
   createdAt                    DateTime                      @default(now()) @map("created_at") @db.Timestamptz()
   employees                    Employee[]
+  employmentPeriods            EmploymentPeriod[]
+  employeeAssignments          EmployeeAssignment[]
   auditEvents                  AuditEvent[]
   outboxEvents                 OutboxEvent[]
   memberships                  Membership[]
@@ -99,6 +101,7 @@ model Branch {
   updatedAt     DateTime    @updatedAt @map("updated_at") @db.Timestamptz()
   tenant        Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   legalEntity   LegalEntity @relation(fields: [tenantId, legalEntityId], references: [tenantId, id], onDelete: Restrict)
+  employeeAssignments EmployeeAssignment[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, code])
@@ -116,6 +119,7 @@ model Department {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz()
   tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  employeeAssignments EmployeeAssignment[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, code])
@@ -133,6 +137,7 @@ model Designation {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz()
   tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  employeeAssignments EmployeeAssignment[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, code])
@@ -376,18 +381,73 @@ model Employee {
   tenantId               String                  @map("tenant_id") @db.Uuid
   employeeNumber         String                  @map("employee_number") @db.VarChar(40)
   name                   String                  @db.VarChar(160)
+  legalName              String?                 @map("legal_name") @db.VarChar(160)
+  joiningDate            DateTime?               @map("joining_date") @db.Date
+  employmentType         String?                 @map("employment_type") @db.VarChar(30)
   status                 String                  @default("draft") @db.VarChar(20)
   version                Int                     @default(1)
   createdAt              DateTime                @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt              DateTime                @default(now()) @updatedAt @map("updated_at") @db.Timestamptz()
   tenant                 Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   employeeAccountRequest EmployeeAccountRequest?
   employeeInvitation     EmployeeInvitation?
   employeeIdentityLink   EmployeeIdentityLink?
+  employmentPeriods      EmploymentPeriod[]
+  assignments            EmployeeAssignment[]    @relation("AssignedEmployee")
+  managedAssignments     EmployeeAssignment[]    @relation("AssignmentManager")
 
   @@unique([tenantId, id])
   @@unique([tenantId, employeeNumber])
   @@index([tenantId, status])
   @@map("employees")
+}
+
+model EmploymentPeriod {
+  id               String    @id @db.Uuid
+  tenantId         String    @map("tenant_id") @db.Uuid
+  employeeId       String    @map("employee_id") @db.Uuid
+  periodNumber     Int       @map("period_number")
+  joiningDate      DateTime  @map("joining_date") @db.Date
+  finalWorkingDate DateTime? @map("final_working_date") @db.Date
+  status           String    @default("planned") @db.VarChar(20)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  tenant           Tenant    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  employee         Employee  @relation(fields: [tenantId, employeeId], references: [tenantId, id], onDelete: Restrict)
+  assignments      EmployeeAssignment[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, id, employeeId])
+  @@unique([tenantId, employeeId, periodNumber])
+  @@index([tenantId, employeeId, status])
+  @@map("employment_periods")
+}
+
+model EmployeeAssignment {
+  id                String           @id @db.Uuid
+  tenantId          String           @map("tenant_id") @db.Uuid
+  employeeId        String           @map("employee_id") @db.Uuid
+  employmentPeriodId String          @map("employment_period_id") @db.Uuid
+  branchId          String           @map("branch_id") @db.Uuid
+  departmentId      String           @map("department_id") @db.Uuid
+  designationId     String           @map("designation_id") @db.Uuid
+  managerEmployeeId String?          @map("manager_employee_id") @db.Uuid
+  topLevelReason    String?          @map("top_level_reason") @db.VarChar(240)
+  effectiveFrom     DateTime         @map("effective_from") @db.Date
+  effectiveTo       DateTime?        @map("effective_to") @db.Date
+  createdByIdentityId String         @map("created_by_identity_id") @db.Uuid
+  createdAt         DateTime         @default(now()) @map("created_at") @db.Timestamptz()
+  tenant            Tenant           @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  employee          Employee         @relation("AssignedEmployee", fields: [tenantId, employeeId], references: [tenantId, id], onDelete: Restrict)
+  employmentPeriod  EmploymentPeriod @relation(fields: [tenantId, employmentPeriodId, employeeId], references: [tenantId, id, employeeId], onDelete: Restrict)
+  branch            Branch           @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict)
+  department        Department       @relation(fields: [tenantId, departmentId], references: [tenantId, id], onDelete: Restrict)
+  designation       Designation      @relation(fields: [tenantId, designationId], references: [tenantId, id], onDelete: Restrict)
+  manager           Employee?        @relation("AssignmentManager", fields: [tenantId, managerEmployeeId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, employeeId, effectiveFrom])
+  @@index([tenantId, managerEmployeeId, effectiveFrom])
+  @@map("employee_assignments")
 }
 
 model EmployeeAccountRequest {

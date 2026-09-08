@@ -146,9 +146,9 @@ export default function Entitlements() {
           <span>Effective subscription</span>
         </div>
         <p>
-          Company setup is enabled. Employee lifecycle, attendance, leave,
-          payroll and billing collection remain unavailable until their tested
-          modules are released.
+          Company setup and employee draft records are enabled. Employee
+          activation/termination, attendance, leave, payroll and billing
+          collection remain unavailable until their tested modules are released.
         </p>
         <p className="audit-note">
           Package seeds have no production prices and cannot issue an invoice.

@@ -769,12 +769,12 @@ it('rechecks disabled identities and never restores revoked memberships during l
     (await admin.membership.findFirstOrThrow({ where: { tenantId } })).status,
   ).toBe('revoked');
 });
-it('keeps registration and unfinished employee endpoints closed even when login is enabled', async () => {
+it('keeps registration and unfinished employee transitions closed even when login is enabled', async () => {
   const result = await login();
   for (const path of [
     '/api/v1/auth/signup',
     '/api/v1/auth/register',
-    `/api/v1/tenants/${tenantId}/employees`,
+    `/api/v1/tenants/${tenantId}/employees/${randomUUID()}/activate`,
   ])
     await request(app.getHttpServer())
       .post(path)
