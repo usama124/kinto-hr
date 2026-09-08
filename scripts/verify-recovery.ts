@@ -10,6 +10,7 @@ import {
   createOrganizationPolicyDraft,
   createTenantBranch,
   createTenantLegalEntity,
+  createTenantOrganizationCatalogEntry,
   createDatabase,
   createEmployeeDraft,
   createEntitlementChange,
@@ -53,6 +54,8 @@ async function snapshot(db: PrismaClient) {
       'company_policy_versions',
       'company_provisioning_requests',
       'consumer_receipts',
+      'departments',
+      'designations',
       'employee_account_requests',
       'employee_identity_links',
       'employee_invitations',
@@ -119,6 +122,8 @@ async function snapshot(db: PrismaClient) {
     }),
     legalEntities: await db.legalEntity.findMany({ orderBy: { id: 'asc' } }),
     branches: await db.branch.findMany({ orderBy: { id: 'asc' } }),
+    departments: await db.department.findMany({ orderBy: { id: 'asc' } }),
+    designations: await db.designation.findMany({ orderBy: { id: 'asc' } }),
     companyPolicyVersions: await db.companyPolicyVersion.findMany({
       orderBy: { id: 'asc' },
     }),
@@ -300,6 +305,28 @@ async function main() {
         provinceCode: 'PK-PB',
         reason: 'Recovery fixture branch',
       });
+      await createTenantOrganizationCatalogEntry(
+        sourceApp,
+        principal,
+        tenantId,
+        'department',
+        {
+          code: 'ENG',
+          name: 'Engineering',
+          reason: 'Recovery fixture department',
+        },
+      );
+      await createTenantOrganizationCatalogEntry(
+        sourceApp,
+        principal,
+        tenantId,
+        'designation',
+        {
+          code: 'SWE',
+          name: 'Software Engineer',
+          reason: 'Recovery fixture designation',
+        },
+      );
       const effectiveFrom = new Intl.DateTimeFormat('en-CA', {
         timeZone: 'Asia/Karachi',
         year: 'numeric',
@@ -519,7 +546,7 @@ async function main() {
     const policies = await restored.$queryRaw<
       { enabled: boolean; forced: boolean }[]
     >`SELECT relrowsecurity AS enabled, relforcerowsecurity AS forced FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND relkind='r' AND relname <> '_prisma_migrations'`;
-    assert.equal(policies.length, 25);
+    assert.equal(policies.length, 27);
     assert.ok(policies.every((row) => row.enabled && row.forced));
     assert.deepEqual(await restoredApp.employee.findMany(), []);
     for (const tenantId of tenants) {
@@ -603,6 +630,7 @@ async function main() {
       activeEmployeeIdentityLinkPreserved: true,
       membershipAdministrationAuditPreserved: true,
       organizationPolicyHistoryPreserved: true,
+      organizationCatalogsPreserved: true,
       entitlementCatalogAndSubscriptionPreserved: true,
       entitlementGrantAndVersionPreserved: true,
       pendingAdministratorInvitationPreserved: true,

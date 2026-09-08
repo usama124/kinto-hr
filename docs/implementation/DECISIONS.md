@@ -50,6 +50,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 8 September 2026 — department and designation catalogs
+
+Engineering started P01-04 with the organization identifiers required by later employee assignments. Departments and designations are independent tenant-scoped catalogs with normalized unique codes, names, active/inactive state and optimistic versions. Owners with recent MFA can create or update them with a reason; HR has read-only access through the existing organization projection. Each mutation is audited and emits an outbox event, direct runtime table access is denied, and forced RLS plus tenant-qualified uniqueness preserves isolation. Deactivation is reversible in this slice because no employee assignment can reference these records yet; the employee slice must reject inactive references and later prevent unsafe retirement of in-use entries. See [evidence](../evidence/phase-01/organization-catalogs.md).
+
 ### 8 September 2026 — dated entitlement controls
 
 Engineering completed the local P01-03 application boundary. Active platform operators with trusted MFA can preview and create dated additive employee-capacity grants, complimentary package grants and the single supported `employee_limit` override, then revoke them with optimistic version checks. Add-ons stack, complimentary access uses the greater package capacity and suppresses collection, and the explicit override replaces only capacity. Active same-field overrides cannot overlap, including direct database attempts. Every create/revoke increments tenant entitlement state and records tenant/platform audit evidence with the operator's reason; rows are retained after revocation. Expiry resolves automatically from database time, never deletes employees and never silently creates a paid agreement. Activation uses the authoritative current entitlement while preserving the documented fallback for old synthetic tenants without subscriptions. Prices, invoices, plan transitions and collection remain unavailable. See [evidence](../evidence/phase-01/entitlement-controls.md).

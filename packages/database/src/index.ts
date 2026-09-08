@@ -22,6 +22,8 @@ import {
   legalEntityUpdateSchema,
   branchCreateSchema,
   branchUpdateSchema,
+  organizationCatalogCreateSchema,
+  organizationCatalogUpdateSchema,
   organizationPolicyDraftSchema,
   organizationPolicyPublishSchema,
   organizationSnapshotSchema,
@@ -35,6 +37,8 @@ import {
   type LegalEntityUpdate,
   type BranchCreate,
   type BranchUpdate,
+  type OrganizationCatalogCreate,
+  type OrganizationCatalogUpdate,
   type OrganizationPolicyDraft,
   type OrganizationPolicyPublish,
   type EntitlementChange,
@@ -784,6 +788,8 @@ type OrganizationMutationRow = {
   branch_version?: number | null;
   policy_id?: string | null;
   policy_version?: number | null;
+  resource_id?: string | null;
+  resource_version?: number | null;
 };
 
 function validateOrganizationActor(actor: OrganizationActor, tenantId: string) {
@@ -909,6 +915,55 @@ export async function updateTenantBranch(
   if (!row.branch_id || !row.branch_version)
     throw new Error('Invalid branch update result');
   return { id: row.branch_id, version: row.branch_version };
+}
+
+export async function createTenantOrganizationCatalogEntry(
+  db: PrismaClient,
+  actor: OrganizationActor,
+  tenantId: string,
+  catalog: 'department' | 'designation',
+  input: OrganizationCatalogCreate,
+) {
+  validateOrganizationActor(actor, tenantId);
+  const value = organizationCatalogCreateSchema.parse(input);
+  const rows = await db.$queryRaw<OrganizationMutationRow[]>`
+    SELECT * FROM public.mutate_organization_catalog(
+      ${actor.identityId}::uuid, ${actor.mfaVerified}, ${tenantId}::uuid,
+      ${catalog}::varchar, ${randomUUID()}::uuid, NULL,
+      ${value.code}::varchar, ${value.name}::varchar, 'active'::varchar,
+      ${value.reason}::varchar, ${randomUUID()}::uuid, ${randomUUID()}::uuid
+    )
+  `;
+  const row = assertOrganizationMutation(rows[0]);
+  if (!row.resource_id || !row.resource_version)
+    throw new Error('Invalid organization catalog creation result');
+  return { id: row.resource_id, version: row.resource_version };
+}
+
+export async function updateTenantOrganizationCatalogEntry(
+  db: PrismaClient,
+  actor: OrganizationActor,
+  tenantId: string,
+  catalog: 'department' | 'designation',
+  resourceId: string,
+  input: OrganizationCatalogUpdate,
+) {
+  validateOrganizationActor(actor, tenantId);
+  tenantIdSchema.parse(resourceId);
+  const value = organizationCatalogUpdateSchema.parse(input);
+  const rows = await db.$queryRaw<OrganizationMutationRow[]>`
+    SELECT * FROM public.mutate_organization_catalog(
+      ${actor.identityId}::uuid, ${actor.mfaVerified}, ${tenantId}::uuid,
+      ${catalog}::varchar, ${resourceId}::uuid,
+      ${value.expectedVersion}::integer, ${value.code}::varchar,
+      ${value.name}::varchar, ${value.status}::varchar, ${value.reason}::varchar,
+      ${randomUUID()}::uuid, ${randomUUID()}::uuid
+    )
+  `;
+  const row = assertOrganizationMutation(rows[0]);
+  if (!row.resource_id || !row.resource_version)
+    throw new Error('Invalid organization catalog update result');
+  return { id: row.resource_id, version: row.resource_version };
 }
 
 export async function createOrganizationPolicyDraft(

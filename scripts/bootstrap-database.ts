@@ -104,6 +104,10 @@ try {
     'CREATE POLICY platform_control ON legal_entities FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON branches',
     'CREATE POLICY platform_control ON branches FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
+    'DROP POLICY IF EXISTS platform_control ON departments',
+    'CREATE POLICY platform_control ON departments FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
+    'DROP POLICY IF EXISTS platform_control ON designations',
+    'CREATE POLICY platform_control ON designations FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON company_policy_versions',
     'CREATE POLICY platform_control ON company_policy_versions FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON plan_versions',
@@ -154,7 +158,7 @@ try {
     'GRANT SELECT, INSERT, UPDATE ON administrator_account_requests, administrator_invitations TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
-    'GRANT SELECT, INSERT, UPDATE ON legal_entities, branches, company_policy_versions TO kinto_control_owner',
+    'GRANT SELECT, INSERT, UPDATE ON legal_entities, branches, departments, designations, company_policy_versions TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
     'GRANT SELECT ON plan_versions TO kinto_control_owner',
@@ -202,6 +206,7 @@ try {
     'public.update_tenant_legal_entity(uuid, boolean, uuid, uuid, integer, varchar, varchar, varchar, varchar, varchar, uuid, uuid)',
     'public.create_tenant_branch(uuid, boolean, uuid, uuid, varchar, varchar, varchar, varchar, uuid, uuid)',
     'public.update_tenant_branch(uuid, boolean, uuid, uuid, integer, varchar, varchar, varchar, varchar, varchar, uuid, uuid)',
+    'public.mutate_organization_catalog(uuid, boolean, uuid, varchar, uuid, integer, varchar, varchar, varchar, varchar, uuid, uuid)',
     'public.create_organization_policy_draft(uuid, boolean, uuid, uuid, integer, date, uuid, varchar, uuid)',
     'public.preview_organization_policy(uuid, boolean, uuid, uuid)',
     'public.publish_organization_policy(uuid, boolean, uuid, uuid, integer, varchar, uuid, uuid)',

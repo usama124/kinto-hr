@@ -17,6 +17,8 @@ import {
   legalEntityUpdateSchema,
   organizationPolicyDraftSchema,
   organizationPolicyPublishSchema,
+  organizationCatalogCreateSchema,
+  organizationCatalogUpdateSchema,
   tenantIdSchema,
 } from '@kinto/contracts';
 import {
@@ -130,6 +132,54 @@ export class OrganizationController {
       context.actor,
       context.tenantId,
       branch.data,
+      input.data,
+    );
+  }
+
+  @Post(':catalog')
+  async createCatalogEntry(
+    @Req() req: AuthRequest,
+    @Param('tenantId') tenantId: unknown,
+    @Param('catalog') catalogValue: unknown,
+    @Body() body: unknown,
+  ) {
+    const input = organizationCatalogCreateSchema.safeParse(body);
+    if (
+      !input.success ||
+      (catalogValue !== 'departments' && catalogValue !== 'designations')
+    )
+      throw new BadRequestException();
+    const context = await this.context(req, tenantId, true);
+    return this.database.createOrganizationCatalogEntry(
+      context.actor,
+      context.tenantId,
+      catalogValue === 'departments' ? 'department' : 'designation',
+      input.data,
+    );
+  }
+
+  @Put(':catalog/:resourceId')
+  async updateCatalogEntry(
+    @Req() req: AuthRequest,
+    @Param('tenantId') tenantId: unknown,
+    @Param('catalog') catalogValue: unknown,
+    @Param('resourceId') resourceIdValue: unknown,
+    @Body() body: unknown,
+  ) {
+    const resourceId = tenantIdSchema.safeParse(resourceIdValue);
+    const input = organizationCatalogUpdateSchema.safeParse(body);
+    if (
+      !resourceId.success ||
+      !input.success ||
+      (catalogValue !== 'departments' && catalogValue !== 'designations')
+    )
+      throw new BadRequestException();
+    const context = await this.context(req, tenantId, true);
+    return this.database.updateOrganizationCatalogEntry(
+      context.actor,
+      context.tenantId,
+      catalogValue === 'departments' ? 'department' : 'designation',
+      resourceId.data,
       input.data,
     );
   }

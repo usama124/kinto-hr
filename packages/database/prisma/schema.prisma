@@ -28,6 +28,8 @@ model Tenant {
   administratorInvitations     AdministratorInvitation[]
   legalEntity                  LegalEntity?
   branches                     Branch[]
+  departments                  Department[]
+  designations                 Designation[]
   companyPolicyVersions        CompanyPolicyVersion[]
   subscriptions                TenantSubscription[]
   entitlementState             TenantEntitlementState?
@@ -102,6 +104,40 @@ model Branch {
   @@unique([tenantId, code])
   @@index([tenantId, status])
   @@map("branches")
+}
+
+model Department {
+  id        String   @id @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  code      String   @db.VarChar(20)
+  name      String   @db.VarChar(160)
+  status    String   @default("active") @db.VarChar(20)
+  version   Int      @default(1)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, code])
+  @@index([tenantId, status])
+  @@map("departments")
+}
+
+model Designation {
+  id        String   @id @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  code      String   @db.VarChar(20)
+  name      String   @db.VarChar(160)
+  status    String   @default("active") @db.VarChar(20)
+  version   Int      @default(1)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, code])
+  @@index([tenantId, status])
+  @@map("designations")
 }
 
 model CompanyPolicyVersion {

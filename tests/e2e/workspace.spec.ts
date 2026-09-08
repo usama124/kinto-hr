@@ -259,6 +259,8 @@ test('owner configures a legal employer, branch and published organization defau
   const tenantId = '9d2ea3ef-3938-42d0-84f9-d2248f692f67';
   const legalEntityId = '44c4bf77-58bb-42ea-9886-5db47c1c3de5';
   const branchId = '82ffbc9e-febd-4a62-bdaf-fd8740ee6982';
+  const departmentId = 'eb071d7d-89e8-493a-b5b7-3edaf41d4ae3';
+  const designationId = '5fa15252-0934-4abe-8074-67b764424d65';
   const policyId = '2415cafa-d6dc-45ae-8b50-4cd2d0035cdd';
   const csrf = 'b'.repeat(43);
   const effectiveFrom = new Intl.DateTimeFormat('en-CA', {
@@ -270,12 +272,16 @@ test('owner configures a legal employer, branch and published organization defau
   const snapshot: {
     legalEntity: null | Record<string, unknown>;
     branches: Record<string, unknown>[];
+    departments: Record<string, unknown>[];
+    designations: Record<string, unknown>[];
     latestPublishedVersion: number;
     publishedPolicy: null | Record<string, unknown>;
     policyDrafts: Record<string, unknown>[];
   } = {
     legalEntity: null,
     branches: [],
+    departments: [],
+    designations: [],
     latestPublishedVersion: 0,
     publishedPolicy: null,
     policyDrafts: [],
@@ -346,6 +352,38 @@ test('owner configures a legal employer, branch and published organization defau
           body: JSON.stringify({ id: branchId, version: 1 }),
         });
       }
+      if (request.method() === 'POST' && path.endsWith('/departments')) {
+        snapshot.departments = [
+          {
+            id: departmentId,
+            code: 'ENG',
+            name: 'Engineering',
+            status: 'active',
+            version: 1,
+          },
+        ];
+        return route.fulfill({
+          status: 201,
+          contentType: 'application/json',
+          body: JSON.stringify({ id: departmentId, version: 1 }),
+        });
+      }
+      if (request.method() === 'POST' && path.endsWith('/designations')) {
+        snapshot.designations = [
+          {
+            id: designationId,
+            code: 'SWE',
+            name: 'Software Engineer',
+            status: 'active',
+            version: 1,
+          },
+        ];
+        return route.fulfill({
+          status: 201,
+          contentType: 'application/json',
+          body: JSON.stringify({ id: designationId, version: 1 }),
+        });
+      }
       if (request.method() === 'POST' && path.endsWith('/drafts')) {
         snapshot.policyDrafts = [
           {
@@ -412,13 +450,36 @@ test('owner configures a legal employer, branch and published organization defau
     page.getByRole('button', { name: 'Save legal employer' }),
   ).toBeVisible();
 
-  await page.getByLabel('Code').fill('LHR-01');
-  await page.getByLabel('Name', { exact: true }).fill('Lahore Office');
-  await page.getByLabel('Reason').last().fill('Create first branch');
+  const branchForm = page.locator('form').filter({
+    has: page.getByRole('heading', { name: 'Add branch' }),
+  });
+  await branchForm.getByLabel('Code').fill('LHR-01');
+  await branchForm.getByLabel('Name', { exact: true }).fill('Lahore Office');
+  await branchForm.getByLabel('Reason').fill('Create first branch');
   await page.getByRole('button', { name: 'Add branch' }).click();
   await expect(
     page.getByRole('listitem').getByText('LHR-01 · Lahore Office'),
   ).toBeVisible();
+
+  const departmentForm = page.locator('form').filter({
+    has: page.getByRole('heading', { name: 'Add department' }),
+  });
+  await departmentForm.getByLabel('Code').fill('ENG');
+  await departmentForm.getByLabel('Name').fill('Engineering');
+  await departmentForm.getByLabel('Reason').fill('Create engineering');
+  await departmentForm.getByRole('button', { name: 'Add department' }).click();
+  await expect(page.getByText('ENG · Engineering')).toBeVisible();
+
+  const designationForm = page.locator('form').filter({
+    has: page.getByRole('heading', { name: 'Add designation' }),
+  });
+  await designationForm.getByLabel('Code').fill('SWE');
+  await designationForm.getByLabel('Name').fill('Software Engineer');
+  await designationForm.getByLabel('Reason').fill('Create job title');
+  await designationForm
+    .getByRole('button', { name: 'Add designation' })
+    .click();
+  await expect(page.getByText('SWE · Software Engineer')).toBeVisible();
 
   await page.getByLabel('Effective from').fill(effectiveFrom);
   await page.getByLabel('Draft reason').fill('Set initial company default');
