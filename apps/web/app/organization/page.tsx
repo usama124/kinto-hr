@@ -52,6 +52,24 @@ export default function Organization() {
     'active',
   );
   const [branchReason, setBranchReason] = useState('');
+  const [editingDepartmentId, setEditingDepartmentId] = useState<string | null>(
+    null,
+  );
+  const [departmentCode, setDepartmentCode] = useState('');
+  const [departmentName, setDepartmentName] = useState('');
+  const [departmentStatus, setDepartmentStatus] = useState<
+    'active' | 'inactive'
+  >('active');
+  const [departmentReason, setDepartmentReason] = useState('');
+  const [editingDesignationId, setEditingDesignationId] = useState<
+    string | null
+  >(null);
+  const [designationCode, setDesignationCode] = useState('');
+  const [designationName, setDesignationName] = useState('');
+  const [designationStatus, setDesignationStatus] = useState<
+    'active' | 'inactive'
+  >('active');
+  const [designationReason, setDesignationReason] = useState('');
   const [policyBranchId, setPolicyBranchId] = useState('');
   const [effectiveFrom, setEffectiveFrom] = useState(todayInKarachi());
   const [policyReason, setPolicyReason] = useState('');
@@ -231,6 +249,74 @@ export default function Organization() {
     setBranchReason('');
   }
 
+  async function saveDepartment(event: FormEvent) {
+    event.preventDefault();
+    if (!snapshot) return;
+    const existing = snapshot.departments.find(
+      ({ id }) => id === editingDepartmentId,
+    );
+    await mutate(
+      existing ? `/departments/${existing.id}` : '/departments',
+      existing ? 'PUT' : 'POST',
+      {
+        ...(existing ? { expectedVersion: existing.version } : {}),
+        code: departmentCode,
+        name: departmentName,
+        ...(existing ? { status: departmentStatus } : {}),
+        reason: departmentReason,
+      },
+    );
+    setEditingDepartmentId(null);
+    setDepartmentCode('');
+    setDepartmentName('');
+    setDepartmentStatus('active');
+    setDepartmentReason('');
+  }
+
+  function editDepartment(id: string) {
+    const item = snapshot?.departments.find((entry) => entry.id === id);
+    if (!item) return;
+    setEditingDepartmentId(item.id);
+    setDepartmentCode(item.code);
+    setDepartmentName(item.name);
+    setDepartmentStatus(item.status);
+    setDepartmentReason('');
+  }
+
+  async function saveDesignation(event: FormEvent) {
+    event.preventDefault();
+    if (!snapshot) return;
+    const existing = snapshot.designations.find(
+      ({ id }) => id === editingDesignationId,
+    );
+    await mutate(
+      existing ? `/designations/${existing.id}` : '/designations',
+      existing ? 'PUT' : 'POST',
+      {
+        ...(existing ? { expectedVersion: existing.version } : {}),
+        code: designationCode,
+        name: designationName,
+        ...(existing ? { status: designationStatus } : {}),
+        reason: designationReason,
+      },
+    );
+    setEditingDesignationId(null);
+    setDesignationCode('');
+    setDesignationName('');
+    setDesignationStatus('active');
+    setDesignationReason('');
+  }
+
+  function editDesignation(id: string) {
+    const item = snapshot?.designations.find((entry) => entry.id === id);
+    if (!item) return;
+    setEditingDesignationId(item.id);
+    setDesignationCode(item.code);
+    setDesignationName(item.name);
+    setDesignationStatus(item.status);
+    setDesignationReason('');
+  }
+
   async function createPolicy(event: FormEvent) {
     event.preventDefault();
     if (!snapshot) return;
@@ -310,7 +396,8 @@ export default function Organization() {
           <p className="eyebrow">COMPANY SETUP</p>
           <h1>{companyName}</h1>
           <p className="subtitle">
-            Legal employer, branches and published organization defaults.
+            Legal employer, branches, departments, designations and published
+            organization defaults.
           </p>
         </div>
       </div>
@@ -489,6 +576,172 @@ export default function Organization() {
               </label>
               <button className="primary-button" disabled={busy}>
                 {editingBranchId ? 'Save branch' : 'Add branch'}
+              </button>
+            </form>
+          )}
+        </article>
+      </section>
+
+      <section className="organization-grid">
+        <article className="settings-card">
+          <div className="section-heading">
+            <h2>Departments</h2>
+            <span>{snapshot.departments.length} configured</span>
+          </div>
+          <ul className="branch-list">
+            {snapshot.departments.map((item) => (
+              <li key={item.id}>
+                <div>
+                  <strong>
+                    {item.code} · {item.name}
+                  </strong>
+                  <small>{item.status}</small>
+                </div>
+                {canManage && (
+                  <button
+                    className="secondary-button"
+                    onClick={() => editDepartment(item.id)}
+                  >
+                    Edit
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+          {canManage && (
+            <form className="settings-form compact" onSubmit={saveDepartment}>
+              <h3>
+                {editingDepartmentId ? 'Edit department' : 'Add department'}
+              </h3>
+              <label>
+                Code
+                <input
+                  required
+                  maxLength={20}
+                  pattern="[A-Za-z0-9][A-Za-z0-9_-]*"
+                  value={departmentCode}
+                  onChange={(event) => setDepartmentCode(event.target.value)}
+                />
+              </label>
+              <label>
+                Name
+                <input
+                  required
+                  maxLength={160}
+                  value={departmentName}
+                  onChange={(event) => setDepartmentName(event.target.value)}
+                />
+              </label>
+              {editingDepartmentId && (
+                <label>
+                  Status
+                  <select
+                    value={departmentStatus}
+                    onChange={(event) =>
+                      setDepartmentStatus(
+                        event.target.value as 'active' | 'inactive',
+                      )
+                    }
+                  >
+                    <option value="active">Active</option>
+                    <option value="inactive">Inactive</option>
+                  </select>
+                </label>
+              )}
+              <label>
+                Reason
+                <input
+                  required
+                  minLength={3}
+                  maxLength={240}
+                  value={departmentReason}
+                  onChange={(event) => setDepartmentReason(event.target.value)}
+                />
+              </label>
+              <button className="primary-button" disabled={busy}>
+                {editingDepartmentId ? 'Save department' : 'Add department'}
+              </button>
+            </form>
+          )}
+        </article>
+
+        <article className="settings-card">
+          <div className="section-heading">
+            <h2>Designations</h2>
+            <span>{snapshot.designations.length} configured</span>
+          </div>
+          <ul className="branch-list">
+            {snapshot.designations.map((item) => (
+              <li key={item.id}>
+                <div>
+                  <strong>
+                    {item.code} · {item.name}
+                  </strong>
+                  <small>{item.status}</small>
+                </div>
+                {canManage && (
+                  <button
+                    className="secondary-button"
+                    onClick={() => editDesignation(item.id)}
+                  >
+                    Edit
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+          {canManage && (
+            <form className="settings-form compact" onSubmit={saveDesignation}>
+              <h3>
+                {editingDesignationId ? 'Edit designation' : 'Add designation'}
+              </h3>
+              <label>
+                Code
+                <input
+                  required
+                  maxLength={20}
+                  pattern="[A-Za-z0-9][A-Za-z0-9_-]*"
+                  value={designationCode}
+                  onChange={(event) => setDesignationCode(event.target.value)}
+                />
+              </label>
+              <label>
+                Name
+                <input
+                  required
+                  maxLength={160}
+                  value={designationName}
+                  onChange={(event) => setDesignationName(event.target.value)}
+                />
+              </label>
+              {editingDesignationId && (
+                <label>
+                  Status
+                  <select
+                    value={designationStatus}
+                    onChange={(event) =>
+                      setDesignationStatus(
+                        event.target.value as 'active' | 'inactive',
+                      )
+                    }
+                  >
+                    <option value="active">Active</option>
+                    <option value="inactive">Inactive</option>
+                  </select>
+                </label>
+              )}
+              <label>
+                Reason
+                <input
+                  required
+                  minLength={3}
+                  maxLength={240}
+                  value={designationReason}
+                  onChange={(event) => setDesignationReason(event.target.value)}
+                />
+              </label>
+              <button className="primary-button" disabled={busy}>
+                {editingDesignationId ? 'Save designation' : 'Add designation'}
               </button>
             </form>
           )}

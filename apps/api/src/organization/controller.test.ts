@@ -36,6 +36,8 @@ const methods = {
   updateLegalEntity: vi.fn(),
   createBranch: vi.fn(),
   updateBranch: vi.fn(),
+  createOrganizationCatalogEntry: vi.fn(),
+  updateOrganizationCatalogEntry: vi.fn(),
   createPolicyDraft: vi.fn(),
   previewPolicy: vi.fn(),
   publishPolicy: vi.fn(),
@@ -79,6 +81,9 @@ it('reads the selected organization with only the server-derived actor', async (
   methods.readOrganization.mockResolvedValueOnce({
     legalEntity: null,
     branches: [],
+    departments: [],
+    designations: [],
+    latestPublishedVersion: 0,
     publishedPolicy: null,
     policyDrafts: [],
   });
@@ -87,6 +92,65 @@ it('reads the selected organization with only the server-derived actor', async (
     { identityId, mfaVerified: true },
     tenantId,
   );
+});
+
+it('creates and versions only department or designation catalog entries', async () => {
+  const departmentId = randomUUID();
+  const create = {
+    code: 'ENG',
+    name: 'Engineering',
+    reason: 'Create engineering department',
+  };
+  methods.createOrganizationCatalogEntry.mockResolvedValueOnce({
+    id: departmentId,
+    version: 1,
+  });
+  await authenticated('post', `${base}/departments`)
+    .set('Origin', origin)
+    .set('X-CSRF-Token', csrf)
+    .send(create)
+    .expect(201, { id: departmentId, version: 1 });
+  expect(methods.createOrganizationCatalogEntry).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+    'department',
+    create,
+  );
+
+  const update = {
+    expectedVersion: 1,
+    code: 'SWE',
+    name: 'Software Engineer',
+    status: 'inactive',
+    reason: 'Retire duplicate designation',
+  };
+  methods.updateOrganizationCatalogEntry.mockResolvedValueOnce({
+    id: departmentId,
+    version: 2,
+  });
+  await authenticated('put', `${base}/designations/${departmentId}`)
+    .set('Origin', origin)
+    .set('X-CSRF-Token', csrf)
+    .send(update)
+    .expect(200, { id: departmentId, version: 2 });
+  expect(methods.updateOrganizationCatalogEntry).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+    'designation',
+    departmentId,
+    update,
+  );
+
+  await authenticated('post', `${base}/teams`)
+    .set('Origin', origin)
+    .set('X-CSRF-Token', csrf)
+    .send(create)
+    .expect(400);
+  await authenticated('post', `${base}/departments`)
+    .set('Origin', origin)
+    .set('X-CSRF-Token', csrf)
+    .send({ ...create, status: 'active' })
+    .expect(400);
 });
 
 it('requires exact Origin and CSRF for legal entity and branch writes', async () => {

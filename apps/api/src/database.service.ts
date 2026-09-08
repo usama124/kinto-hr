@@ -26,6 +26,8 @@ import {
   updateTenantLegalEntity,
   createTenantBranch,
   updateTenantBranch,
+  createTenantOrganizationCatalogEntry,
+  updateTenantOrganizationCatalogEntry,
   createOrganizationPolicyDraft,
   previewOrganizationPolicy,
   publishOrganizationPolicy,
@@ -46,6 +48,8 @@ import {
   type LegalEntityUpdate,
   type BranchCreate,
   type BranchUpdate,
+  type OrganizationCatalogCreate,
+  type OrganizationCatalogUpdate,
   type OrganizationPolicyDraft,
   type OrganizationPolicyPublish,
   type EntitlementChange,
@@ -226,6 +230,36 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     input: BranchUpdate,
   ) {
     return updateTenantBranch(this.db, actor, tenantId, branchId, input);
+  }
+  createOrganizationCatalogEntry(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    catalog: 'department' | 'designation',
+    input: OrganizationCatalogCreate,
+  ) {
+    return createTenantOrganizationCatalogEntry(
+      this.db,
+      actor,
+      tenantId,
+      catalog,
+      input,
+    );
+  }
+  updateOrganizationCatalogEntry(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    catalog: 'department' | 'designation',
+    resourceId: string,
+    input: OrganizationCatalogUpdate,
+  ) {
+    return updateTenantOrganizationCatalogEntry(
+      this.db,
+      actor,
+      tenantId,
+      catalog,
+      resourceId,
+      input,
+    );
   }
   createPolicyDraft(
     actor: { identityId: string; mfaVerified: boolean },

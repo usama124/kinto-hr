@@ -6,11 +6,13 @@ import {
   createOrganizationPolicyDraft,
   createTenantBranch,
   createTenantLegalEntity,
+  createTenantOrganizationCatalogEntry,
   previewOrganizationPolicy,
   publishOrganizationPolicy,
   readTenantOrganization,
   updateTenantBranch,
   updateTenantLegalEntity,
+  updateTenantOrganizationCatalogEntry,
 } from '@kinto/database';
 
 if (existsSync('.env')) process.loadEnvFile('.env');
@@ -105,6 +107,10 @@ describe('tenant organization and effective policy boundary', () => {
     await admin.companyPolicyVersion.deleteMany({
       where: { tenantId: { in: tenants } },
     });
+    await admin.department.deleteMany({ where: { tenantId: { in: tenants } } });
+    await admin.designation.deleteMany({
+      where: { tenantId: { in: tenants } },
+    });
     await admin.branch.deleteMany({ where: { tenantId: { in: tenants } } });
     await admin.legalEntity.deleteMany({
       where: { tenantId: { in: tenants } },
@@ -124,6 +130,8 @@ describe('tenant organization and effective policy boundary', () => {
     const empty = {
       legalEntity: null,
       branches: [],
+      departments: [],
+      designations: [],
       latestPublishedVersion: 0,
       publishedPolicy: null,
       policyDrafts: [],
@@ -142,6 +150,149 @@ describe('tenant organization and effective policy boundary', () => {
       await expect(
         readTenantOrganization(runtime, caller, tenantId),
       ).rejects.toThrow('FORBIDDEN');
+  });
+
+  it('versions tenant-scoped department and designation catalogs with owner-only writes', async () => {
+    const department = await createTenantOrganizationCatalogEntry(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      'department',
+      {
+        code: ' eng ',
+        name: ' Engineering ',
+        reason: 'Create the engineering department',
+      },
+    );
+    const designation = await createTenantOrganizationCatalogEntry(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      'designation',
+      {
+        code: 'swe',
+        name: 'Software Engineer',
+        reason: 'Create the engineering designation',
+      },
+    );
+    expect(
+      await readTenantOrganization(runtime, actor(identities.hr), tenantId),
+    ).toMatchObject({
+      departments: [
+        { id: department.id, code: 'ENG', name: 'Engineering', version: 1 },
+      ],
+      designations: [
+        {
+          id: designation.id,
+          code: 'SWE',
+          name: 'Software Engineer',
+          version: 1,
+        },
+      ],
+    });
+    expect(
+      await updateTenantOrganizationCatalogEntry(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        'department',
+        department.id,
+        {
+          expectedVersion: 1,
+          code: 'ENG',
+          name: 'Product Engineering',
+          status: 'inactive',
+          reason: 'Merge the department structure',
+        },
+      ),
+    ).toEqual({ id: department.id, version: 2 });
+    await expect(
+      updateTenantOrganizationCatalogEntry(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        'department',
+        department.id,
+        {
+          expectedVersion: 1,
+          code: 'ENG',
+          name: 'Stale update',
+          status: 'active',
+          reason: 'Attempt stale catalog update',
+        },
+      ),
+    ).rejects.toThrow('STALE_VERSION');
+    await expect(
+      updateTenantOrganizationCatalogEntry(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        'designation',
+        designation.id,
+        {
+          expectedVersion: 1,
+          code: 'SWE',
+          name: 'Software Engineer',
+          status: 'active',
+          reason: 'Attempt a no-op catalog update',
+        },
+      ),
+    ).rejects.toThrow('CONFLICT');
+    await expect(
+      updateTenantOrganizationCatalogEntry(
+        runtime,
+        actor(identities.otherOwner),
+        otherTenantId,
+        'department',
+        department.id,
+        {
+          expectedVersion: 2,
+          code: 'ENG',
+          name: 'Foreign update',
+          status: 'active',
+          reason: 'Attempt a cross-tenant update',
+        },
+      ),
+    ).rejects.toThrow('NOT_FOUND');
+    await expect(
+      createTenantOrganizationCatalogEntry(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        'department',
+        {
+          code: 'HR',
+          name: 'Human Resources',
+          reason: 'Unauthorized catalog write',
+        },
+      ),
+    ).rejects.toThrow('FORBIDDEN');
+    await expect(runtime.department.findMany()).rejects.toThrow();
+    expect(
+      await admin.auditEvent.findMany({
+        where: { tenantId, resourceId: department.id },
+        orderBy: { createdAt: 'asc' },
+        select: { action: true, reason: true },
+      }),
+    ).toEqual([
+      {
+        action: 'department.created',
+        reason: 'Create the engineering department',
+      },
+      {
+        action: 'department.updated',
+        reason: 'Merge the department structure',
+      },
+    ]);
+    expect(
+      await admin.outboxEvent.count({
+        where: {
+          tenantId,
+          aggregateId: department.id,
+          type: { in: ['department.created.v1', 'department.updated.v1'] },
+        },
+      }),
+    ).toBe(2);
   });
 
   it('creates exactly one fixed Pakistan legal employer with atomic audit and outbox', async () => {

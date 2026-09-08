@@ -61,6 +61,32 @@ export const branchUpdateSchema = z.strictObject({
 });
 export type BranchCreate = z.infer<typeof branchCreateSchema>;
 export type BranchUpdate = z.infer<typeof branchUpdateSchema>;
+const organizationCatalogFields = {
+  code: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .min(1)
+    .max(20)
+    .regex(/^[A-Z0-9][A-Z0-9_-]*$/),
+  name: z.string().trim().min(1).max(160),
+};
+export const organizationCatalogCreateSchema = z.strictObject({
+  ...organizationCatalogFields,
+  reason: organizationReasonSchema,
+});
+export const organizationCatalogUpdateSchema = z.strictObject({
+  expectedVersion: z.number().int().positive(),
+  ...organizationCatalogFields,
+  status: z.enum(['active', 'inactive']),
+  reason: organizationReasonSchema,
+});
+export type OrganizationCatalogCreate = z.infer<
+  typeof organizationCatalogCreateSchema
+>;
+export type OrganizationCatalogUpdate = z.infer<
+  typeof organizationCatalogUpdateSchema
+>;
 export const organizationPolicySettingsSchema = z.strictObject({
   defaultBranchId: tenantIdSchema,
 });
@@ -100,6 +126,13 @@ export const branchViewSchema = z.strictObject({
   status: z.enum(['active', 'inactive']),
   version: z.number().int().positive(),
 });
+export const organizationCatalogViewSchema = z.strictObject({
+  id: tenantIdSchema,
+  code: z.string().min(1).max(20),
+  name: z.string().min(1).max(160),
+  status: z.enum(['active', 'inactive']),
+  version: z.number().int().positive(),
+});
 const organizationPolicyViewSchema = z.strictObject({
   id: tenantIdSchema,
   version: z.number().int().positive(),
@@ -115,6 +148,8 @@ export const organizationPolicyDraftViewSchema = organizationPolicyViewSchema
 export const organizationSnapshotSchema = z.strictObject({
   legalEntity: legalEntityViewSchema.nullable(),
   branches: branchViewSchema.array().max(250),
+  departments: organizationCatalogViewSchema.array().max(250),
+  designations: organizationCatalogViewSchema.array().max(250),
   latestPublishedVersion: z.number().int().min(0),
   publishedPolicy: organizationPolicyViewSchema.nullable(),
   policyDrafts: organizationPolicyDraftViewSchema.array().max(20),

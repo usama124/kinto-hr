@@ -17,6 +17,8 @@ import {
   legalEntityUpdateSchema,
   branchCreateSchema,
   branchUpdateSchema,
+  organizationCatalogCreateSchema,
+  organizationCatalogUpdateSchema,
   organizationPolicyDraftSchema,
   organizationPolicyPublishSchema,
   entitlementChangeSchema,
@@ -280,6 +282,40 @@ it('validates Pakistan legal entity and branch setup without mass assignment', (
       reason: 'Invalid branch code',
     }).success,
   ).toBe(false);
+});
+it('normalizes bounded organization catalogs without accepting lifecycle fields on create', () => {
+  expect(
+    organizationCatalogCreateSchema.parse({
+      code: ' eng ',
+      name: ' Engineering ',
+      reason: 'Initial department setup',
+    }),
+  ).toEqual({
+    code: 'ENG',
+    name: 'Engineering',
+    reason: 'Initial department setup',
+  });
+  expect(
+    organizationCatalogUpdateSchema.safeParse({
+      expectedVersion: 1,
+      code: 'SWE',
+      name: 'Software Engineer',
+      status: 'inactive',
+      reason: 'Retire duplicate title',
+    }).success,
+  ).toBe(true);
+  for (const input of [
+    { code: '=BAD', name: 'Bad', reason: 'Invalid code' },
+    {
+      code: 'ENG',
+      name: 'Engineering',
+      status: 'active',
+      reason: 'Mass assigned status',
+    },
+  ])
+    expect(organizationCatalogCreateSchema.safeParse(input).success).toBe(
+      false,
+    );
 });
 it('accepts only typed organization-default policy drafts and publication', () => {
   const branchId = crypto.randomUUID();
