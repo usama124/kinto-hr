@@ -30,6 +30,9 @@ import {
   previewOrganizationPolicy,
   publishOrganizationPolicy,
   readTenantEntitlements,
+  previewEntitlementChange,
+  createEntitlementChange,
+  revokeEntitlementChange,
 } from '@kinto/database';
 import {
   type AuthenticatedIdentity,
@@ -45,6 +48,8 @@ import {
   type BranchUpdate,
   type OrganizationPolicyDraft,
   type OrganizationPolicyPublish,
+  type EntitlementChange,
+  type EntitlementRevocation,
 } from '@kinto/contracts';
 import { readConfig } from './config';
 @Injectable()
@@ -249,6 +254,36 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     tenantId: string,
   ) {
     return readTenantEntitlements(this.db, actor, tenantId);
+  }
+  previewEntitlementChange(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    input: EntitlementChange,
+  ) {
+    return previewEntitlementChange(this.db, actor, tenantId, input);
+  }
+  createEntitlementChange(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    input: EntitlementChange,
+  ) {
+    return createEntitlementChange(this.db, actor, tenantId, input);
+  }
+  revokeEntitlementChange(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    kind: 'grant' | 'override',
+    changeId: string,
+    input: EntitlementRevocation,
+  ) {
+    return revokeEntitlementChange(
+      this.db,
+      actor,
+      tenantId,
+      kind,
+      changeId,
+      input,
+    );
   }
   async onModuleDestroy() {
     await this.db.$disconnect();

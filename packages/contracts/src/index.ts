@@ -268,6 +268,64 @@ export const entitlementSnapshotSchema = z.strictObject({
   effectiveFrom: z.iso.datetime({ offset: true }),
 });
 export type EntitlementSnapshot = z.infer<typeof entitlementSnapshotSchema>;
+const entitlementChangeReasonSchema = z.string().trim().min(3).max(240);
+const entitlementIntervalFields = {
+  startsAt: z.iso.datetime({ offset: true }),
+  endsAt: z.iso.datetime({ offset: true }),
+  reason: entitlementChangeReasonSchema,
+};
+export const entitlementChangeSchema = z
+  .discriminatedUnion('changeType', [
+    z.strictObject({
+      changeType: z.literal('capacity_addon'),
+      seatDelta: z.number().int().min(1).max(250),
+      ...entitlementIntervalFields,
+    }),
+    z.strictObject({
+      changeType: z.literal('complimentary'),
+      employeeLimit: z.union([
+        z.literal(5),
+        z.literal(20),
+        z.literal(50),
+        z.literal(100),
+        z.literal(250),
+      ]),
+      ...entitlementIntervalFields,
+    }),
+    z.strictObject({
+      changeType: z.literal('employee_limit_override'),
+      employeeLimit: z.number().int().min(0).max(250),
+      ...entitlementIntervalFields,
+    }),
+  ])
+  .superRefine((value, context) => {
+    if (Date.parse(value.endsAt) <= Date.parse(value.startsAt))
+      context.addIssue({
+        code: 'custom',
+        path: ['endsAt'],
+        message: 'End must be later than start',
+      });
+  });
+export type EntitlementChange = z.infer<typeof entitlementChangeSchema>;
+export const entitlementRevocationSchema = z.strictObject({
+  expectedVersion: z.number().int().positive(),
+  reason: entitlementChangeReasonSchema,
+});
+export type EntitlementRevocation = z.infer<typeof entitlementRevocationSchema>;
+export const entitlementChangeResultSchema = z.strictObject({
+  id: tenantIdSchema,
+  version: z.number().int().positive(),
+  entitlementVersion: z.number().int().positive(),
+});
+export const entitlementPreviewSchema = z.strictObject({
+  at: z.iso.datetime({ offset: true }),
+  before: entitlementSnapshotSchema,
+  after: entitlementSnapshotSchema,
+  changes: z.strictObject({
+    employeeLimit: z.boolean(),
+    billingMode: z.boolean(),
+  }),
+});
 export const employeeAccountProvisioningSchema = z.strictObject({
   email: z.string().trim().toLowerCase().pipe(z.email().max(320)),
 });

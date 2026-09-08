@@ -19,6 +19,8 @@ import {
   branchUpdateSchema,
   organizationPolicyDraftSchema,
   organizationPolicyPublishSchema,
+  entitlementChangeSchema,
+  entitlementRevocationSchema,
 } from './index';
 it('trims names while preserving employee identifiers as strings', () => {
   expect(
@@ -119,6 +121,54 @@ it('accepts only the safe entitlement projection', () => {
     entitlementSnapshotSchema.safeParse({
       ...value,
       capabilities: { companySetup: true, payroll: true },
+    }).success,
+  ).toBe(false);
+});
+it('accepts only bounded dated entitlement changes and explicit revocations', () => {
+  const interval = {
+    startsAt: '2026-09-08T00:00:00.000Z',
+    endsAt: '2026-10-08T00:00:00.000Z',
+    reason: 'Approved temporary capacity',
+  };
+  expect(
+    entitlementChangeSchema.parse({
+      changeType: 'capacity_addon',
+      seatDelta: 10,
+      ...interval,
+    }),
+  ).toMatchObject({ seatDelta: 10 });
+  for (const input of [
+    { changeType: 'capacity_addon', seatDelta: 0, ...interval },
+    {
+      changeType: 'complimentary',
+      employeeLimit: 10,
+      ...interval,
+    },
+    {
+      changeType: 'employee_limit_override',
+      employeeLimit: 5,
+      seatDelta: 2,
+      ...interval,
+    },
+    {
+      changeType: 'capacity_addon',
+      seatDelta: 2,
+      ...interval,
+      endsAt: interval.startsAt,
+    },
+  ])
+    expect(entitlementChangeSchema.safeParse(input).success).toBe(false);
+  expect(
+    entitlementRevocationSchema.safeParse({
+      expectedVersion: 1,
+      reason: 'Approval withdrawn',
+    }).success,
+  ).toBe(true);
+  expect(
+    entitlementRevocationSchema.safeParse({
+      expectedVersion: 0,
+      reason: 'Approval withdrawn',
+      status: 'revoked',
     }).success,
   ).toBe(false);
 });

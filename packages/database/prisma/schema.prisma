@@ -30,6 +30,9 @@ model Tenant {
   branches                     Branch[]
   companyPolicyVersions        CompanyPolicyVersion[]
   subscriptions                TenantSubscription[]
+  entitlementState             TenantEntitlementState?
+  entitlementGrants            EntitlementGrant[]
+  entitlementOverrides         EntitlementOverride[]
 
   @@map("tenants")
 }
@@ -52,6 +55,10 @@ model Identity {
   administratorInvitations     AdministratorInvitation[]
   createdCompanyPolicies       CompanyPolicyVersion[]        @relation("PolicyCreatedBy")
   publishedCompanyPolicies     CompanyPolicyVersion[]        @relation("PolicyPublishedBy")
+  createdEntitlementGrants     EntitlementGrant[]             @relation("GrantCreatedBy")
+  revokedEntitlementGrants     EntitlementGrant[]             @relation("GrantRevokedBy")
+  createdEntitlementOverrides  EntitlementOverride[]          @relation("OverrideCreatedBy")
+  revokedEntitlementOverrides  EntitlementOverride[]          @relation("OverrideRevokedBy")
 
   @@unique([issuer, subject])
   @@map("identities")
@@ -153,6 +160,64 @@ model TenantSubscription {
   @@unique([tenantId, subscriptionVersion])
   @@index([tenantId, status, effectiveFrom])
   @@map("tenant_subscriptions")
+}
+
+model TenantEntitlementState {
+  tenantId  String   @id @map("tenant_id") @db.Uuid
+  version   Int      @default(1)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz()
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("tenant_entitlement_states")
+}
+
+model EntitlementGrant {
+  id                  String    @id @db.Uuid
+  tenantId            String    @map("tenant_id") @db.Uuid
+  kind                String    @db.VarChar(30)
+  employeeLimit       Int?      @map("employee_limit")
+  seatDelta           Int?      @map("seat_delta")
+  startsAt            DateTime  @map("starts_at") @db.Timestamptz()
+  endsAt              DateTime  @map("ends_at") @db.Timestamptz()
+  status              String    @default("active") @db.VarChar(20)
+  version             Int       @default(1)
+  reason              String    @db.VarChar(240)
+  createdByIdentityId String    @map("created_by_identity_id") @db.Uuid
+  revokedByIdentityId String?   @map("revoked_by_identity_id") @db.Uuid
+  revokedReason       String?   @map("revoked_reason") @db.VarChar(240)
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  revokedAt           DateTime? @map("revoked_at") @db.Timestamptz()
+  tenant              Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdBy           Identity  @relation("GrantCreatedBy", fields: [createdByIdentityId], references: [id], onDelete: Restrict)
+  revokedBy           Identity? @relation("GrantRevokedBy", fields: [revokedByIdentityId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, status, startsAt, endsAt])
+  @@map("entitlement_grants")
+}
+
+model EntitlementOverride {
+  id                  String    @id @db.Uuid
+  tenantId            String    @map("tenant_id") @db.Uuid
+  field               String    @db.VarChar(40)
+  employeeLimit       Int       @map("employee_limit")
+  startsAt            DateTime  @map("starts_at") @db.Timestamptz()
+  endsAt              DateTime  @map("ends_at") @db.Timestamptz()
+  status              String    @default("active") @db.VarChar(20)
+  version             Int       @default(1)
+  reason              String    @db.VarChar(240)
+  createdByIdentityId String    @map("created_by_identity_id") @db.Uuid
+  revokedByIdentityId String?   @map("revoked_by_identity_id") @db.Uuid
+  revokedReason       String?   @map("revoked_reason") @db.VarChar(240)
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  revokedAt           DateTime? @map("revoked_at") @db.Timestamptz()
+  tenant              Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdBy           Identity  @relation("OverrideCreatedBy", fields: [createdByIdentityId], references: [id], onDelete: Restrict)
+  revokedBy           Identity? @relation("OverrideRevokedBy", fields: [revokedByIdentityId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, field, status, startsAt, endsAt])
+  @@map("entitlement_overrides")
 }
 
 model PlatformOperator {
