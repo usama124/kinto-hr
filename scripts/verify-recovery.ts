@@ -12,6 +12,7 @@ import {
   createTenantLegalEntity,
   createDatabase,
   createEmployeeDraft,
+  createEntitlementChange,
   inTenant,
   inAuthorizedTenant,
   requestCompanyProvisioning,
@@ -56,6 +57,8 @@ async function snapshot(db: PrismaClient) {
       'employee_identity_links',
       'employee_invitations',
       'employees',
+      'entitlement_grants',
+      'entitlement_overrides',
       'identities',
       'job_deliveries',
       'legal_entities',
@@ -65,6 +68,7 @@ async function snapshot(db: PrismaClient) {
       'plan_versions',
       'platform_audit_events',
       'platform_operators',
+      'tenant_entitlement_states',
       'tenant_subscriptions',
       'tenants',
     ],
@@ -102,6 +106,15 @@ async function snapshot(db: PrismaClient) {
     tenants: await db.tenant.findMany({ orderBy: { id: 'asc' } }),
     planVersions: await db.planVersion.findMany({ orderBy: { id: 'asc' } }),
     tenantSubscriptions: await db.tenantSubscription.findMany({
+      orderBy: { id: 'asc' },
+    }),
+    tenantEntitlementStates: await db.tenantEntitlementState.findMany({
+      orderBy: { tenantId: 'asc' },
+    }),
+    entitlementGrants: await db.entitlementGrant.findMany({
+      orderBy: { id: 'asc' },
+    }),
+    entitlementOverrides: await db.entitlementOverride.findMany({
       orderBy: { id: 'asc' },
     }),
     legalEntities: await db.legalEntity.findMany({ orderBy: { id: 'asc' } }),
@@ -407,6 +420,18 @@ async function main() {
       },
     );
     assert.equal(provisioning.status, 'pending_identity_provider');
+    await createEntitlementChange(
+      sourceApp,
+      { identityId: operator.id, mfaVerified: true },
+      provisioning.tenantId,
+      {
+        changeType: 'capacity_addon',
+        seatDelta: 10,
+        startsAt: new Date().toISOString(),
+        endsAt: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),
+        reason: 'Recovery fixture capacity grant',
+      },
+    );
     const invitationExpiry = new Date(Date.now() + 48 * 60 * 60 * 1000);
     await reconcileCompanyOwnerProvider(
       sourceApp,
@@ -494,7 +519,7 @@ async function main() {
     const policies = await restored.$queryRaw<
       { enabled: boolean; forced: boolean }[]
     >`SELECT relrowsecurity AS enabled, relforcerowsecurity AS forced FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND relkind='r' AND relname <> '_prisma_migrations'`;
-    assert.equal(policies.length, 22);
+    assert.equal(policies.length, 25);
     assert.ok(policies.every((row) => row.enabled && row.forced));
     assert.deepEqual(await restoredApp.employee.findMany(), []);
     for (const tenantId of tenants) {
@@ -579,6 +604,7 @@ async function main() {
       membershipAdministrationAuditPreserved: true,
       organizationPolicyHistoryPreserved: true,
       entitlementCatalogAndSubscriptionPreserved: true,
+      entitlementGrantAndVersionPreserved: true,
       pendingAdministratorInvitationPreserved: true,
     };
     await writeFile(

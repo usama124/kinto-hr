@@ -27,12 +27,18 @@ import {
   organizationSnapshotSchema,
   organizationPolicyPreviewSchema,
   entitlementSnapshotSchema,
+  entitlementChangeSchema,
+  entitlementRevocationSchema,
+  entitlementChangeResultSchema,
+  entitlementPreviewSchema,
   type LegalEntityCreate,
   type LegalEntityUpdate,
   type BranchCreate,
   type BranchUpdate,
   type OrganizationPolicyDraft,
   type OrganizationPolicyPublish,
+  type EntitlementChange,
+  type EntitlementRevocation,
 } from '@kinto/contracts';
 import {
   assertCanActivate,
@@ -986,6 +992,116 @@ export async function readTenantEntitlements(
   if (row.outcome === 'not_found') throw new DomainError('NOT_FOUND');
   return entitlementSnapshotSchema.parse(row.snapshot);
 }
+
+type EntitlementActor = { identityId: string; mfaVerified: boolean };
+
+function validateEntitlementActor(actor: EntitlementActor, tenantId: string) {
+  tenantIdSchema.parse(actor.identityId);
+  tenantIdSchema.parse(tenantId);
+}
+
+function entitlementParameters(input: EntitlementChange) {
+  return {
+    employeeLimit:
+      input.changeType === 'capacity_addon' ? null : input.employeeLimit,
+    seatDelta: input.changeType === 'capacity_addon' ? input.seatDelta : null,
+  };
+}
+
+export async function previewEntitlementChange(
+  db: PrismaClient,
+  actor: EntitlementActor,
+  tenantId: string,
+  input: EntitlementChange,
+) {
+  validateEntitlementActor(actor, tenantId);
+  const value = entitlementChangeSchema.parse(input);
+  const parameters = entitlementParameters(value);
+  const rows = await db.$queryRaw<
+    {
+      outcome: 'ok' | 'forbidden' | 'not_found' | 'conflict';
+      preview: unknown;
+    }[]
+  >`SELECT * FROM public.preview_entitlement_change(
+    ${actor.identityId}::uuid, ${actor.mfaVerified}, ${tenantId}::uuid,
+    ${value.changeType}::varchar, ${new Date(value.startsAt)}::timestamptz,
+    ${new Date(value.endsAt)}::timestamptz,
+    ${parameters.employeeLimit}::integer, ${parameters.seatDelta}::integer
+  )`;
+  const row = rows[0];
+  if (!row || row.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (row.outcome === 'not_found') throw new DomainError('NOT_FOUND');
+  if (row.outcome === 'conflict') throw new DomainError('CONFLICT');
+  return entitlementPreviewSchema.parse(row.preview);
+}
+
+export async function createEntitlementChange(
+  db: PrismaClient,
+  actor: EntitlementActor,
+  tenantId: string,
+  input: EntitlementChange,
+) {
+  validateEntitlementActor(actor, tenantId);
+  const value = entitlementChangeSchema.parse(input);
+  const parameters = entitlementParameters(value);
+  const rows = await db.$queryRaw<
+    {
+      outcome: 'created' | 'forbidden' | 'conflict';
+      change_id: string | null;
+      change_version: number | null;
+      entitlement_version: number | null;
+    }[]
+  >`SELECT * FROM public.create_entitlement_change(
+    ${actor.identityId}::uuid, ${actor.mfaVerified}, ${tenantId}::uuid,
+    ${randomUUID()}::uuid, ${value.changeType}::varchar,
+    ${new Date(value.startsAt)}::timestamptz, ${new Date(value.endsAt)}::timestamptz,
+    ${parameters.employeeLimit}::integer, ${parameters.seatDelta}::integer,
+    ${value.reason}::varchar, ${randomUUID()}::uuid, ${randomUUID()}::uuid
+  )`;
+  const row = rows[0];
+  if (!row || row.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (row.outcome === 'conflict') throw new DomainError('CONFLICT');
+  return entitlementChangeResultSchema.parse({
+    id: row.change_id,
+    version: row.change_version,
+    entitlementVersion: row.entitlement_version,
+  });
+}
+
+export async function revokeEntitlementChange(
+  db: PrismaClient,
+  actor: EntitlementActor,
+  tenantId: string,
+  kind: 'grant' | 'override',
+  changeId: string,
+  input: EntitlementRevocation,
+) {
+  validateEntitlementActor(actor, tenantId);
+  tenantIdSchema.parse(changeId);
+  const value = entitlementRevocationSchema.parse(input);
+  const rows = await db.$queryRaw<
+    {
+      outcome: 'revoked' | 'forbidden' | 'not_found' | 'stale' | 'conflict';
+      change_id: string | null;
+      change_version: number | null;
+      entitlement_version: number | null;
+    }[]
+  >`SELECT * FROM public.revoke_entitlement_change(
+    ${actor.identityId}::uuid, ${actor.mfaVerified}, ${tenantId}::uuid,
+    ${kind}::varchar, ${changeId}::uuid, ${value.expectedVersion}::integer,
+    ${value.reason}::varchar, ${randomUUID()}::uuid, ${randomUUID()}::uuid
+  )`;
+  const row = rows[0];
+  if (!row || row.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (row.outcome === 'not_found') throw new DomainError('NOT_FOUND');
+  if (row.outcome === 'stale') throw new DomainError('STALE_VERSION');
+  if (row.outcome === 'conflict') throw new DomainError('CONFLICT');
+  return entitlementChangeResultSchema.parse({
+    id: row.change_id,
+    version: row.change_version,
+    entitlementVersion: row.entitlement_version,
+  });
+}
 export async function createEmployeeDraft(
   db: PrismaClient,
   tenantId: string,
@@ -1028,15 +1144,12 @@ export async function activateEmployee(
       where: { id: tenantId },
     });
     if (tenant.status !== 'active') throw new DomainError('TENANT_UNAVAILABLE');
-    const [subscription] = await tx.$queryRaw<{ employee_limit: number }[]>`
-      SELECT employee_limit FROM public.tenant_subscriptions
-      WHERE tenant_id = ${tenantId}::uuid AND status = 'active'
-        AND effective_from <= now()
-      ORDER BY subscription_version DESC LIMIT 1
-    `;
+    const [entitlement] = await tx.$queryRaw<
+      { employee_limit: number | null }[]
+    >`SELECT public.current_tenant_employee_limit() AS employee_limit`;
     assertCanActivate(
       await tx.employee.count({ where: { tenantId, status: 'active' } }),
-      subscription?.employee_limit ?? tenant.employeeLimit,
+      entitlement?.employee_limit ?? tenant.employeeLimit,
     );
     const updated = await tx.employee.update({
       where: { tenantId_id: { tenantId, id: employeeId } },

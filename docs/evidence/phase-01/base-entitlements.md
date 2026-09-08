@@ -22,4 +22,4 @@ Date: 8 September 2026. Scope: first bounded local P01-03 immutable plan catalog
 
 These are technical package seeds, not commercial offers: prices, taxes, accepted paid agreements, invoices, renewal, downgrade/grace behavior and payment collection do not exist. The only capability is company setup; an entitlement cannot bypass tenant status, membership role, data scope or module availability.
 
-P01-03 remains incomplete. Next is operator-authorized dated complimentary/add-on grants and field-specific overrides with reason, audit, preview, revocation/expiry, overlap rejection, effective-version changes and no silent transition into charging. P01-04 employee/compensation lifecycle and P01-05 imports/private files remain required before Phase 1 is complete.
+The remaining P01-03 controls are now locally implemented and recorded in [dated entitlement-control evidence](entitlement-controls.md). P01-04 employee/compensation lifecycle and P01-05 imports/private files remain required before Phase 1 is complete.

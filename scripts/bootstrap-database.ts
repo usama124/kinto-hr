@@ -110,6 +110,12 @@ try {
     'CREATE POLICY platform_control ON plan_versions FOR SELECT TO kinto_control_owner USING (true)',
     'DROP POLICY IF EXISTS platform_control ON tenant_subscriptions',
     'CREATE POLICY platform_control ON tenant_subscriptions FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
+    'DROP POLICY IF EXISTS platform_control ON tenant_entitlement_states',
+    'CREATE POLICY platform_control ON tenant_entitlement_states FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
+    'DROP POLICY IF EXISTS platform_control ON entitlement_grants',
+    'CREATE POLICY platform_control ON entitlement_grants FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
+    'DROP POLICY IF EXISTS platform_control ON entitlement_overrides',
+    'CREATE POLICY platform_control ON entitlement_overrides FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control_insert ON audit_events',
     'CREATE POLICY platform_control_insert ON audit_events FOR INSERT TO kinto_control_owner WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control_select ON audit_events',
@@ -157,7 +163,10 @@ try {
     'GRANT SELECT, INSERT, UPDATE ON tenant_subscriptions TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
-    'GRANT SELECT ON tenant_subscriptions TO kinto_app',
+    'GRANT SELECT, INSERT, UPDATE ON tenant_entitlement_states, entitlement_grants, entitlement_overrides TO kinto_control_owner',
+  );
+  await database.$executeRawUnsafe(
+    'GRANT SELECT ON tenant_subscriptions, entitlement_grants, entitlement_overrides TO kinto_app',
   );
   await database.$executeRawUnsafe(
     'GRANT SELECT, INSERT ON audit_events TO kinto_control_owner',
@@ -197,6 +206,9 @@ try {
     'public.preview_organization_policy(uuid, boolean, uuid, uuid)',
     'public.publish_organization_policy(uuid, boolean, uuid, uuid, integer, varchar, uuid, uuid)',
     'public.read_tenant_entitlements(uuid, boolean, uuid)',
+    'public.preview_entitlement_change(uuid, boolean, uuid, varchar, timestamptz, timestamptz, integer, integer)',
+    'public.create_entitlement_change(uuid, boolean, uuid, uuid, varchar, timestamptz, timestamptz, integer, integer, varchar, uuid, uuid)',
+    'public.revoke_entitlement_change(uuid, boolean, uuid, varchar, uuid, integer, varchar, uuid, uuid)',
   ]) {
     await database.$executeRawUnsafe(
       `ALTER FUNCTION ${signature} OWNER TO kinto_control_owner`,
@@ -209,10 +221,19 @@ try {
     'public.resolve_login_identity_pre_administrator(varchar, varchar, boolean, uuid, uuid, uuid, uuid, uuid)',
     'public.enforce_one_pending_identity_invitation()',
     'public.tenant_organization_authorized(uuid, boolean, uuid, boolean)',
+    'public.resolve_tenant_entitlements_at(uuid, timestamptz, varchar, integer, integer)',
+    'public.ensure_tenant_entitlement_state()',
+    'public.reject_overlapping_entitlement_override()',
   ])
     await database.$executeRawUnsafe(
       `ALTER FUNCTION ${signature} OWNER TO kinto_control_owner`,
     );
+  await database.$executeRawUnsafe(
+    'ALTER FUNCTION public.current_tenant_employee_limit() OWNER TO kinto_control_owner',
+  );
+  await database.$executeRawUnsafe(
+    'GRANT EXECUTE ON FUNCTION public.current_tenant_employee_limit() TO kinto_app',
+  );
   await assertSafeRuntimeRole(appDatabase);
   // The dispatcher can call reviewed metadata functions only. The worker has
   // tenant-scoped delivery access, but no employee, salary or audit privileges.
