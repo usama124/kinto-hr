@@ -45,7 +45,6 @@ it('checks readiness and hides dependency failures', async () => {
   );
 });
 it.each([
-  '/api/v1/tenants/test/employees',
   '/api/v1/platform/tenants',
   '/api/v1/payroll',
   '/api/v1/auth/login',

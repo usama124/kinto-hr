@@ -51,12 +51,12 @@ export default function RootLayout({
               <Link className="nav-item" href="/entitlements">
                 Plan &amp; capacity <span>07</span>
               </Link>
+              <Link className="nav-item" href="/employees">
+                Employees <span>08</span>
+              </Link>
             </nav>
             <div className="upcoming">
               <span className="nav-heading">UPCOMING MODULES</span>
-              <span>
-                Employees <small>Next</small>
-              </span>
               <span>
                 Attendance <small>Phase 2</small>
               </span>

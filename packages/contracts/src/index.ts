@@ -207,6 +207,115 @@ export const employeeDraftSchema = z
   })
   .strict();
 export type EmployeeDraft = z.infer<typeof employeeDraftSchema>;
+const employeeNumberSchema = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .min(1)
+  .max(40)
+  .regex(/^[A-Z0-9][A-Z0-9_-]*$/);
+const employeeNameSchema = z.string().trim().min(1).max(160);
+const employeeReasonSchema = z.string().trim().min(3).max(240);
+const employeeOrganizationFields = {
+  branchId: tenantIdSchema,
+  departmentId: tenantIdSchema,
+  designationId: tenantIdSchema,
+  managerEmployeeId: tenantIdSchema.nullable(),
+  topLevelReason: z.string().trim().min(3).max(240).optional(),
+};
+function validateReportingException(
+  value: { managerEmployeeId: string | null; topLevelReason?: string },
+  context: z.RefinementCtx,
+) {
+  if (value.managerEmployeeId === null && !value.topLevelReason)
+    context.addIssue({
+      code: 'custom',
+      path: ['topLevelReason'],
+      message: 'A top-level reporting exception is required',
+    });
+  if (value.managerEmployeeId !== null && value.topLevelReason)
+    context.addIssue({
+      code: 'custom',
+      path: ['topLevelReason'],
+      message: 'A reporting exception cannot be combined with a manager',
+    });
+}
+export const employeeRecordCreateSchema = z
+  .strictObject({
+    employeeNumber: employeeNumberSchema,
+    name: employeeNameSchema,
+    legalName: employeeNameSchema.optional(),
+    joiningDate: z.iso.date(),
+    employmentType: z.literal('monthly_salaried'),
+    ...employeeOrganizationFields,
+    reason: employeeReasonSchema,
+  })
+  .superRefine(validateReportingException);
+export const employeeProfileUpdateSchema = z.strictObject({
+  expectedVersion: z.number().int().positive(),
+  name: employeeNameSchema,
+  legalName: employeeNameSchema.optional(),
+  reason: employeeReasonSchema,
+});
+export const employeeAssignmentCreateSchema = z
+  .strictObject({
+    expectedVersion: z.number().int().positive(),
+    effectiveFrom: z.iso.date(),
+    ...employeeOrganizationFields,
+    reason: employeeReasonSchema,
+  })
+  .superRefine(validateReportingException);
+export type EmployeeRecordCreate = z.infer<typeof employeeRecordCreateSchema>;
+export type EmployeeProfileUpdate = z.infer<typeof employeeProfileUpdateSchema>;
+export type EmployeeAssignmentCreate = z.infer<
+  typeof employeeAssignmentCreateSchema
+>;
+const employeeAssignmentViewSchema = z.strictObject({
+  id: tenantIdSchema,
+  effectiveFrom: z.iso.date(),
+  effectiveTo: z.iso.date().nullable(),
+  branch: z.strictObject({
+    id: tenantIdSchema,
+    code: z.string(),
+    name: z.string(),
+  }),
+  department: z.strictObject({
+    id: tenantIdSchema,
+    code: z.string(),
+    name: z.string(),
+  }),
+  designation: z.strictObject({
+    id: tenantIdSchema,
+    code: z.string(),
+    name: z.string(),
+  }),
+  manager: z
+    .strictObject({
+      id: tenantIdSchema,
+      employeeNumber: z.string(),
+      name: z.string(),
+    })
+    .nullable(),
+  topLevelReason: z.string().max(240).nullable(),
+});
+export const employeeRecordViewSchema = z.strictObject({
+  id: tenantIdSchema,
+  employeeNumber: employeeNumberSchema,
+  name: employeeNameSchema,
+  legalName: employeeNameSchema.nullable(),
+  status: z.enum(['draft', 'active', 'terminated', 'archived']),
+  version: z.number().int().positive(),
+  joiningDate: z.iso.date(),
+  employmentType: z.literal('monthly_salaried'),
+  payrollSetup: z.literal('incomplete'),
+  currentAssignment: employeeAssignmentViewSchema.nullable(),
+  assignmentHistory: employeeAssignmentViewSchema.array().max(250),
+});
+export const employeeRosterSchema = z.strictObject({
+  employees: employeeRecordViewSchema.array().max(1000),
+});
+export type EmployeeRecordView = z.infer<typeof employeeRecordViewSchema>;
+export type EmployeeRoster = z.infer<typeof employeeRosterSchema>;
 export const healthSchema = z
   .object({ status: z.literal('ok'), service: z.literal('kinto-api') })
   .strict();

@@ -23,6 +23,9 @@ import {
   organizationPolicyPublishSchema,
   entitlementChangeSchema,
   entitlementRevocationSchema,
+  employeeRecordCreateSchema,
+  employeeProfileUpdateSchema,
+  employeeAssignmentCreateSchema,
 } from './index';
 it('trims names while preserving employee identifiers as strings', () => {
   expect(
@@ -409,6 +412,68 @@ it('accepts only canonical administrative membership mutations', () => {
       expectedVersion: 1,
       reason: 'Valid reason',
       status: 'revoked',
+    }).success,
+  ).toBe(false);
+});
+
+it('normalizes complete monthly-salaried employee records and reporting rules', () => {
+  const branchId = crypto.randomUUID();
+  const departmentId = crypto.randomUUID();
+  const designationId = crypto.randomUUID();
+  expect(
+    employeeRecordCreateSchema.parse({
+      employeeNumber: ' emp-001 ',
+      name: ' Sana Khan ',
+      joiningDate: '2026-09-08',
+      employmentType: 'monthly_salaried',
+      branchId,
+      departmentId,
+      designationId,
+      managerEmployeeId: null,
+      topLevelReason: 'Company chief executive',
+      reason: 'Create initial employee record',
+    }),
+  ).toMatchObject({ employeeNumber: 'EMP-001', name: 'Sana Khan' });
+  const common = {
+    branchId,
+    departmentId,
+    designationId,
+    reason: 'Approved organization assignment',
+  };
+  expect(
+    employeeRecordCreateSchema.safeParse({
+      ...common,
+      employeeNumber: 'EMP-002',
+      name: 'Worker',
+      joiningDate: '2026-09-08',
+      employmentType: 'hourly',
+      managerEmployeeId: null,
+      topLevelReason: 'Top level role',
+    }).success,
+  ).toBe(false);
+  expect(
+    employeeAssignmentCreateSchema.safeParse({
+      ...common,
+      expectedVersion: 1,
+      effectiveFrom: '2026-10-01',
+      managerEmployeeId: null,
+    }).success,
+  ).toBe(false);
+  expect(
+    employeeAssignmentCreateSchema.safeParse({
+      ...common,
+      expectedVersion: 1,
+      effectiveFrom: '2026-10-01',
+      managerEmployeeId: crypto.randomUUID(),
+      topLevelReason: 'Conflicting exception',
+    }).success,
+  ).toBe(false);
+  expect(
+    employeeProfileUpdateSchema.safeParse({
+      expectedVersion: 1,
+      name: 'Sana Khan',
+      reason: 'Correct public profile',
+      salary: 100000,
     }).success,
   ).toBe(false);
 });

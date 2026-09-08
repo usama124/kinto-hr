@@ -80,6 +80,31 @@ button {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 20px;
 }
+.people-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+  gap: 20px;
+}
+.employee-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.employee-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+.employee-list li > div:last-child {
+  text-align: right;
+}
+.employee-list small {
+  display: block;
+  color: var(--muted);
+}
 .settings-card {
   background: var(--white);
   border: 1px solid var(--line);
@@ -857,6 +882,9 @@ footer span:last-child {
     overflow-wrap: anywhere;
   }
   .organization-grid {
+    grid-template-columns: 1fr;
+  }
+  .people-grid {
     grid-template-columns: 1fr;
   }
   .entitlement-grid {

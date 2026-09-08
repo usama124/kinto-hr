@@ -13,6 +13,7 @@ import {
   createTenantOrganizationCatalogEntry,
   createDatabase,
   createEmployeeDraft,
+  createTenantEmployee,
   createEntitlementChange,
   inTenant,
   inAuthorizedTenant,
@@ -57,9 +58,11 @@ async function snapshot(db: PrismaClient) {
       'departments',
       'designations',
       'employee_account_requests',
+      'employee_assignments',
       'employee_identity_links',
       'employee_invitations',
       'employees',
+      'employment_periods',
       'entitlement_grants',
       'entitlement_overrides',
       'identities',
@@ -100,6 +103,12 @@ async function snapshot(db: PrismaClient) {
       orderBy: { id: 'asc' },
     }),
     employeeIdentityLinks: await db.employeeIdentityLink.findMany({
+      orderBy: { id: 'asc' },
+    }),
+    employeeAssignments: await db.employeeAssignment.findMany({
+      orderBy: { id: 'asc' },
+    }),
+    employmentPeriods: await db.employmentPeriod.findMany({
       orderBy: { id: 'asc' },
     }),
     platformAudit: await db.platformAuditEvent.findMany({
@@ -305,7 +314,7 @@ async function main() {
         provinceCode: 'PK-PB',
         reason: 'Recovery fixture branch',
       });
-      await createTenantOrganizationCatalogEntry(
+      const department = await createTenantOrganizationCatalogEntry(
         sourceApp,
         principal,
         tenantId,
@@ -316,7 +325,7 @@ async function main() {
           reason: 'Recovery fixture department',
         },
       );
-      await createTenantOrganizationCatalogEntry(
+      const designation = await createTenantOrganizationCatalogEntry(
         sourceApp,
         principal,
         tenantId,
@@ -354,6 +363,18 @@ async function main() {
           reason: 'Recovery fixture policy publication',
         },
       );
+      await createTenantEmployee(sourceApp, principal, tenantId, {
+        employeeNumber: 'RESTORE-FULL-001',
+        name: 'Synthetic complete recovery employee',
+        joiningDate: effectiveFrom,
+        employmentType: 'monthly_salaried',
+        branchId: branch.id,
+        departmentId: department.id,
+        designationId: designation.id,
+        managerEmployeeId: null,
+        topLevelReason: 'Recovery fixture top-level employee',
+        reason: 'Recovery fixture complete employee record',
+      });
       assert.equal(legalEntity.version, 1);
     }
     const accountRequests = [];
@@ -546,7 +567,7 @@ async function main() {
     const policies = await restored.$queryRaw<
       { enabled: boolean; forced: boolean }[]
     >`SELECT relrowsecurity AS enabled, relforcerowsecurity AS forced FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND relkind='r' AND relname <> '_prisma_migrations'`;
-    assert.equal(policies.length, 27);
+    assert.equal(policies.length, 29);
     assert.ok(policies.every((row) => row.enabled && row.forced));
     assert.deepEqual(await restoredApp.employee.findMany(), []);
     for (const tenantId of tenants) {
@@ -563,7 +584,7 @@ async function main() {
           'employees.read',
           (tx) => tx.employee.count(),
         ),
-        1,
+        2,
       );
       await assert.rejects(
         inAuthorizedTenant(
@@ -577,8 +598,8 @@ async function main() {
       const employees = await inTenant(restoredApp, tenantId, (tx) =>
         tx.employee.findMany(),
       );
-      assert.equal(employees.length, 1);
-      assert.equal(employees[0].tenantId, tenantId);
+      assert.equal(employees.length, 2);
+      assert.ok(employees.every((employee) => employee.tenantId === tenantId));
     }
     await assert.rejects(
       inTenant(restoredApp, tenants[0], (tx) =>
@@ -621,7 +642,7 @@ async function main() {
       archiveBytes: archive.length,
       archiveSha256: checksum,
       tenants: 2,
-      snapshotEmployees: 2,
+      snapshotEmployees: 4,
       completedReplayPreserved: true,
       pendingResumedOnce: true,
       deadPreserved: true,
@@ -631,6 +652,7 @@ async function main() {
       membershipAdministrationAuditPreserved: true,
       organizationPolicyHistoryPreserved: true,
       organizationCatalogsPreserved: true,
+      employeeAssignmentsPreserved: true,
       entitlementCatalogAndSubscriptionPreserved: true,
       entitlementGrantAndVersionPreserved: true,
       pendingAdministratorInvitationPreserved: true,

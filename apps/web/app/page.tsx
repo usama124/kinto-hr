@@ -23,7 +23,8 @@ export default function Home() {
           </h2>
           <p>
             We’re building Kinto one verified step at a time. Company isolation
-            and reliable records come first. Employee workflows are next.
+            and reliable records come first. Employee records are now taking
+            shape.
           </p>
           <Link className="primary-button" href="/roadmap">
             Explore the build plan <span aria-hidden="true">↗</span>
@@ -55,7 +56,7 @@ export default function Home() {
               Profiles, organization structure and employee history, with access
               that stays inside your company.
             </p>
-            <span className="module-state">Next implementation slice</span>
+            <span className="module-state">Draft records available</span>
           </article>
           <article className="module">
             <span className="module-number">02 / TIME</span>
@@ -80,9 +81,10 @@ export default function Home() {
       <div className="notice">
         <strong>A foundation preview, not a live HR system.</strong>
         <p>
-          Sign-in is disabled by default and employee HTTP access remains
-          closed. This preview contains no customer records and cannot process
-          attendance, payroll or payments.
+          Sign-in is disabled by default. Employee draft routes require a
+          selected company, recent MFA and HR authority. This preview contains
+          no customer records and cannot process attendance, payroll or
+          payments.
         </p>
         <Link href="/setup">Read the connection guide →</Link>
       </div>

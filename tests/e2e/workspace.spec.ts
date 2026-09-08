@@ -549,3 +549,160 @@ test('owner reviews the effective complimentary plan and employee capacity', asy
     ),
   ).toBe(true);
 });
+
+test('HR creates a complete monthly-salaried employee draft without private data', async ({
+  page,
+}) => {
+  const tenantId = '9d2ea3ef-3938-42d0-84f9-d2248f692f67';
+  const employeeId = '44c4bf77-58bb-42ea-9886-5db47c1c3de5';
+  const branchId = '82ffbc9e-febd-4a62-bdaf-fd8740ee6982';
+  const departmentId = 'eb071d7d-89e8-493a-b5b7-3edaf41d4ae3';
+  const designationId = '5fa15252-0934-4abe-8074-67b764424d65';
+  const assignmentId = '2415cafa-d6dc-45ae-8b50-4cd2d0035cdd';
+  const csrf = 'b'.repeat(43);
+  const joiningDate = '2026-09-08';
+  const employees: Record<string, unknown>[] = [];
+  const organization = {
+    legalEntity: null,
+    branches: [
+      {
+        id: branchId,
+        legalEntityId: '50b6254c-e087-481b-8851-f0d3c5961d65',
+        code: 'LHR-01',
+        name: 'Lahore Office',
+        provinceCode: 'PK-PB',
+        status: 'active',
+        version: 1,
+      },
+    ],
+    departments: [
+      {
+        id: departmentId,
+        code: 'ENG',
+        name: 'Engineering',
+        status: 'active',
+        version: 1,
+      },
+    ],
+    designations: [
+      {
+        id: designationId,
+        code: 'SWE',
+        name: 'Software Engineer',
+        status: 'active',
+        version: 1,
+      },
+    ],
+    latestPublishedVersion: 0,
+    publishedPolicy: null,
+    policyDrafts: [],
+  };
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        csrfToken: csrf,
+        selectedTenantId: tenantId,
+        tenants: [
+          { id: tenantId, name: 'Synthetic Company', roles: ['hr_admin'] },
+        ],
+      }),
+    }),
+  );
+  await page.route(`**/api/v1/tenants/${tenantId}/organization`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(organization),
+    }),
+  );
+  await page.route(`**/api/v1/tenants/${tenantId}/employees`, async (route) => {
+    const request = route.request();
+    if (request.method() === 'POST') {
+      expect(request.headers()['x-csrf-token']).toBe(csrf);
+      expect(request.postDataJSON()).toMatchObject({
+        employeeNumber: 'EMP-001',
+        name: 'Sana Khan',
+        employmentType: 'monthly_salaried',
+        managerEmployeeId: null,
+        topLevelReason: 'Company chief executive',
+      });
+      employees.push({
+        id: employeeId,
+        employeeNumber: 'EMP-001',
+        name: 'Sana Khan',
+        legalName: null,
+        status: 'draft',
+        version: 1,
+        joiningDate,
+        employmentType: 'monthly_salaried',
+        payrollSetup: 'incomplete',
+        currentAssignment: {
+          id: assignmentId,
+          effectiveFrom: joiningDate,
+          effectiveTo: null,
+          branch: { id: branchId, code: 'LHR-01', name: 'Lahore Office' },
+          department: { id: departmentId, code: 'ENG', name: 'Engineering' },
+          designation: {
+            id: designationId,
+            code: 'SWE',
+            name: 'Software Engineer',
+          },
+          manager: null,
+          topLevelReason: 'Company chief executive',
+        },
+        assignmentHistory: [
+          {
+            id: assignmentId,
+            effectiveFrom: joiningDate,
+            effectiveTo: null,
+            branch: { id: branchId, code: 'LHR-01', name: 'Lahore Office' },
+            department: { id: departmentId, code: 'ENG', name: 'Engineering' },
+            designation: {
+              id: designationId,
+              code: 'SWE',
+              name: 'Software Engineer',
+            },
+            manager: null,
+            topLevelReason: 'Company chief executive',
+          },
+        ],
+      });
+      return route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify({ id: employeeId, version: 1 }),
+      });
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ employees }),
+    });
+  });
+  await page.goto('/employees');
+  await expect(
+    page.getByRole('heading', { name: 'Synthetic Company' }),
+  ).toBeVisible();
+  await page.getByLabel('Employee number').fill('EMP-001');
+  await page.getByLabel('Display name', { exact: true }).fill('Sana Khan');
+  await page.getByLabel('Joining date').fill(joiningDate);
+  await page
+    .getByLabel('Top-level exception', { exact: true })
+    .fill('Company chief executive');
+  await page.getByLabel('Audit reason').fill('Create initial employee record');
+  await page.getByRole('button', { name: 'Create employee draft' }).click();
+  await expect(page.getByText('EMP-001 · Software Engineer')).toBeVisible();
+  await expect(
+    page.getByText(/Payroll setup remains incomplete/),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/Salary, CNIC, bank and emergency details/),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+});
