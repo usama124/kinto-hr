@@ -50,6 +50,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 9 September 2026 — complete employee activation
+
+Engineering continued P01-04 with an explicit owner/HR activation command. The constrained database function rechecks recent MFA, complete monthly-salaried record/period/assignment state and active organization references, then serializes the authoritative subscription/grant/override capacity decision under the existing tenant lock. Employee and employment-period activation, optimistic version increment, reasoned audit and durable outbox event are atomic. Joining date does not defer or avoid immediate seat allocation. Stale, repeated, incomplete, cross-tenant and final-seat races fail closed. Termination/archive/access revocation and rehire remain the next lifecycle increment. See [evidence](../evidence/phase-01/employee-activation.md).
+
 ### 9 September 2026 — complete employee drafts and assignments
 
 Engineering continued P01-04 with the public employee record boundary. Owner/HR users with recent MFA can create only monthly-salaried drafts with a tenant-unique normalized employee number, joining date, active branch/department/designation and either an in-tenant manager or documented top-level exception. Creation atomically records the first employment period and assignment. Profile corrections use optimistic versions; assignment changes append effective-dated history, reject past or overlapping changes and recursively reject reporting cycles at the effective date. Reads intentionally mark payroll setup incomplete and contain no CNIC, contact, bank or salary data. Every mutation records its reason and outbox event under forced RLS. Lifecycle transitions, private details, compensation and checklists remain separate increments. See [evidence](../evidence/phase-01/employee-records.md).

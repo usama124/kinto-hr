@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import {
   employeeAssignmentCreateSchema,
+  employeeActivationSchema,
   employeeProfileUpdateSchema,
   employeeRecordCreateSchema,
   tenantIdSchema,
@@ -124,6 +125,25 @@ export class EmployeesController {
     if (!employee.success || !input.success) throw new BadRequestException();
     const context = await this.context(req, tenantId, true);
     return this.database.createEmployeeAssignment(
+      context.actor,
+      context.tenantId,
+      employee.data,
+      input.data,
+    );
+  }
+
+  @Post(':employeeId/activate')
+  async activate(
+    @Req() req: AuthRequest,
+    @Param('tenantId') tenantId: unknown,
+    @Param('employeeId') employeeId: unknown,
+    @Body() body: unknown,
+  ) {
+    const employee = tenantIdSchema.safeParse(employeeId);
+    const input = employeeActivationSchema.safeParse(body);
+    if (!employee.success || !input.success) throw new BadRequestException();
+    const context = await this.context(req, tenantId, true);
+    return this.database.activateEmployee(
       context.actor,
       context.tenantId,
       employee.data,

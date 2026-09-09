@@ -257,6 +257,10 @@ export const employeeProfileUpdateSchema = z.strictObject({
   legalName: employeeNameSchema.optional(),
   reason: employeeReasonSchema,
 });
+export const employeeActivationSchema = z.strictObject({
+  expectedVersion: z.number().int().positive(),
+  reason: employeeReasonSchema,
+});
 export const employeeAssignmentCreateSchema = z
   .strictObject({
     expectedVersion: z.number().int().positive(),
@@ -267,6 +271,7 @@ export const employeeAssignmentCreateSchema = z
   .superRefine(validateReportingException);
 export type EmployeeRecordCreate = z.infer<typeof employeeRecordCreateSchema>;
 export type EmployeeProfileUpdate = z.infer<typeof employeeProfileUpdateSchema>;
+export type EmployeeActivation = z.infer<typeof employeeActivationSchema>;
 export type EmployeeAssignmentCreate = z.infer<
   typeof employeeAssignmentCreateSchema
 >;

@@ -45,11 +45,13 @@ import {
   type EntitlementRevocation,
   employeeRecordCreateSchema,
   employeeProfileUpdateSchema,
+  employeeActivationSchema,
   employeeAssignmentCreateSchema,
   employeeRecordViewSchema,
   employeeRosterSchema,
   type EmployeeRecordCreate,
   type EmployeeProfileUpdate,
+  type EmployeeActivation,
   type EmployeeAssignmentCreate,
 } from '@kinto/contracts';
 import {
@@ -1196,6 +1198,8 @@ type PeopleMutationRow = {
     | 'not_found'
     | 'stale'
     | 'invalid_state'
+    | 'capacity_reached'
+    | 'tenant_unavailable'
     | 'conflict';
   employee_id: string | null;
   employee_version: number | null;
@@ -1209,6 +1213,10 @@ function assertPeopleMutation(row?: PeopleMutationRow) {
   if (row.outcome === 'not_found') throw new DomainError('NOT_FOUND');
   if (row.outcome === 'stale') throw new DomainError('STALE_VERSION');
   if (row.outcome === 'invalid_state') throw new DomainError('INVALID_STATE');
+  if (row.outcome === 'capacity_reached')
+    throw new DomainError('CAPACITY_REACHED');
+  if (row.outcome === 'tenant_unavailable')
+    throw new DomainError('TENANT_UNAVAILABLE');
   if (row.outcome === 'conflict') throw new DomainError('CONFLICT');
   if (!row.employee_id || !row.employee_version)
     throw new Error('Invalid employee mutation result');
@@ -1311,6 +1319,25 @@ export async function createTenantEmployeeAssignment(
     )
   `;
   return assertPeopleMutation(rows[0]);
+}
+export async function activateTenantEmployee(
+  db: PrismaClient,
+  actor: PeopleActor,
+  tenantId: string,
+  employeeId: string,
+  input: EmployeeActivation,
+) {
+  validatePeopleActor(actor, tenantId);
+  tenantIdSchema.parse(employeeId);
+  const value = employeeActivationSchema.parse(input);
+  const rows = await db.$queryRaw<PeopleMutationRow[]>`
+    SELECT * FROM public.activate_tenant_employee(
+      ${actor.identityId}::uuid, ${actor.mfaVerified}, ${tenantId}::uuid,
+      ${employeeId}::uuid, ${value.expectedVersion}::integer,
+      ${value.reason}::varchar, ${randomUUID()}::uuid, ${randomUUID()}::uuid
+    )
+  `;
+  return { ...assertPeopleMutation(rows[0]), status: 'active' as const };
 }
 export async function activateEmployee(
   db: PrismaClient,

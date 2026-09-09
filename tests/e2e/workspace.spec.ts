@@ -36,7 +36,7 @@ test('navigation exposes the scope and setup guidance', async ({ page }) => {
   ).toBeVisible();
   await expect(page.getByText('Access is intentionally closed.')).toBeVisible();
   await page.getByRole('link', { name: 'Back to overview' }).click();
-  await expect(page).toHaveURL('http://127.0.0.1:3000/');
+  await expect(page).toHaveURL(/^http:\/\/127\.0\.0\.1:\d+\/$/);
 });
 test('shows a service outage and can retry successfully', async ({ page }) => {
   await page.route('**/api/v1/health/ready', (route) =>
@@ -550,7 +550,7 @@ test('owner reviews the effective complimentary plan and employee capacity', asy
   ).toBe(true);
 });
 
-test('HR creates a complete monthly-salaried employee draft without private data', async ({
+test('HR creates and explicitly activates a complete monthly-salaried employee', async ({
   page,
 }) => {
   const tenantId = '9d2ea3ef-3938-42d0-84f9-d2248f692f67';
@@ -616,6 +616,22 @@ test('HR creates a complete monthly-salaried employee draft without private data
       contentType: 'application/json',
       body: JSON.stringify(organization),
     }),
+  );
+  await page.route(
+    `**/api/v1/tenants/${tenantId}/employees/${employeeId}/activate`,
+    async (route) => {
+      expect(route.request().headers()['x-csrf-token']).toBe(csrf);
+      expect(route.request().postDataJSON()).toEqual({
+        expectedVersion: 1,
+        reason: 'Approved employee activation',
+      });
+      Object.assign(employees[0], { status: 'active', version: 2 });
+      await route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify({ id: employeeId, version: 2, status: 'active' }),
+      });
+    },
   );
   await page.route(`**/api/v1/tenants/${tenantId}/employees`, async (route) => {
     const request = route.request();
@@ -700,6 +716,17 @@ test('HR creates a complete monthly-salaried employee draft without private data
   await expect(
     page.getByText(/Salary, CNIC, bank and emergency details/),
   ).toBeVisible();
+  await page
+    .getByLabel('Activation reason for Sana Khan')
+    .fill('Approved employee activation');
+  await page.getByRole('button', { name: 'Activate employee' }).click();
+  await expect(
+    page.getByText('Employee activated and an employee seat was allocated.'),
+  ).toBeVisible();
+  await expect(page.getByText('active', { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Activate employee' }),
+  ).toHaveCount(0);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,

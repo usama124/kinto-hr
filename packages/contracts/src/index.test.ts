@@ -25,6 +25,7 @@ import {
   entitlementRevocationSchema,
   employeeRecordCreateSchema,
   employeeProfileUpdateSchema,
+  employeeActivationSchema,
   employeeAssignmentCreateSchema,
 } from './index';
 it('trims names while preserving employee identifiers as strings', () => {
@@ -474,6 +475,19 @@ it('normalizes complete monthly-salaried employee records and reporting rules', 
       name: 'Sana Khan',
       reason: 'Correct public profile',
       salary: 100000,
+    }).success,
+  ).toBe(false);
+  expect(
+    employeeActivationSchema.parse({
+      expectedVersion: 3,
+      reason: 'Approved employee activation',
+    }),
+  ).toEqual({ expectedVersion: 3, reason: 'Approved employee activation' });
+  expect(
+    employeeActivationSchema.safeParse({
+      expectedVersion: 3,
+      reason: 'Approved employee activation',
+      status: 'active',
     }).success,
   ).toBe(false);
 });

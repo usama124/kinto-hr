@@ -91,19 +91,46 @@ button {
   padding: 0;
 }
 .employee-list li {
+  display: grid;
+  gap: 12px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+.employee-summary {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 18px;
-  padding: 14px 0;
-  border-bottom: 1px solid var(--line);
 }
-.employee-list li > div:last-child {
+.employee-summary > div:last-child {
   text-align: right;
 }
 .employee-list small {
   display: block;
   color: var(--muted);
+}
+.employee-activation {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+}
+.employee-activation label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.employee-activation input {
+  width: 100%;
+  padding: 8px 10px;
+  color: var(--ink);
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+.employee-activation .secondary-button {
+  min-height: 35px;
 }
 .settings-card {
   background: var(--white);
@@ -886,6 +913,10 @@ footer span:last-child {
   }
   .people-grid {
     grid-template-columns: 1fr;
+  }
+  .employee-activation {
+    grid-template-columns: 1fr;
+    align-items: stretch;
   }
   .entitlement-grid {
     grid-template-columns: 1fr;

@@ -37,6 +37,7 @@ const methods = {
   createEmployee: vi.fn(),
   updateEmployeeProfile: vi.fn(),
   createEmployeeAssignment: vi.fn(),
+  activateEmployee: vi.fn(),
 };
 const limit = vi.fn().mockResolvedValue(undefined);
 const getSession = vi.fn().mockResolvedValue(session);
@@ -164,6 +165,30 @@ it('versions public profiles and effective assignments behind CSRF', async () =>
     employeeId,
     assignment,
   );
+});
+
+it('activates a draft with an expected version, recent MFA and audit reason', async () => {
+  const activation = {
+    expectedVersion: 3,
+    reason: 'Approved employee activation',
+  };
+  methods.activateEmployee.mockResolvedValueOnce({
+    id: employeeId,
+    version: 4,
+    status: 'active',
+  });
+  await mutation('post', `${base}/${employeeId}/activate`)
+    .send(activation)
+    .expect(201, { id: employeeId, version: 4, status: 'active' });
+  expect(methods.activateEmployee).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+    employeeId,
+    activation,
+  );
+  await mutation('post', `${base}/${employeeId}/activate`)
+    .send({ ...activation, employeeLimit: 250 })
+    .expect(400);
 });
 
 it('passes expired MFA as unverified and rejects forged tenant or employee IDs', async () => {
