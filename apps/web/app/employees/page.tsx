@@ -172,6 +172,43 @@ export default function Employees() {
     }
   }
 
+  async function activateEmployee(
+    event: FormEvent<HTMLFormElement>,
+    employeeId: string,
+    expectedVersion: number,
+  ) {
+    event.preventDefault();
+    setBusy(true);
+    setMessage('');
+    const form = new FormData(event.currentTarget);
+    try {
+      const response = await fetch(
+        `/api/v1/tenants/${tenantId}/employees/${employeeId}/activate`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': csrf,
+          },
+          body: JSON.stringify({
+            expectedVersion,
+            reason: form.get('activationReason'),
+          }),
+        },
+      );
+      if (response.status === 403) return setState('denied');
+      if (!response.ok) throw new Error('Request failed');
+      await load(tenantId);
+      setMessage('Employee activated and an employee seat was allocated.');
+    } catch {
+      setMessage(
+        'Activation was blocked. Check record readiness, current version and available employee capacity.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (state !== 'ready' || !organization) {
     const copy = {
       loading: 'Loading employee records…',
@@ -202,7 +239,8 @@ export default function Employees() {
           <p className="eyebrow">EMPLOYEE RECORDS</p>
           <h1>{companyName}</h1>
           <p className="subtitle">
-            Monthly-salaried employee drafts and effective organization history.
+            Monthly-salaried employee records, explicit seat-backed activation
+            and effective organization history.
           </p>
         </div>
       </div>
@@ -217,22 +255,45 @@ export default function Employees() {
           ) : (
             <ol className="employee-list">
               {roster.employees.map((employee) => (
-                <li key={employee.id}>
-                  <div>
-                    <strong>{employee.name}</strong>
-                    <small>
-                      {employee.employeeNumber} ·{' '}
-                      {employee.currentAssignment?.designation.name ??
-                        'Future start'}
-                    </small>
+                <li key={employee.id} className="employee-row">
+                  <div className="employee-summary">
+                    <div>
+                      <strong>{employee.name}</strong>
+                      <small>
+                        {employee.employeeNumber} ·{' '}
+                        {employee.currentAssignment?.designation.name ??
+                          'Future start'}
+                      </small>
+                    </div>
+                    <div>
+                      <span className="preview-badge">{employee.status}</span>
+                      <small>
+                        {employee.currentAssignment?.department.name ??
+                          employee.joiningDate}
+                      </small>
+                    </div>
                   </div>
-                  <div>
-                    <span className="preview-badge">{employee.status}</span>
-                    <small>
-                      {employee.currentAssignment?.department.name ??
-                        employee.joiningDate}
-                    </small>
-                  </div>
+                  {employee.status === 'draft' && (
+                    <form
+                      className="employee-activation"
+                      onSubmit={(event) =>
+                        activateEmployee(event, employee.id, employee.version)
+                      }
+                    >
+                      <label>
+                        Activation reason for {employee.name}
+                        <input
+                          name="activationReason"
+                          required
+                          minLength={3}
+                          maxLength={240}
+                        />
+                      </label>
+                      <button className="secondary-button" disabled={busy}>
+                        {busy ? 'Activating…' : 'Activate employee'}
+                      </button>
+                    </form>
+                  )}
                 </li>
               ))}
             </ol>

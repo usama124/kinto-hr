@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import {
   activateEmployee,
+  activateTenantEmployee,
   assertSafeRuntimeRole,
   createOrganizationPolicyDraft,
   createTenantBranch,
@@ -260,6 +261,17 @@ async function main() {
           employeeLimit: 5,
         },
       });
+      await source.tenantSubscription.create({
+        data: {
+          id: randomUUID(),
+          tenantId,
+          subscriptionVersion: 1,
+          planVersionId: '10000000-0000-4000-8000-000000000005',
+          billingMode: 'free',
+          employeeLimit: 5,
+          reason: 'Recovery fixture base subscription',
+        },
+      });
       const employee = await createEmployeeDraft(
         sourceApp,
         tenantId,
@@ -363,18 +375,35 @@ async function main() {
           reason: 'Recovery fixture policy publication',
         },
       );
-      await createTenantEmployee(sourceApp, principal, tenantId, {
-        employeeNumber: 'RESTORE-FULL-001',
-        name: 'Synthetic complete recovery employee',
-        joiningDate: effectiveFrom,
-        employmentType: 'monthly_salaried',
-        branchId: branch.id,
-        departmentId: department.id,
-        designationId: designation.id,
-        managerEmployeeId: null,
-        topLevelReason: 'Recovery fixture top-level employee',
-        reason: 'Recovery fixture complete employee record',
-      });
+      const completeEmployee = await createTenantEmployee(
+        sourceApp,
+        principal,
+        tenantId,
+        {
+          employeeNumber: 'RESTORE-FULL-001',
+          name: 'Synthetic complete recovery employee',
+          joiningDate: effectiveFrom,
+          employmentType: 'monthly_salaried',
+          branchId: branch.id,
+          departmentId: department.id,
+          designationId: designation.id,
+          managerEmployeeId: null,
+          topLevelReason: 'Recovery fixture top-level employee',
+          reason: 'Recovery fixture complete employee record',
+        },
+      );
+      stage = 'complete employee activation';
+      await activateTenantEmployee(
+        sourceApp,
+        principal,
+        tenantId,
+        completeEmployee.id,
+        {
+          expectedVersion: completeEmployee.version,
+          reason: 'Recovery fixture employee activation',
+        },
+      );
+      stage = 'source setup';
       assert.equal(legalEntity.version, 1);
     }
     const accountRequests = [];
@@ -600,6 +629,10 @@ async function main() {
       );
       assert.equal(employees.length, 2);
       assert.ok(employees.every((employee) => employee.tenantId === tenantId));
+      assert.equal(
+        employees.filter((employee) => employee.status === 'active').length,
+        2,
+      );
     }
     await assert.rejects(
       inTenant(restoredApp, tenants[0], (tx) =>
@@ -653,6 +686,7 @@ async function main() {
       organizationPolicyHistoryPreserved: true,
       organizationCatalogsPreserved: true,
       employeeAssignmentsPreserved: true,
+      completeEmployeeActivationPreserved: true,
       entitlementCatalogAndSubscriptionPreserved: true,
       entitlementGrantAndVersionPreserved: true,
       pendingAdministratorInvitationPreserved: true,
