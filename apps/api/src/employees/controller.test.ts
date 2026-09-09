@@ -38,6 +38,7 @@ const methods = {
   updateEmployeeProfile: vi.fn(),
   createEmployeeAssignment: vi.fn(),
   activateEmployee: vi.fn(),
+  scheduleEmployeeTermination: vi.fn(),
 };
 const limit = vi.fn().mockResolvedValue(undefined);
 const getSession = vi.fn().mockResolvedValue(session);
@@ -188,6 +189,31 @@ it('activates a draft with an expected version, recent MFA and audit reason', as
   );
   await mutation('post', `${base}/${employeeId}/activate`)
     .send({ ...activation, employeeLimit: 250 })
+    .expect(400);
+});
+
+it('schedules an active employee termination with a final working date', async () => {
+  const termination = {
+    expectedVersion: 4,
+    finalWorkingDate: '2026-09-30',
+    reason: 'Approved employee separation',
+  };
+  methods.scheduleEmployeeTermination.mockResolvedValueOnce({
+    id: employeeId,
+    version: 5,
+    status: 'active',
+  });
+  await mutation('post', `${base}/${employeeId}/terminate`)
+    .send(termination)
+    .expect(201, { id: employeeId, version: 5, status: 'active' });
+  expect(methods.scheduleEmployeeTermination).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+    employeeId,
+    termination,
+  );
+  await mutation('post', `${base}/${employeeId}/terminate`)
+    .send({ ...termination, revokeIdentity: true })
     .expect(400);
 });
 

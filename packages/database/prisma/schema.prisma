@@ -409,6 +409,9 @@ model EmploymentPeriod {
   periodNumber     Int       @map("period_number")
   joiningDate      DateTime  @map("joining_date") @db.Date
   finalWorkingDate DateTime? @map("final_working_date") @db.Date
+  terminationScheduledByIdentityId String? @map("termination_scheduled_by_identity_id") @db.Uuid
+  terminationReason String? @map("termination_reason") @db.VarChar(240)
+  terminationScheduledAt DateTime? @map("termination_scheduled_at") @db.Timestamptz()
   status           String    @default("planned") @db.VarChar(20)
   createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz()
   tenant           Tenant    @relation(fields: [tenantId], references: [id], onDelete: Restrict)

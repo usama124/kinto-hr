@@ -26,6 +26,7 @@ import {
   employeeRecordCreateSchema,
   employeeProfileUpdateSchema,
   employeeActivationSchema,
+  employeeTerminationSchema,
   employeeAssignmentCreateSchema,
 } from './index';
 it('trims names while preserving employee identifiers as strings', () => {
@@ -488,6 +489,24 @@ it('normalizes complete monthly-salaried employee records and reporting rules', 
       expectedVersion: 3,
       reason: 'Approved employee activation',
       status: 'active',
+    }).success,
+  ).toBe(false);
+  expect(
+    employeeTerminationSchema.parse({
+      expectedVersion: 4,
+      finalWorkingDate: '2026-09-30',
+      reason: 'Approved end of employment',
+    }),
+  ).toEqual({
+    expectedVersion: 4,
+    finalWorkingDate: '2026-09-30',
+    reason: 'Approved end of employment',
+  });
+  expect(
+    employeeTerminationSchema.safeParse({
+      expectedVersion: 4,
+      finalWorkingDate: '09/30/2026',
+      reason: 'Approved end of employment',
     }).success,
   ).toBe(false);
 });

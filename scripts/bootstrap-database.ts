@@ -227,6 +227,7 @@ try {
     'public.update_tenant_employee_profile(uuid, boolean, uuid, uuid, integer, varchar, varchar, varchar, uuid, uuid)',
     'public.create_tenant_employee_assignment(uuid, boolean, uuid, uuid, uuid, integer, date, uuid, uuid, uuid, uuid, varchar, varchar, uuid, uuid)',
     'public.activate_tenant_employee(uuid, boolean, uuid, uuid, integer, varchar, uuid, uuid)',
+    'public.schedule_tenant_employee_termination(uuid, boolean, uuid, uuid, integer, date, varchar, uuid, uuid)',
   ]) {
     await database.$executeRawUnsafe(
       `ALTER FUNCTION ${signature} OWNER TO kinto_control_owner`,
@@ -255,8 +256,9 @@ try {
     'GRANT EXECUTE ON FUNCTION public.current_tenant_employee_limit() TO kinto_app',
   );
   await assertSafeRuntimeRole(appDatabase);
-  // The dispatcher can call reviewed metadata functions only. The worker has
-  // tenant-scoped delivery access, but no employee, salary or audit privileges.
+  // The dispatcher can call reviewed metadata functions and the single bounded
+  // due-termination command. The worker has tenant-scoped delivery access, but
+  // no employee, salary or audit table privileges.
   for (const [role, envKey] of [
     ['kinto_worker', 'WORKER_DATABASE_URL'],
     ['kinto_dispatcher', 'DISPATCHER_DATABASE_URL'],
@@ -342,6 +344,12 @@ try {
   );
   await database.$executeRawUnsafe(
     'GRANT EXECUTE ON FUNCTION public.pending_outbox(integer), public.outbox_health() TO kinto_dispatcher',
+  );
+  await database.$executeRawUnsafe(
+    'ALTER FUNCTION public.apply_due_employee_terminations(integer) OWNER TO kinto_control_owner',
+  );
+  await database.$executeRawUnsafe(
+    'GRANT EXECUTE ON FUNCTION public.apply_due_employee_terminations(integer) TO kinto_dispatcher',
   );
   console.log(
     'Local runtime role provisioned and verified. No customer data seeded.',

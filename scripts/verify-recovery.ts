@@ -30,6 +30,7 @@ import {
   requestAdministratorInvitation,
   reconcileAdministratorInvitationProvider,
   markAdministratorInvitationDelivered,
+  scheduleTenantEmployeeTermination,
   type PrismaClient,
 } from '@kinto/database';
 import { processEvent } from '../apps/worker/src/processor';
@@ -403,6 +404,19 @@ async function main() {
           reason: 'Recovery fixture employee activation',
         },
       );
+      const scheduledDate = new Date(`${effectiveFrom}T12:00:00.000Z`);
+      scheduledDate.setUTCDate(scheduledDate.getUTCDate() + 10);
+      await scheduleTenantEmployeeTermination(
+        sourceApp,
+        principal,
+        tenantId,
+        completeEmployee.id,
+        {
+          expectedVersion: completeEmployee.version + 1,
+          finalWorkingDate: scheduledDate.toISOString().slice(0, 10),
+          reason: 'Recovery fixture future employee separation',
+        },
+      );
       stage = 'source setup';
       assert.equal(legalEntity.version, 1);
     }
@@ -687,6 +701,7 @@ async function main() {
       organizationCatalogsPreserved: true,
       employeeAssignmentsPreserved: true,
       completeEmployeeActivationPreserved: true,
+      scheduledTerminationPreserved: true,
       entitlementCatalogAndSubscriptionPreserved: true,
       entitlementGrantAndVersionPreserved: true,
       pendingAdministratorInvitationPreserved: true,

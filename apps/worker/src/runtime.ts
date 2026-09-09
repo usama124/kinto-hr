@@ -57,6 +57,9 @@ export async function startWorker(config: ReturnType<typeof workerConfig>) {
   const instanceId = randomUUID();
 
   async function dispatch() {
+    // The constrained database command applies due final-working-date transitions
+    // and revokes only their linked tenant membership. It is bounded and idempotent.
+    await dispatcher.$queryRaw`SELECT * FROM public.apply_due_employee_terminations(100)`;
     const refs = await dispatcher.$queryRaw<
       EventReference[]
     >`SELECT * FROM public.pending_outbox(100)`;
@@ -110,6 +113,7 @@ export async function startWorker(config: ReturnType<typeof workerConfig>) {
     ]);
     await Promise.all([queue.waitUntilReady(), worker.waitUntilReady()]);
     // Verify actual grants/schema before advertising readiness.
+    await dispatcher.$queryRaw`SELECT * FROM public.apply_due_employee_terminations(1)`;
     await dispatcher.$queryRaw`SELECT * FROM public.pending_outbox(1)`;
     await db.jobDelivery.findMany({ take: 1 });
     running = worker.run().catch(() => {

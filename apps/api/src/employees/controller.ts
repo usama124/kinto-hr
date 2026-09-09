@@ -13,6 +13,7 @@ import {
 import {
   employeeAssignmentCreateSchema,
   employeeActivationSchema,
+  employeeTerminationSchema,
   employeeProfileUpdateSchema,
   employeeRecordCreateSchema,
   tenantIdSchema,
@@ -144,6 +145,25 @@ export class EmployeesController {
     if (!employee.success || !input.success) throw new BadRequestException();
     const context = await this.context(req, tenantId, true);
     return this.database.activateEmployee(
+      context.actor,
+      context.tenantId,
+      employee.data,
+      input.data,
+    );
+  }
+
+  @Post(':employeeId/terminate')
+  async terminate(
+    @Req() req: AuthRequest,
+    @Param('tenantId') tenantId: unknown,
+    @Param('employeeId') employeeId: unknown,
+    @Body() body: unknown,
+  ) {
+    const employee = tenantIdSchema.safeParse(employeeId);
+    const input = employeeTerminationSchema.safeParse(body);
+    if (!employee.success || !input.success) throw new BadRequestException();
+    const context = await this.context(req, tenantId, true);
+    return this.database.scheduleEmployeeTermination(
       context.actor,
       context.tenantId,
       employee.data,
