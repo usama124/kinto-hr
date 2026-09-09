@@ -261,6 +261,11 @@ export const employeeActivationSchema = z.strictObject({
   expectedVersion: z.number().int().positive(),
   reason: employeeReasonSchema,
 });
+export const employeeTerminationSchema = z.strictObject({
+  expectedVersion: z.number().int().positive(),
+  finalWorkingDate: z.iso.date(),
+  reason: employeeReasonSchema,
+});
 export const employeeAssignmentCreateSchema = z
   .strictObject({
     expectedVersion: z.number().int().positive(),
@@ -272,6 +277,7 @@ export const employeeAssignmentCreateSchema = z
 export type EmployeeRecordCreate = z.infer<typeof employeeRecordCreateSchema>;
 export type EmployeeProfileUpdate = z.infer<typeof employeeProfileUpdateSchema>;
 export type EmployeeActivation = z.infer<typeof employeeActivationSchema>;
+export type EmployeeTermination = z.infer<typeof employeeTerminationSchema>;
 export type EmployeeAssignmentCreate = z.infer<
   typeof employeeAssignmentCreateSchema
 >;
@@ -313,6 +319,7 @@ export const employeeRecordViewSchema = z.strictObject({
   joiningDate: z.iso.date(),
   employmentType: z.literal('monthly_salaried'),
   payrollSetup: z.literal('incomplete'),
+  finalWorkingDate: z.iso.date().nullable(),
   currentAssignment: employeeAssignmentViewSchema.nullable(),
   assignmentHistory: employeeAssignmentViewSchema.array().max(250),
 });

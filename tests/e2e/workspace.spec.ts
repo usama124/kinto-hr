@@ -550,7 +550,7 @@ test('owner reviews the effective complimentary plan and employee capacity', asy
   ).toBe(true);
 });
 
-test('HR creates and explicitly activates a complete monthly-salaried employee', async ({
+test('HR creates, activates and schedules separation for a monthly-salaried employee', async ({
   page,
 }) => {
   const tenantId = '9d2ea3ef-3938-42d0-84f9-d2248f692f67';
@@ -633,6 +633,26 @@ test('HR creates and explicitly activates a complete monthly-salaried employee',
       });
     },
   );
+  await page.route(
+    `**/api/v1/tenants/${tenantId}/employees/${employeeId}/terminate`,
+    async (route) => {
+      expect(route.request().headers()['x-csrf-token']).toBe(csrf);
+      expect(route.request().postDataJSON()).toEqual({
+        expectedVersion: 2,
+        finalWorkingDate: '2026-09-30',
+        reason: 'Approved employee separation',
+      });
+      Object.assign(employees[0], {
+        version: 3,
+        finalWorkingDate: '2026-09-30',
+      });
+      await route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify({ id: employeeId, version: 3, status: 'active' }),
+      });
+    },
+  );
   await page.route(`**/api/v1/tenants/${tenantId}/employees`, async (route) => {
     const request = route.request();
     if (request.method() === 'POST') {
@@ -654,6 +674,7 @@ test('HR creates and explicitly activates a complete monthly-salaried employee',
         joiningDate,
         employmentType: 'monthly_salaried',
         payrollSetup: 'incomplete',
+        finalWorkingDate: null,
         currentAssignment: {
           id: assignmentId,
           effectiveFrom: joiningDate,
@@ -727,6 +748,21 @@ test('HR creates and explicitly activates a complete monthly-salaried employee',
   await expect(
     page.getByRole('button', { name: 'Activate employee' }),
   ).toHaveCount(0);
+  await page.getByLabel('Final working date for Sana Khan').fill('2026-09-30');
+  await page
+    .getByLabel('Termination reason for Sana Khan')
+    .fill('Approved employee separation');
+  await page.getByRole('button', { name: 'Schedule termination' }).click();
+  await expect(
+    page.getByText(
+      'Termination scheduled. Access remains active through the final working date.',
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      'Final working date: 2026-09-30. Access ends after this date.',
+    ),
+  ).toBeVisible();
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,

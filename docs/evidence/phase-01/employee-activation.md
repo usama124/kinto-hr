@@ -15,9 +15,9 @@ Status: locally verified · 9 September 2026 · P01-04 increment
 - Contract/API tests cover strict mass-assignment rejection, selected-tenant binding, CSRF, recent-MFA derivation and the returned active state/version.
 - PostgreSQL tests cover owner/HR authority, employee and stale-MFA denial, tenant isolation, inactive organization references, incomplete legacy records, stale/repeated activation and direct-table-write denial.
 - A concurrent one-seat test produces exactly one success, one `CAPACITY_REACHED` result and one activation audit event.
-- Migration verification applies all 19 migrations to clean, upgrade and replay databases. Recovery activates a complete employee in each synthetic tenant and preserves both active employment periods and activation events.
+- Migration verification originally applied all 19 migrations for this increment; the subsequent termination increment advances the current total to 20. Recovery still preserves complete employee activation and its employment period/event history.
 - Desktop and mobile browser checks create and explicitly activate an employee without exposing salary or private data.
 
 ## Remaining P01-04 work
 
-Scheduled termination, archive, coordinated login revocation and rehire periods remain next. Private details, permission-separated compensation history and onboarding/offboarding checklists are also incomplete. This preview is not approved for customer data.
+Scheduled termination and linked tenant-membership revocation are delivered in the [next evidence increment](employee-termination.md). Archive and rehire periods remain next. Private details, permission-separated compensation history and onboarding/offboarding checklists are also incomplete. This preview is not approved for customer data.

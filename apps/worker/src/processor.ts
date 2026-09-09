@@ -22,10 +22,17 @@ export class ProcessingError extends Error {
   }
 }
 
-// This first consumer records receipt of the committed activation fact only.
-// It sends no email, changes no employment state and performs no payroll work.
-const observeActivation: Handler = async (_tx, event) => {
-  if (event.type !== 'employee.activated.v1')
+// This observer records receipts for committed employee lifecycle facts only.
+// The due transition itself is a constrained database command; this handler
+// sends no email, changes no employment state and performs no payroll work.
+const observeLifecycle: Handler = async (_tx, event) => {
+  if (
+    ![
+      'employee.activated.v1',
+      'employee.termination_scheduled.v1',
+      'employee.terminated.v1',
+    ].includes(event.type)
+  )
     throw new ProcessingError('UNSUPPORTED_EVENT');
 };
 
@@ -38,7 +45,7 @@ export function retryDelay(attempt: number, random = Math.random()): number {
 export async function processEvent(
   db: PrismaClient,
   data: unknown,
-  handler: Handler = observeActivation,
+  handler: Handler = observeLifecycle,
 ) {
   const ref = referenceSchema.parse(data);
   return db.$transaction(

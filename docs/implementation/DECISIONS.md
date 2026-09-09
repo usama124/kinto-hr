@@ -50,6 +50,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 9 September 2026 — scheduled employee termination
+
+Engineering continued P01-04 with an explicit owner/HR termination schedule. The final working date is stored on the active employment period with its approving identity, timestamp and reason; the employee remains active and consumes capacity through that date. A restricted dispatcher invokes one fixed, bounded database command that applies due schedules in the employer timezone, ends the employment period, frees the seat, preserves assignment history and revokes only the durable linked company membership/request/invitation. The global identity and unrelated company memberships remain active. Application is idempotent and emits reasoned audit and outbox facts. Active managers must have reporting changes effective after their final day before scheduling. Provider-wide logout/disable is deliberately not performed because one identity can retain authorized access elsewhere. Archive and rehire remain the next lifecycle increment. See [evidence](../evidence/phase-01/employee-termination.md).
+
 ### 9 September 2026 — complete employee activation
 
 Engineering continued P01-04 with an explicit owner/HR activation command. The constrained database function rechecks recent MFA, complete monthly-salaried record/period/assignment state and active organization references, then serializes the authoritative subscription/grant/override capacity decision under the existing tenant lock. Employee and employment-period activation, optimistic version increment, reasoned audit and durable outbox event are atomic. Joining date does not defer or avoid immediate seat allocation. Stale, repeated, incomplete, cross-tenant and final-seat races fail closed. Termination/archive/access revocation and rehire remain the next lifecycle increment. See [evidence](../evidence/phase-01/employee-activation.md).

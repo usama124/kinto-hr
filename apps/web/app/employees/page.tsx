@@ -209,6 +209,46 @@ export default function Employees() {
     }
   }
 
+  async function scheduleTermination(
+    event: FormEvent<HTMLFormElement>,
+    employeeId: string,
+    expectedVersion: number,
+  ) {
+    event.preventDefault();
+    setBusy(true);
+    setMessage('');
+    const form = new FormData(event.currentTarget);
+    try {
+      const response = await fetch(
+        `/api/v1/tenants/${tenantId}/employees/${employeeId}/terminate`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': csrf,
+          },
+          body: JSON.stringify({
+            expectedVersion,
+            finalWorkingDate: form.get('finalWorkingDate'),
+            reason: form.get('terminationReason'),
+          }),
+        },
+      );
+      if (response.status === 403) return setState('denied');
+      if (!response.ok) throw new Error('Request failed');
+      await load(tenantId);
+      setMessage(
+        'Termination scheduled. Access remains active through the final working date.',
+      );
+    } catch {
+      setMessage(
+        'Termination was blocked. Check the date, employee version and future reporting assignments.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (state !== 'ready' || !organization) {
     const copy = {
       loading: 'Loading employee records…',
@@ -239,8 +279,8 @@ export default function Employees() {
           <p className="eyebrow">EMPLOYEE RECORDS</p>
           <h1>{companyName}</h1>
           <p className="subtitle">
-            Monthly-salaried employee records, explicit seat-backed activation
-            and effective organization history.
+            Monthly-salaried employee records, explicit seat-backed activation,
+            scheduled separation and effective organization history.
           </p>
         </div>
       </div>
@@ -294,6 +334,46 @@ export default function Employees() {
                       </button>
                     </form>
                   )}
+                  {employee.status === 'active' &&
+                    (employee.finalWorkingDate ? (
+                      <p className="employee-schedule">
+                        Final working date: {employee.finalWorkingDate}. Access
+                        ends after this date.
+                      </p>
+                    ) : (
+                      <form
+                        className="employee-activation"
+                        onSubmit={(event) =>
+                          scheduleTermination(
+                            event,
+                            employee.id,
+                            employee.version,
+                          )
+                        }
+                      >
+                        <label>
+                          Final working date for {employee.name}
+                          <input
+                            name="finalWorkingDate"
+                            type="date"
+                            min={todayInKarachi()}
+                            required
+                          />
+                        </label>
+                        <label>
+                          Termination reason for {employee.name}
+                          <input
+                            name="terminationReason"
+                            required
+                            minLength={3}
+                            maxLength={240}
+                          />
+                        </label>
+                        <button className="secondary-button" disabled={busy}>
+                          {busy ? 'Scheduling…' : 'Schedule termination'}
+                        </button>
+                      </form>
+                    ))}
                 </li>
               ))}
             </ol>
