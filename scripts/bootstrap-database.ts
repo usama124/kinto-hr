@@ -228,6 +228,7 @@ try {
     'public.create_tenant_employee_assignment(uuid, boolean, uuid, uuid, uuid, integer, date, uuid, uuid, uuid, uuid, varchar, varchar, uuid, uuid)',
     'public.activate_tenant_employee(uuid, boolean, uuid, uuid, integer, varchar, uuid, uuid)',
     'public.schedule_tenant_employee_termination(uuid, boolean, uuid, uuid, integer, date, varchar, uuid, uuid)',
+    'public.archive_tenant_employee(uuid, boolean, uuid, uuid, integer, varchar, uuid, uuid)',
   ]) {
     await database.$executeRawUnsafe(
       `ALTER FUNCTION ${signature} OWNER TO kinto_control_owner`,

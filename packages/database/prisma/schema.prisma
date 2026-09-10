@@ -388,6 +388,9 @@ model Employee {
   version                Int                     @default(1)
   createdAt              DateTime                @default(now()) @map("created_at") @db.Timestamptz()
   updatedAt              DateTime                @default(now()) @updatedAt @map("updated_at") @db.Timestamptz()
+  archivedAt             DateTime?               @map("archived_at") @db.Timestamptz()
+  archivedByIdentityId   String?                 @map("archived_by_identity_id") @db.Uuid
+  archiveReason          String?                 @map("archive_reason") @db.VarChar(240)
   tenant                 Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   employeeAccountRequest EmployeeAccountRequest?
   employeeInvitation     EmployeeInvitation?

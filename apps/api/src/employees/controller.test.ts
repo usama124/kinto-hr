@@ -39,6 +39,7 @@ const methods = {
   createEmployeeAssignment: vi.fn(),
   activateEmployee: vi.fn(),
   scheduleEmployeeTermination: vi.fn(),
+  archiveEmployee: vi.fn(),
 };
 const limit = vi.fn().mockResolvedValue(undefined);
 const getSession = vi.fn().mockResolvedValue(session);
@@ -214,6 +215,30 @@ it('schedules an active employee termination with a final working date', async (
   );
   await mutation('post', `${base}/${employeeId}/terminate`)
     .send({ ...termination, revokeIdentity: true })
+    .expect(400);
+});
+
+it('archives a terminated employee without accepting deletion controls', async () => {
+  const archive = {
+    expectedVersion: 5,
+    reason: 'Approved historical employee archive',
+  };
+  methods.archiveEmployee.mockResolvedValueOnce({
+    id: employeeId,
+    version: 6,
+    status: 'archived',
+  });
+  await mutation('post', `${base}/${employeeId}/archive`)
+    .send(archive)
+    .expect(201, { id: employeeId, version: 6, status: 'archived' });
+  expect(methods.archiveEmployee).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+    employeeId,
+    archive,
+  );
+  await mutation('post', `${base}/${employeeId}/archive`)
+    .send({ ...archive, deleteHistory: true })
     .expect(400);
 });
 

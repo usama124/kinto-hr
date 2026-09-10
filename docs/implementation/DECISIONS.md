@@ -50,6 +50,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 10 September 2026 — non-destructive employee archive
+
+Engineering continued P01-04 with an explicit owner/HR `terminated → archived` command. It requires recent MFA, the expected employee version and a completed ended employment period with a final working date. Archive timestamps the employee with approving identity/reason, preserves every employment period and assignment, creates audit/outbox facts and defensively keeps the linked tenant membership/request/invitation revoked. It consumes no additional capacity and exposes no delete option. Stale, premature, repeated, cross-tenant and direct-table attempts fail closed. Rehire remains separate because it must append a new employment period, validate fresh organization references and allocate capacity atomically. See [evidence](../evidence/phase-01/employee-archive.md).
+
 ### 9 September 2026 — scheduled employee termination
 
 Engineering continued P01-04 with an explicit owner/HR termination schedule. The final working date is stored on the active employment period with its approving identity, timestamp and reason; the employee remains active and consumes capacity through that date. A restricted dispatcher invokes one fixed, bounded database command that applies due schedules in the employer timezone, ends the employment period, frees the seat, preserves assignment history and revokes only the durable linked company membership/request/invitation. The global identity and unrelated company memberships remain active. Application is idempotent and emits reasoned audit and outbox facts. Active managers must have reporting changes effective after their final day before scheduling. Provider-wide logout/disable is deliberately not performed because one identity can retain authorized access elsewhere. Archive and rehire remain the next lifecycle increment. See [evidence](../evidence/phase-01/employee-termination.md).

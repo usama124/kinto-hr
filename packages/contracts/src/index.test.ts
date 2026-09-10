@@ -27,6 +27,7 @@ import {
   employeeProfileUpdateSchema,
   employeeActivationSchema,
   employeeTerminationSchema,
+  employeeArchiveSchema,
   employeeAssignmentCreateSchema,
 } from './index';
 it('trims names while preserving employee identifiers as strings', () => {
@@ -507,6 +508,19 @@ it('normalizes complete monthly-salaried employee records and reporting rules', 
       expectedVersion: 4,
       finalWorkingDate: '09/30/2026',
       reason: 'Approved end of employment',
+    }).success,
+  ).toBe(false);
+  expect(
+    employeeArchiveSchema.parse({
+      expectedVersion: 5,
+      reason: 'Retention archive approved',
+    }),
+  ).toEqual({ expectedVersion: 5, reason: 'Retention archive approved' });
+  expect(
+    employeeArchiveSchema.safeParse({
+      expectedVersion: 5,
+      reason: 'Retention archive approved',
+      deleteHistory: true,
     }).success,
   ).toBe(false);
 });

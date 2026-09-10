@@ -47,6 +47,7 @@ import {
   employeeProfileUpdateSchema,
   employeeActivationSchema,
   employeeTerminationSchema,
+  employeeArchiveSchema,
   employeeAssignmentCreateSchema,
   employeeRecordViewSchema,
   employeeRosterSchema,
@@ -54,6 +55,7 @@ import {
   type EmployeeProfileUpdate,
   type EmployeeActivation,
   type EmployeeTermination,
+  type EmployeeArchive,
   type EmployeeAssignmentCreate,
 } from '@kinto/contracts';
 import {
@@ -1360,6 +1362,25 @@ export async function scheduleTenantEmployeeTermination(
     )
   `;
   return { ...assertPeopleMutation(rows[0]), status: 'active' as const };
+}
+export async function archiveTenantEmployee(
+  db: PrismaClient,
+  actor: PeopleActor,
+  tenantId: string,
+  employeeId: string,
+  input: EmployeeArchive,
+) {
+  validatePeopleActor(actor, tenantId);
+  tenantIdSchema.parse(employeeId);
+  const value = employeeArchiveSchema.parse(input);
+  const rows = await db.$queryRaw<PeopleMutationRow[]>`
+    SELECT * FROM public.archive_tenant_employee(
+      ${actor.identityId}::uuid, ${actor.mfaVerified}, ${tenantId}::uuid,
+      ${employeeId}::uuid, ${value.expectedVersion}::integer,
+      ${value.reason}::varchar, ${randomUUID()}::uuid, ${randomUUID()}::uuid
+    )
+  `;
+  return { ...assertPeopleMutation(rows[0]), status: 'archived' as const };
 }
 export async function activateEmployee(
   db: PrismaClient,
