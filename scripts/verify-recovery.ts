@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import {
   activateEmployee,
   activateTenantEmployee,
+  archiveTenantEmployee,
   assertSafeRuntimeRole,
   createOrganizationPolicyDraft,
   createTenantBranch,
@@ -192,6 +193,7 @@ async function main() {
   const source = createDatabase(sourceEnv.MIGRATION_DATABASE_URL!);
   const sourceApp = createDatabase(sourceEnv.DATABASE_URL!);
   const sourceWorker = createDatabase(sourceEnv.WORKER_DATABASE_URL!);
+  const sourceDispatcher = createDatabase(sourceEnv.DISPATCHER_DATABASE_URL!);
   const restored = createDatabase(restoredEnv.MIGRATION_DATABASE_URL!);
   const restoredApp = createDatabase(restoredEnv.DATABASE_URL!);
   const restoredWorker = createDatabase(restoredEnv.WORKER_DATABASE_URL!);
@@ -417,6 +419,66 @@ async function main() {
           reason: 'Recovery fixture future employee separation',
         },
       );
+      const archivedJoiningDate = new Date(`${effectiveFrom}T12:00:00.000Z`);
+      archivedJoiningDate.setUTCDate(archivedJoiningDate.getUTCDate() - 20);
+      const archiveEmployee = await createTenantEmployee(
+        sourceApp,
+        principal,
+        tenantId,
+        {
+          employeeNumber: 'RESTORE-ARCHIVED-001',
+          name: 'Synthetic archived recovery employee',
+          joiningDate: archivedJoiningDate.toISOString().slice(0, 10),
+          employmentType: 'monthly_salaried',
+          branchId: branch.id,
+          departmentId: department.id,
+          designationId: designation.id,
+          managerEmployeeId: null,
+          topLevelReason: 'Recovery fixture archived top-level employee',
+          reason: 'Recovery fixture archived employee record',
+        },
+      );
+      await activateTenantEmployee(
+        sourceApp,
+        principal,
+        tenantId,
+        archiveEmployee.id,
+        {
+          expectedVersion: archiveEmployee.version,
+          reason: 'Recovery fixture archived employee activation',
+        },
+      );
+      await scheduleTenantEmployeeTermination(
+        sourceApp,
+        principal,
+        tenantId,
+        archiveEmployee.id,
+        {
+          expectedVersion: archiveEmployee.version + 1,
+          finalWorkingDate: effectiveFrom,
+          reason: 'Recovery fixture completed employee separation',
+        },
+      );
+      const dueDate = new Date(`${effectiveFrom}T12:00:00.000Z`);
+      dueDate.setUTCDate(dueDate.getUTCDate() - 1);
+      await source.employmentPeriod.updateMany({
+        where: { tenantId, employeeId: archiveEmployee.id, status: 'active' },
+        data: { finalWorkingDate: dueDate },
+      });
+      const [applied] = await sourceDispatcher.$queryRaw<
+        { processed: number }[]
+      >`SELECT * FROM public.apply_due_employee_terminations(10)`;
+      assert.equal(applied.processed, 1);
+      await archiveTenantEmployee(
+        sourceApp,
+        principal,
+        tenantId,
+        archiveEmployee.id,
+        {
+          expectedVersion: archiveEmployee.version + 3,
+          reason: 'Recovery fixture historical archive',
+        },
+      );
       stage = 'source setup';
       assert.equal(legalEntity.version, 1);
     }
@@ -627,7 +689,7 @@ async function main() {
           'employees.read',
           (tx) => tx.employee.count(),
         ),
-        2,
+        3,
       );
       await assert.rejects(
         inAuthorizedTenant(
@@ -641,11 +703,15 @@ async function main() {
       const employees = await inTenant(restoredApp, tenantId, (tx) =>
         tx.employee.findMany(),
       );
-      assert.equal(employees.length, 2);
+      assert.equal(employees.length, 3);
       assert.ok(employees.every((employee) => employee.tenantId === tenantId));
       assert.equal(
         employees.filter((employee) => employee.status === 'active').length,
         2,
+      );
+      assert.equal(
+        employees.filter((employee) => employee.status === 'archived').length,
+        1,
       );
     }
     await assert.rejects(
@@ -689,7 +755,7 @@ async function main() {
       archiveBytes: archive.length,
       archiveSha256: checksum,
       tenants: 2,
-      snapshotEmployees: 4,
+      snapshotEmployees: 6,
       completedReplayPreserved: true,
       pendingResumedOnce: true,
       deadPreserved: true,
@@ -702,6 +768,7 @@ async function main() {
       employeeAssignmentsPreserved: true,
       completeEmployeeActivationPreserved: true,
       scheduledTerminationPreserved: true,
+      archivedEmployeeHistoryPreserved: true,
       entitlementCatalogAndSubscriptionPreserved: true,
       entitlementGrantAndVersionPreserved: true,
       pendingAdministratorInvitationPreserved: true,
@@ -723,6 +790,7 @@ async function main() {
         source,
         sourceApp,
         sourceWorker,
+        sourceDispatcher,
         restored,
         restoredApp,
         restoredWorker,

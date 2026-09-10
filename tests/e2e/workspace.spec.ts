@@ -550,7 +550,7 @@ test('owner reviews the effective complimentary plan and employee capacity', asy
   ).toBe(true);
 });
 
-test('HR creates, activates and schedules separation for a monthly-salaried employee', async ({
+test('HR creates, activates, separates and archives a monthly-salaried employee', async ({
   page,
 }) => {
   const tenantId = '9d2ea3ef-3938-42d0-84f9-d2248f692f67';
@@ -653,6 +653,30 @@ test('HR creates, activates and schedules separation for a monthly-salaried empl
       });
     },
   );
+  await page.route(
+    `**/api/v1/tenants/${tenantId}/employees/${employeeId}/archive`,
+    async (route) => {
+      expect(route.request().headers()['x-csrf-token']).toBe(csrf);
+      expect(route.request().postDataJSON()).toEqual({
+        expectedVersion: 4,
+        reason: 'Approved historical employee archive',
+      });
+      Object.assign(employees[0], {
+        status: 'archived',
+        version: 5,
+        archivedAt: '2026-10-01T00:00:00.000Z',
+      });
+      await route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          id: employeeId,
+          version: 5,
+          status: 'archived',
+        }),
+      });
+    },
+  );
   await page.route(`**/api/v1/tenants/${tenantId}/employees`, async (route) => {
     const request = route.request();
     if (request.method() === 'POST') {
@@ -675,6 +699,7 @@ test('HR creates, activates and schedules separation for a monthly-salaried empl
         employmentType: 'monthly_salaried',
         payrollSetup: 'incomplete',
         finalWorkingDate: null,
+        archivedAt: null,
         currentAssignment: {
           id: assignmentId,
           effectiveFrom: joiningDate,
@@ -763,6 +788,16 @@ test('HR creates, activates and schedules separation for a monthly-salaried empl
       'Final working date: 2026-09-30. Access ends after this date.',
     ),
   ).toBeVisible();
+  Object.assign(employees[0], { status: 'terminated', version: 4 });
+  await page.reload();
+  await page
+    .getByLabel('Archive reason for Sana Khan')
+    .fill('Approved historical employee archive');
+  await page.getByRole('button', { name: 'Archive employee' }).click();
+  await expect(
+    page.getByText('Employee archived. Employment history remains available.'),
+  ).toBeVisible();
+  await expect(page.getByText(/Employment history is retained/)).toBeVisible();
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,

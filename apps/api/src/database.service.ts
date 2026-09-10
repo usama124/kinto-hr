@@ -42,6 +42,7 @@ import {
   createTenantEmployeeAssignment,
   activateTenantEmployee,
   scheduleTenantEmployeeTermination,
+  archiveTenantEmployee,
 } from '@kinto/database';
 import {
   type AuthenticatedIdentity,
@@ -66,6 +67,7 @@ import {
   type EmployeeAssignmentCreate,
   type EmployeeActivation,
   type EmployeeTermination,
+  type EmployeeArchive,
 } from '@kinto/contracts';
 import { readConfig } from './config';
 @Injectable()
@@ -400,6 +402,14 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       employeeId,
       input,
     );
+  }
+  archiveEmployee(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    employeeId: string,
+    input: EmployeeArchive,
+  ) {
+    return archiveTenantEmployee(this.db, actor, tenantId, employeeId, input);
   }
   async onModuleDestroy() {
     await this.db.$disconnect();

@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   activateTenantEmployee,
+  archiveTenantEmployee,
   createDatabase,
   createTenantBranch,
   createTenantEmployee,
@@ -107,6 +108,29 @@ async function createActive(
     reason: 'Activate termination fixture employee',
   });
   return { ...draft, version: 2 };
+}
+
+async function makeTerminated(employeeId: string) {
+  await scheduleTenantEmployeeTermination(
+    runtime,
+    actor(ownerId),
+    tenantId,
+    employeeId,
+    {
+      expectedVersion: 2,
+      finalWorkingDate: date(0),
+      reason: 'Approved archive fixture separation',
+    },
+  );
+  await admin.employmentPeriod.updateMany({
+    where: { tenantId, employeeId, status: 'active' },
+    data: { finalWorkingDate: new Date(`${date(-1)}T00:00:00.000Z`) },
+  });
+  await expect(
+    dispatcher.$queryRaw<
+      { processed: number }[]
+    >`SELECT * FROM public.apply_due_employee_terminations(10)`,
+  ).resolves.toEqual([{ processed: 1 }]);
 }
 
 describe('scheduled employee termination and access revocation', () => {
@@ -430,5 +454,150 @@ describe('scheduled employee termination and access revocation', () => {
       runtime.$queryRaw`SELECT * FROM public.apply_due_employee_terminations(1)`,
     ).rejects.toThrow();
     await expect(dispatcher.employee.findMany({ take: 1 })).rejects.toThrow();
+  });
+
+  it('archives only a completed termination while preserving period and assignment history', async () => {
+    const employee = await createActive(
+      'EMP-ARCHIVE',
+      await setupOrganization(),
+      date(-20),
+    );
+    await makeTerminated(employee.id);
+    const periodsBefore = await admin.employmentPeriod.findMany({
+      where: { tenantId, employeeId: employee.id },
+      select: { id: true },
+    });
+    const assignmentsBefore = await admin.employeeAssignment.findMany({
+      where: { tenantId, employeeId: employee.id },
+      select: { id: true },
+    });
+    await expect(
+      archiveTenantEmployee(runtime, actor(hrId), tenantId, employee.id, {
+        expectedVersion: 4,
+        reason: 'Approved historical employee archive',
+      }),
+    ).resolves.toEqual({ id: employee.id, version: 5, status: 'archived' });
+    await expect(
+      readTenantEmployee(runtime, actor(ownerId), tenantId, employee.id),
+    ).resolves.toMatchObject({
+      status: 'archived',
+      version: 5,
+      finalWorkingDate: date(-1),
+      archivedAt: expect.any(String),
+    });
+    await expect(
+      admin.employee.findUniqueOrThrow({ where: { id: employee.id } }),
+    ).resolves.toMatchObject({
+      status: 'archived',
+      archivedByIdentityId: hrId,
+      archiveReason: 'Approved historical employee archive',
+      archivedAt: expect.any(Date),
+    });
+    expect(
+      await admin.employmentPeriod.findMany({
+        where: { tenantId, employeeId: employee.id },
+        select: { id: true },
+      }),
+    ).toEqual(periodsBefore);
+    expect(
+      await admin.employeeAssignment.findMany({
+        where: { tenantId, employeeId: employee.id },
+        select: { id: true },
+      }),
+    ).toEqual(assignmentsBefore);
+    expect(
+      await admin.auditEvent.count({
+        where: {
+          tenantId,
+          resourceId: employee.id,
+          action: 'employee.archived',
+        },
+      }),
+    ).toBe(1);
+    expect(
+      await admin.outboxEvent.count({
+        where: {
+          tenantId,
+          aggregateId: employee.id,
+          type: 'employee.archived.v1',
+        },
+      }),
+    ).toBe(1);
+  });
+
+  it('rejects stale, premature, repeated, cross-tenant and missing-MFA archives', async () => {
+    const employee = await createActive(
+      'EMP-ARCHIVE',
+      await setupOrganization(),
+      date(-20),
+    );
+    const input = {
+      expectedVersion: 2,
+      reason: 'Approved historical employee archive',
+    };
+    await expect(
+      archiveTenantEmployee(runtime, actor(ownerId), tenantId, employee.id, {
+        ...input,
+        expectedVersion: 3,
+      }),
+    ).rejects.toThrow('STALE_VERSION');
+    await expect(
+      archiveTenantEmployee(
+        runtime,
+        actor(ownerId),
+        tenantId,
+        employee.id,
+        input,
+      ),
+    ).rejects.toThrow('INVALID_STATE');
+    await makeTerminated(employee.id);
+    await expect(
+      archiveTenantEmployee(
+        runtime,
+        actor(ownerId, false),
+        tenantId,
+        employee.id,
+        {
+          ...input,
+          expectedVersion: 4,
+        },
+      ),
+    ).rejects.toThrow('FORBIDDEN');
+    await expect(
+      archiveTenantEmployee(
+        runtime,
+        actor(ownerId),
+        otherTenantId,
+        employee.id,
+        {
+          ...input,
+          expectedVersion: 4,
+        },
+      ),
+    ).rejects.toThrow('FORBIDDEN');
+    await archiveTenantEmployee(
+      runtime,
+      actor(ownerId),
+      tenantId,
+      employee.id,
+      {
+        ...input,
+        expectedVersion: 4,
+      },
+    );
+    await expect(
+      archiveTenantEmployee(runtime, actor(ownerId), tenantId, employee.id, {
+        ...input,
+        expectedVersion: 5,
+      }),
+    ).rejects.toThrow('INVALID_STATE');
+    await expect(
+      runtime.$queryRaw`SELECT * FROM public.archive_tenant_employee(
+        ${ownerId}::uuid, true, ${tenantId}::uuid, ${employee.id}::uuid,
+        5, ${input.reason}::varchar, ${randomUUID()}::uuid, ${randomUUID()}::uuid
+      )`,
+    ).resolves.toEqual([
+      { outcome: 'invalid_state', employee_id: null, employee_version: null },
+    ]);
   });
 });

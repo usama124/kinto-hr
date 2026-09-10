@@ -15,9 +15,9 @@ Status: locally verified · 9 September 2026 · P01-04 increment
 
 - Contract/API tests cover strict date/version/reason input, recent-MFA context and rejection of client-supplied revocation controls.
 - PostgreSQL integration tests cover history preservation, stale/repeated/role/MFA/tenant failures, active-report blocking, application-role direct-write denial, one-time due application, seat release and linked-access revocation without cross-company identity damage.
-- All 126 integration tests pass. Migration verification applies all 20 migrations to clean, upgrade and replay databases. The recovery drill preserves future termination metadata across a real synthetic dump/restore.
+- This increment passed 126 integration tests and 20 migrations when delivered. The subsequent archive increment advances the current totals and preserves terminated history without changing this boundary.
 - Responsive browser coverage creates, activates and schedules separation for a complete employee. The build, restricted worker runtime, formatting, lint, type checks, selected coverage and documentation-link checks remain part of the full verification matrix.
 
 ## Remaining P01-04 work
 
-Archive and rehire transitions remain next. Private employee details, permission-separated compensation history and onboarding/offboarding checklists are also incomplete. Provider delivery/reconciliation and production operational approval remain gates. This preview is not approved for customer data.
+Archive is delivered in the [next evidence increment](employee-archive.md). Rehire remains next. Private employee details, permission-separated compensation history and onboarding/offboarding checklists are also incomplete. Provider delivery/reconciliation and production operational approval remain gates. This preview is not approved for customer data.

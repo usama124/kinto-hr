@@ -249,6 +249,43 @@ export default function Employees() {
     }
   }
 
+  async function archiveEmployee(
+    event: FormEvent<HTMLFormElement>,
+    employeeId: string,
+    expectedVersion: number,
+  ) {
+    event.preventDefault();
+    setBusy(true);
+    setMessage('');
+    const form = new FormData(event.currentTarget);
+    try {
+      const response = await fetch(
+        `/api/v1/tenants/${tenantId}/employees/${employeeId}/archive`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': csrf,
+          },
+          body: JSON.stringify({
+            expectedVersion,
+            reason: form.get('archiveReason'),
+          }),
+        },
+      );
+      if (response.status === 403) return setState('denied');
+      if (!response.ok) throw new Error('Request failed');
+      await load(tenantId);
+      setMessage('Employee archived. Employment history remains available.');
+    } catch {
+      setMessage(
+        'Archive was blocked. Only a completed terminated employment can be archived.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (state !== 'ready' || !organization) {
     const copy = {
       loading: 'Loading employee records…',
@@ -280,7 +317,8 @@ export default function Employees() {
           <h1>{companyName}</h1>
           <p className="subtitle">
             Monthly-salaried employee records, explicit seat-backed activation,
-            scheduled separation and effective organization history.
+            scheduled separation, retained archives and effective organization
+            history.
           </p>
         </div>
       </div>
@@ -374,6 +412,34 @@ export default function Employees() {
                         </button>
                       </form>
                     ))}
+                  {employee.status === 'terminated' && (
+                    <form
+                      className="employee-activation"
+                      onSubmit={(event) =>
+                        archiveEmployee(event, employee.id, employee.version)
+                      }
+                    >
+                      <label>
+                        Archive reason for {employee.name}
+                        <input
+                          name="archiveReason"
+                          required
+                          minLength={3}
+                          maxLength={240}
+                        />
+                      </label>
+                      <button className="secondary-button" disabled={busy}>
+                        {busy ? 'Archiving…' : 'Archive employee'}
+                      </button>
+                    </form>
+                  )}
+                  {employee.status === 'archived' && employee.archivedAt && (
+                    <p className="employee-schedule">
+                      Archived{' '}
+                      {new Date(employee.archivedAt).toLocaleDateString()}.
+                      Employment history is retained.
+                    </p>
+                  )}
                 </li>
               ))}
             </ol>
