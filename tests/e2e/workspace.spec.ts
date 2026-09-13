@@ -550,7 +550,7 @@ test('owner reviews the effective complimentary plan and employee capacity', asy
   ).toBe(true);
 });
 
-test('HR creates, activates, separates and archives a monthly-salaried employee', async ({
+test('HR creates, activates, separates, archives and rehires an employee', async ({
   page,
 }) => {
   const tenantId = '9d2ea3ef-3938-42d0-84f9-d2248f692f67';
@@ -626,6 +626,9 @@ test('HR creates, activates, separates and archives a monthly-salaried employee'
         reason: 'Approved employee activation',
       });
       Object.assign(employees[0], { status: 'active', version: 2 });
+      const history = employees[0].employmentHistory;
+      if (!Array.isArray(history)) throw new Error('Missing period history');
+      history[0] = { ...history[0], status: 'active' };
       await route.fulfill({
         status: 201,
         contentType: 'application/json',
@@ -677,6 +680,48 @@ test('HR creates, activates, separates and archives a monthly-salaried employee'
       });
     },
   );
+  await page.route(
+    `**/api/v1/tenants/${tenantId}/employees/${employeeId}/rehire`,
+    async (route) => {
+      expect(route.request().headers()['x-csrf-token']).toBe(csrf);
+      expect(route.request().postDataJSON()).toEqual({
+        expectedVersion: 5,
+        joiningDate: '2026-10-02',
+        branchId,
+        departmentId,
+        designationId,
+        managerEmployeeId: null,
+        topLevelReason: 'Approved returning top-level role',
+        reason: 'Approved employee rehire',
+      });
+      const history = employees[0].employmentHistory;
+      if (!Array.isArray(history)) throw new Error('Missing period history');
+      Object.assign(employees[0], {
+        status: 'active',
+        version: 6,
+        finalWorkingDate: null,
+        employmentHistory: [
+          {
+            id: '9fca177d-3bd8-4f65-ad5f-a3708351df39',
+            periodNumber: 2,
+            joiningDate: '2026-10-02',
+            finalWorkingDate: null,
+            status: 'active',
+          },
+          ...history,
+        ],
+      });
+      await route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          id: employeeId,
+          version: 6,
+          status: 'active',
+        }),
+      });
+    },
+  );
   await page.route(`**/api/v1/tenants/${tenantId}/employees`, async (route) => {
     const request = route.request();
     if (request.method() === 'POST') {
@@ -700,6 +745,15 @@ test('HR creates, activates, separates and archives a monthly-salaried employee'
         payrollSetup: 'incomplete',
         finalWorkingDate: null,
         archivedAt: null,
+        employmentHistory: [
+          {
+            id: '3265216e-bcea-4d3f-854f-b728e9534531',
+            periodNumber: 1,
+            joiningDate,
+            finalWorkingDate: null,
+            status: 'planned',
+          },
+        ],
         currentAssignment: {
           id: assignmentId,
           effectiveFrom: joiningDate,
@@ -789,6 +843,13 @@ test('HR creates, activates, separates and archives a monthly-salaried employee'
     ),
   ).toBeVisible();
   Object.assign(employees[0], { status: 'terminated', version: 4 });
+  const history = employees[0].employmentHistory;
+  if (!Array.isArray(history)) throw new Error('Missing period history');
+  history[0] = {
+    ...history[0],
+    finalWorkingDate: '2026-09-30',
+    status: 'ended',
+  };
   await page.reload();
   await page
     .getByLabel('Archive reason for Sana Khan')
@@ -798,6 +859,17 @@ test('HR creates, activates, separates and archives a monthly-salaried employee'
     page.getByText('Employee archived. Employment history remains available.'),
   ).toBeVisible();
   await expect(page.getByText(/Employment history is retained/)).toBeVisible();
+  await page.getByLabel('New joining date for Sana Khan').fill('2026-10-02');
+  await page
+    .getByLabel('Top-level reporting reason')
+    .fill('Approved returning top-level role');
+  await page.getByLabel('Rehire reason').fill('Approved employee rehire');
+  await page.getByRole('button', { name: 'Rehire employee' }).click();
+  await expect(
+    page.getByText(
+      'Employee rehired with a new employment period and allocated seat. Login access remains revoked.',
+    ),
+  ).toBeVisible();
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,

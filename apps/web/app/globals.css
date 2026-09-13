@@ -126,7 +126,8 @@ button {
   color: var(--muted);
   font-size: 11px;
 }
-.employee-activation input {
+.employee-activation input,
+.employee-activation select {
   width: 100%;
   padding: 8px 10px;
   color: var(--ink);

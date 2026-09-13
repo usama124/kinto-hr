@@ -270,6 +270,14 @@ export const employeeArchiveSchema = z.strictObject({
   expectedVersion: z.number().int().positive(),
   reason: employeeReasonSchema,
 });
+export const employeeRehireSchema = z
+  .strictObject({
+    expectedVersion: z.number().int().positive(),
+    joiningDate: z.iso.date(),
+    ...employeeOrganizationFields,
+    reason: employeeReasonSchema,
+  })
+  .superRefine(validateReportingException);
 export const employeeAssignmentCreateSchema = z
   .strictObject({
     expectedVersion: z.number().int().positive(),
@@ -283,6 +291,7 @@ export type EmployeeProfileUpdate = z.infer<typeof employeeProfileUpdateSchema>;
 export type EmployeeActivation = z.infer<typeof employeeActivationSchema>;
 export type EmployeeTermination = z.infer<typeof employeeTerminationSchema>;
 export type EmployeeArchive = z.infer<typeof employeeArchiveSchema>;
+export type EmployeeRehire = z.infer<typeof employeeRehireSchema>;
 export type EmployeeAssignmentCreate = z.infer<
   typeof employeeAssignmentCreateSchema
 >;
@@ -314,6 +323,13 @@ const employeeAssignmentViewSchema = z.strictObject({
     .nullable(),
   topLevelReason: z.string().max(240).nullable(),
 });
+const employmentPeriodViewSchema = z.strictObject({
+  id: tenantIdSchema,
+  periodNumber: z.number().int().positive(),
+  joiningDate: z.iso.date(),
+  finalWorkingDate: z.iso.date().nullable(),
+  status: z.enum(['planned', 'active', 'ended']),
+});
 export const employeeRecordViewSchema = z.strictObject({
   id: tenantIdSchema,
   employeeNumber: employeeNumberSchema,
@@ -326,6 +342,7 @@ export const employeeRecordViewSchema = z.strictObject({
   payrollSetup: z.literal('incomplete'),
   finalWorkingDate: z.iso.date().nullable(),
   archivedAt: z.iso.datetime({ offset: true }).nullable(),
+  employmentHistory: employmentPeriodViewSchema.array().max(250),
   currentAssignment: employeeAssignmentViewSchema.nullable(),
   assignmentHistory: employeeAssignmentViewSchema.array().max(250),
 });

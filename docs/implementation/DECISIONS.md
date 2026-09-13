@@ -50,6 +50,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 13 September 2026 — capacity-backed employee rehire
+
+Engineering completed the public P01-04 lifecycle with an explicit owner/HR `archived → active` rehire command. It requires recent MFA, optimistic version, an employer-local joining date after the prior final working date, fresh active organization references and a valid reporting assignment. Under the same tenant advisory lock as activation, it rechecks current entitlements/capacity and atomically appends employment period N+1 plus its first assignment, then emits audit/outbox facts. All prior periods, assignments and archive evidence remain intact. Rehire deliberately does not restore the revoked tenant membership or old invitation/account request; employment without a login remains valid, and account reactivation needs a separate explicit security flow. See [evidence](../evidence/phase-01/employee-rehire.md).
+
 ### 10 September 2026 — non-destructive employee archive
 
 Engineering continued P01-04 with an explicit owner/HR `terminated → archived` command. It requires recent MFA, the expected employee version and a completed ended employment period with a final working date. Archive timestamps the employee with approving identity/reason, preserves every employment period and assignment, creates audit/outbox facts and defensively keeps the linked tenant membership/request/invitation revoked. It consumes no additional capacity and exposes no delete option. Stale, premature, repeated, cross-tenant and direct-table attempts fail closed. Rehire remains separate because it must append a new employment period, validate fresh organization references and allocate capacity atomically. See [evidence](../evidence/phase-01/employee-archive.md).

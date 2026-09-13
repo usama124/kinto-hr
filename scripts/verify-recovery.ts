@@ -8,6 +8,7 @@ import {
   activateEmployee,
   activateTenantEmployee,
   archiveTenantEmployee,
+  rehireTenantEmployee,
   assertSafeRuntimeRole,
   createOrganizationPolicyDraft,
   createTenantBranch,
@@ -479,6 +480,24 @@ async function main() {
           reason: 'Recovery fixture historical archive',
         },
       );
+      const rehireDate = new Date(`${effectiveFrom}T12:00:00.000Z`);
+      rehireDate.setUTCDate(rehireDate.getUTCDate() + 1);
+      await rehireTenantEmployee(
+        sourceApp,
+        principal,
+        tenantId,
+        archiveEmployee.id,
+        {
+          expectedVersion: archiveEmployee.version + 4,
+          joiningDate: rehireDate.toISOString().slice(0, 10),
+          branchId: branch.id,
+          departmentId: department.id,
+          designationId: designation.id,
+          managerEmployeeId: null,
+          topLevelReason: 'Recovery fixture returning top-level employee',
+          reason: 'Recovery fixture employee rehire',
+        },
+      );
       stage = 'source setup';
       assert.equal(legalEntity.version, 1);
     }
@@ -663,24 +682,28 @@ async function main() {
       saved,
     );
     const restoreMs = Math.round(performance.now() - restoreStarted);
-    stage = 'restored invariants';
+    stage = 'restored snapshot equality';
     assert.deepEqual(await snapshot(restored), expected);
+    stage = 'restored runtime roles';
     await Promise.all([
       assertSafeRuntimeRole(restoredApp),
       assertSafeRuntimeRole(restoredWorker),
     ]);
+    stage = 'restored row security';
     const policies = await restored.$queryRaw<
       { enabled: boolean; forced: boolean }[]
     >`SELECT relrowsecurity AS enabled, relforcerowsecurity AS forced FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND relkind='r' AND relname <> '_prisma_migrations'`;
     assert.equal(policies.length, 29);
     assert.ok(policies.every((row) => row.enabled && row.forced));
     assert.deepEqual(await restoredApp.employee.findMany(), []);
-    for (const tenantId of tenants) {
+    stage = 'restored tenant lifecycle visibility';
+    for (const [tenantIndex, tenantId] of tenants.entries()) {
       const principal = {
         issuer: 'https://recovery.example/realm',
         subject: tenantId,
         mfaVerified: true,
       };
+      stage = `restored tenant ${tenantIndex + 1} authorized count`;
       assert.equal(
         await inAuthorizedTenant(
           restoredApp,
@@ -691,6 +714,7 @@ async function main() {
         ),
         3,
       );
+      stage = `restored tenant ${tenantIndex + 1} cross-tenant denial`;
       await assert.rejects(
         inAuthorizedTenant(
           restoredApp,
@@ -700,20 +724,29 @@ async function main() {
           async () => true,
         ),
       );
+      stage = `restored tenant ${tenantIndex + 1} employee rows`;
       const employees = await inTenant(restoredApp, tenantId, (tx) =>
         tx.employee.findMany(),
       );
       assert.equal(employees.length, 3);
       assert.ok(employees.every((employee) => employee.tenantId === tenantId));
+      stage = `restored tenant ${tenantIndex + 1} active state`;
       assert.equal(
         employees.filter((employee) => employee.status === 'active').length,
-        2,
+        3,
       );
+      stage = `restored tenant ${tenantIndex + 1} archived state`;
       assert.equal(
         employees.filter((employee) => employee.status === 'archived').length,
-        1,
+        0,
       );
+      const employmentPeriodCount = await restored.employmentPeriod.count({
+        where: { tenantId },
+      });
+      stage = `restored tenant ${tenantIndex + 1} employment periods (${employmentPeriodCount})`;
+      assert.equal(employmentPeriodCount, 3);
     }
+    stage = 'restored tenant write isolation';
     await assert.rejects(
       inTenant(restoredApp, tenants[0], (tx) =>
         tx.employee.create({
@@ -725,6 +758,7 @@ async function main() {
         }),
       ),
     );
+    stage = 'restored worker replay';
     assert.equal(await processEvent(restoredWorker, refs[0]), 'completed');
     assert.equal(await restored.consumerReceipt.count(), 1); // completed work is not repeated
     assert.equal(await processEvent(restoredWorker, refs[1]), 'completed');
@@ -744,6 +778,7 @@ async function main() {
       ).attempts,
       5,
     );
+    stage = 'restored migration replay';
     pnpm(['db:migrate'], restoredEnv);
     const report = {
       status: 'passed',
@@ -769,6 +804,7 @@ async function main() {
       completeEmployeeActivationPreserved: true,
       scheduledTerminationPreserved: true,
       archivedEmployeeHistoryPreserved: true,
+      rehiredEmployeeHistoryPreserved: true,
       entitlementCatalogAndSubscriptionPreserved: true,
       entitlementGrantAndVersionPreserved: true,
       pendingAdministratorInvitationPreserved: true,

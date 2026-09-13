@@ -20,4 +20,4 @@ Status: locally verified · 9 September 2026 · P01-04 increment
 
 ## Remaining P01-04 work
 
-Scheduled termination and linked tenant-membership revocation are delivered in the [next evidence increment](employee-termination.md). Archive and rehire periods remain next. Private details, permission-separated compensation history and onboarding/offboarding checklists are also incomplete. This preview is not approved for customer data.
+Scheduled termination and linked tenant-membership revocation are delivered in the [next evidence increment](employee-termination.md), followed by [archive](employee-archive.md) and [capacity-backed rehire](employee-rehire.md). Private details, permission-separated compensation history and onboarding/offboarding checklists are still incomplete. This preview is not approved for customer data.

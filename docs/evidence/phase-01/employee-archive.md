@@ -19,4 +19,4 @@ Status: locally verified · 10 September 2026 · P01-04 increment
 
 ## Remaining P01-04 work
 
-Rehire into a new capacity-backed employment period is next. Private employee details, permission-separated compensation history and onboarding/offboarding checklists remain incomplete. This preview is not approved for customer data.
+Rehire into a new capacity-backed employment period is delivered in the [next evidence increment](employee-rehire.md). Private employee details, permission-separated compensation history and onboarding/offboarding checklists remain incomplete. This preview is not approved for customer data.
