@@ -50,6 +50,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 14 September 2026 — effective-dated employee compensation source
+
+Engineering completed the P01-04 compensation-capture boundary using one PKR agreement per employee, stable component codes and immutable dated component snapshots. Each full revision requires exactly one basic salary and supports fixed monthly allowance/deduction components; later dates close earlier intervals without overwriting them. `payroll_preparer` receives read/write and `payroll_approver` read-only access, while owner/HR roles have no implicit salary visibility. Public employee reads expose only setup completeness; salary values never enter audit/outbox payloads. This is the source Phase 3 must extend for reviewed calculation metadata, not replace. No calculation, statutory claim or money movement is enabled. See [evidence](../evidence/phase-01/employee-compensation.md).
+
 ### 13 September 2026 — restricted employee private details
 
 Engineering continued P01-04 with a separate forced-RLS record for personal contact, residential address, emergency contact and CNIC format data. Owner/HR access requires recent MFA and an explicit private read/write permission; payroll-only and employee roles receive no access. Values never enter the public roster, audit reason or outbox payload. Writes use optimistic versions and are allowed only for draft/active employees, while retained terminated/archive values remain readable. Bank details and compensation stay outside this boundary for a later explicit payroll permission model. CNIC format validation is not government verification. Field encryption must be resolved by the deployment security review before live personal data is accepted. See [evidence](../evidence/phase-01/employee-private-details.md).

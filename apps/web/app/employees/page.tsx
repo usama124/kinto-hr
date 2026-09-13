@@ -5,9 +5,11 @@ import { FormEvent, useEffect, useState } from 'react';
 import {
   employeeRosterSchema,
   employeePrivateDetailsResponseSchema,
+  employeeCompensationResponseSchema,
   organizationSnapshotSchema,
   type EmployeeRoster,
   type EmployeePrivateDetailsResponse,
+  type EmployeeCompensationResponse,
   type OrganizationSnapshot,
 } from '@kinto/contracts';
 
@@ -28,6 +30,7 @@ export default function Employees() {
   const [tenantId, setTenantId] = useState('');
   const [csrf, setCsrf] = useState('');
   const [companyName, setCompanyName] = useState('');
+  const [tenantRoles, setTenantRoles] = useState<string[]>([]);
   const [roster, setRoster] = useState<EmployeeRoster>({ employees: [] });
   const [organization, setOrganization] = useState<OrganizationSnapshot | null>(
     null,
@@ -49,6 +52,18 @@ export default function Employees() {
   );
   const [privateDetails, setPrivateDetails] = useState<
     Record<string, EmployeePrivateDetailsResponse>
+  >({});
+  const [compensation, setCompensation] = useState<
+    Record<string, EmployeeCompensationResponse>
+  >({});
+  type CompensationDraft = {
+    code: string;
+    name: string;
+    kind: 'basic_salary' | 'allowance' | 'deduction';
+    monthlyAmount: string;
+  };
+  const [compensationDrafts, setCompensationDrafts] = useState<
+    Record<string, CompensationDraft[]>
   >({});
 
   async function load(selectedTenantId: string) {
@@ -132,6 +147,12 @@ export default function Employees() {
         setTenantId(data.selectedTenantId);
         setCsrf(data.csrfToken);
         setCompanyName(String(tenant.name));
+        if ('roles' in tenant && Array.isArray(tenant.roles))
+          setTenantRoles(
+            tenant.roles.filter(
+              (role: unknown): role is string => typeof role === 'string',
+            ),
+          );
         await load(data.selectedTenantId);
       } catch {
         setState('error');
@@ -239,6 +260,94 @@ export default function Employees() {
     } catch {
       setMessage(
         'Private details were not saved. Check contact formats, emergency contact pair and current version.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function loadCompensation(employeeId: string) {
+    setBusy(true);
+    setMessage('');
+    try {
+      const response = await fetch(
+        `/api/v1/tenants/${tenantId}/employees/${employeeId}/compensation`,
+        { cache: 'no-store' },
+      );
+      if (response.status === 403) throw new Error('Forbidden');
+      if (!response.ok) throw new Error('Request failed');
+      const result = employeeCompensationResponseSchema.parse(
+        await response.json(),
+      );
+      setCompensation((current) => ({ ...current, [employeeId]: result }));
+      setCompensationDrafts((current) => ({
+        ...current,
+        [employeeId]: result.agreement?.revisions[0]?.components.map(
+          (component) => ({ ...component }),
+        ) ?? [
+          {
+            code: 'BASIC',
+            name: 'Monthly basic salary',
+            kind: 'basic_salary',
+            monthlyAmount: '',
+          },
+        ],
+      }));
+    } catch {
+      setMessage('Compensation is unavailable for this account or employee.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function updateCompensationDraft(
+    employeeId: string,
+    index: number,
+    update: Partial<CompensationDraft>,
+  ) {
+    setCompensationDrafts((current) => ({
+      ...current,
+      [employeeId]: current[employeeId].map((component, componentIndex) =>
+        componentIndex === index ? { ...component, ...update } : component,
+      ),
+    }));
+  }
+
+  async function saveCompensation(
+    event: FormEvent<HTMLFormElement>,
+    employeeId: string,
+  ) {
+    event.preventDefault();
+    setBusy(true);
+    setMessage('');
+    const form = new FormData(event.currentTarget);
+    try {
+      const response = await fetch(
+        `/api/v1/tenants/${tenantId}/employees/${employeeId}/compensation`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': csrf,
+          },
+          body: JSON.stringify({
+            expectedAgreementVersion:
+              compensation[employeeId]?.agreement?.version ?? 0,
+            effectiveFrom: form.get('compensationEffectiveFrom'),
+            components: compensationDrafts[employeeId],
+            reason: form.get('compensationReason'),
+          }),
+        },
+      );
+      if (response.status === 403) throw new Error('Forbidden');
+      if (!response.ok) throw new Error('Request failed');
+      await Promise.all([loadCompensation(employeeId), load(tenantId)]);
+      setMessage(
+        'Compensation revision saved. Earlier rates remain unchanged.',
+      );
+    } catch {
+      setMessage(
+        'Compensation was not saved. Check permissions, amounts, component codes, date and current version.',
       );
     } finally {
       setBusy(false);
@@ -430,6 +539,10 @@ export default function Employees() {
     organization.branches.some(({ status }) => status === 'active') &&
     organization.departments.some(({ status }) => status === 'active') &&
     organization.designations.some(({ status }) => status === 'active');
+  const canReadCompensation = tenantRoles.some((role) =>
+    ['payroll_preparer', 'payroll_approver'].includes(role),
+  );
+  const canWriteCompensation = tenantRoles.includes('payroll_preparer');
   return (
     <>
       <div className="page-heading">
@@ -568,6 +681,187 @@ export default function Employees() {
                         {busy ? 'Saving…' : 'Save restricted details'}
                       </button>
                     </form>
+                  )}
+                  {canReadCompensation && !compensation[employee.id] && (
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void loadCompensation(employee.id)}
+                    >
+                      Load compensation history
+                    </button>
+                  )}
+                  {canReadCompensation && compensation[employee.id] && (
+                    <div className="employee-activation">
+                      <p className="employee-schedule">
+                        PKR monthly compensation ·{' '}
+                        {compensation[employee.id].agreement?.revisions
+                          .length ?? 0}{' '}
+                        revision(s)
+                      </p>
+                      {compensation[employee.id].agreement?.revisions.map(
+                        (revision) => (
+                          <p key={revision.revision}>
+                            <strong>Revision {revision.revision}</strong> ·{' '}
+                            {revision.effectiveFrom} to{' '}
+                            {revision.effectiveTo ?? 'current'} ·{' '}
+                            {revision.components
+                              .map(
+                                (component) =>
+                                  `${component.name}: PKR ${component.monthlyAmount}`,
+                              )
+                              .join(' · ')}
+                          </p>
+                        ),
+                      )}
+                      {canWriteCompensation &&
+                        employee.status !== 'terminated' &&
+                        employee.status !== 'archived' && (
+                          <form
+                            className="employee-activation"
+                            onSubmit={(event) =>
+                              saveCompensation(event, employee.id)
+                            }
+                          >
+                            {compensationDrafts[employee.id].map(
+                              (component, index) => (
+                                <fieldset key={`${component.code}-${index}`}>
+                                  <legend>Salary component {index + 1}</legend>
+                                  <label>
+                                    Code
+                                    <input
+                                      value={component.code}
+                                      required
+                                      onChange={(event) =>
+                                        updateCompensationDraft(
+                                          employee.id,
+                                          index,
+                                          { code: event.target.value },
+                                        )
+                                      }
+                                    />
+                                  </label>
+                                  <label>
+                                    Name
+                                    <input
+                                      value={component.name}
+                                      required
+                                      onChange={(event) =>
+                                        updateCompensationDraft(
+                                          employee.id,
+                                          index,
+                                          { name: event.target.value },
+                                        )
+                                      }
+                                    />
+                                  </label>
+                                  <label>
+                                    Type
+                                    <select
+                                      value={component.kind}
+                                      onChange={(event) =>
+                                        updateCompensationDraft(
+                                          employee.id,
+                                          index,
+                                          {
+                                            kind: event.target
+                                              .value as CompensationDraft['kind'],
+                                          },
+                                        )
+                                      }
+                                    >
+                                      <option value="basic_salary">
+                                        Basic salary
+                                      </option>
+                                      <option value="allowance">
+                                        Allowance
+                                      </option>
+                                      <option value="deduction">
+                                        Deduction
+                                      </option>
+                                    </select>
+                                  </label>
+                                  <label>
+                                    Monthly amount (PKR)
+                                    <input
+                                      value={component.monthlyAmount}
+                                      inputMode="decimal"
+                                      required
+                                      onChange={(event) =>
+                                        updateCompensationDraft(
+                                          employee.id,
+                                          index,
+                                          { monthlyAmount: event.target.value },
+                                        )
+                                      }
+                                    />
+                                  </label>
+                                  {component.kind !== 'basic_salary' && (
+                                    <button
+                                      type="button"
+                                      className="secondary-button"
+                                      onClick={() =>
+                                        setCompensationDrafts((current) => ({
+                                          ...current,
+                                          [employee.id]: current[
+                                            employee.id
+                                          ].filter((_, item) => item !== index),
+                                        }))
+                                      }
+                                    >
+                                      Remove component
+                                    </button>
+                                  )}
+                                </fieldset>
+                              ),
+                            )}
+                            <button
+                              type="button"
+                              className="secondary-button"
+                              onClick={() =>
+                                setCompensationDrafts((current) => ({
+                                  ...current,
+                                  [employee.id]: [
+                                    ...current[employee.id],
+                                    {
+                                      code: '',
+                                      name: '',
+                                      kind: 'allowance',
+                                      monthlyAmount: '',
+                                    },
+                                  ],
+                                }))
+                              }
+                            >
+                              Add salary component
+                            </button>
+                            <label>
+                              Effective from
+                              <input
+                                name="compensationEffectiveFrom"
+                                type="date"
+                                required
+                              />
+                            </label>
+                            <label>
+                              Compensation change reason
+                              <input
+                                name="compensationReason"
+                                required
+                                minLength={3}
+                                maxLength={240}
+                              />
+                            </label>
+                            <button
+                              className="secondary-button"
+                              disabled={busy}
+                            >
+                              {busy ? 'Saving…' : 'Save compensation revision'}
+                            </button>
+                          </form>
+                        )}
+                    </div>
                   )}
                   {employee.status === 'draft' && (
                     <form

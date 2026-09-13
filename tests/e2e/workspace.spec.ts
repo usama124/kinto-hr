@@ -563,6 +563,7 @@ test('HR creates, activates, separates, archives and rehires an employee', async
   const joiningDate = '2026-09-08';
   const employees: Record<string, unknown>[] = [];
   let privateDetails: Record<string, unknown> | null = null;
+  let compensation: Record<string, unknown> | null = null;
   const organization = {
     legalEntity: null,
     branches: [
@@ -606,7 +607,11 @@ test('HR creates, activates, separates, archives and rehires an employee', async
         csrfToken: csrf,
         selectedTenantId: tenantId,
         tenants: [
-          { id: tenantId, name: 'Synthetic Company', roles: ['hr_admin'] },
+          {
+            id: tenantId,
+            name: 'Synthetic Company',
+            roles: ['hr_admin', 'payroll_preparer'],
+          },
         ],
       }),
     }),
@@ -617,6 +622,60 @@ test('HR creates, activates, separates, archives and rehires an employee', async
       contentType: 'application/json',
       body: JSON.stringify(organization),
     }),
+  );
+  await page.route(
+    `**/api/v1/tenants/${tenantId}/employees/${employeeId}/compensation`,
+    async (route) => {
+      const request = route.request();
+      if (request.method() === 'POST') {
+        expect(request.headers()['x-csrf-token']).toBe(csrf);
+        expect(request.postDataJSON()).toMatchObject({
+          expectedAgreementVersion: 0,
+          effectiveFrom: joiningDate,
+          components: [
+            {
+              code: 'BASIC',
+              kind: 'basic_salary',
+              monthlyAmount: '100000.00',
+            },
+          ],
+          reason: 'Approved initial compensation',
+        });
+        compensation = {
+          id: 'f2a1f960-463b-44ab-9495-44cbdbf1f946',
+          employeeId,
+          currencyCode: 'PKR',
+          version: 1,
+          revisions: [
+            {
+              revision: 1,
+              effectiveFrom: joiningDate,
+              effectiveTo: null,
+              components: [
+                {
+                  code: 'BASIC',
+                  name: 'Monthly basic salary',
+                  kind: 'basic_salary',
+                  monthlyAmount: '100000.00',
+                },
+              ],
+              createdAt: '2026-09-14T00:00:00.000Z',
+            },
+          ],
+        };
+        Object.assign(employees[0], { payrollSetup: 'complete' });
+        return route.fulfill({
+          status: 201,
+          contentType: 'application/json',
+          body: JSON.stringify({ id: compensation.id, version: 1 }),
+        });
+      }
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ agreement: compensation }),
+      });
+    },
   );
   await page.route(
     `**/api/v1/tenants/${tenantId}/employees/${employeeId}/private-details`,
@@ -861,6 +920,23 @@ test('HR creates, activates, separates, archives and rehires an employee', async
   await page.getByRole('button', { name: 'Save restricted details' }).click();
   await expect(
     page.getByText('Private employee details saved with an audit record.'),
+  ).toBeVisible();
+  await page.getByRole('button', { name: 'Load compensation history' }).click();
+  await page.getByLabel('Monthly amount (PKR)').fill('100000.00');
+  await page.getByLabel('Effective from').fill(joiningDate);
+  await page
+    .getByLabel('Compensation change reason')
+    .fill('Approved initial compensation');
+  await page
+    .getByRole('button', { name: 'Save compensation revision' })
+    .click();
+  await expect(
+    page.getByText(
+      'Compensation revision saved. Earlier rates remain unchanged.',
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/Monthly basic salary: PKR 100000.00/),
   ).toBeVisible();
   await page
     .getByLabel('Activation reason for Sana Khan')

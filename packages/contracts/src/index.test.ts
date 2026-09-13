@@ -30,6 +30,7 @@ import {
   employeeArchiveSchema,
   employeeRehireSchema,
   employeePrivateDetailsUpdateSchema,
+  employeeCompensationRevisionSchema,
   employeeAssignmentCreateSchema,
 } from './index';
 it('trims names while preserving employee identifiers as strings', () => {
@@ -81,6 +82,71 @@ it('normalizes private employee details and rejects incomplete emergency or payr
       reason: 'Reject payroll data in private profile',
     }).success,
   ).toBe(false);
+});
+it('accepts one typed basic salary and rejects ambiguous compensation snapshots', () => {
+  expect(
+    employeeCompensationRevisionSchema.parse({
+      expectedAgreementVersion: 0,
+      effectiveFrom: '2026-09-01',
+      components: [
+        {
+          code: ' basic ',
+          name: 'Monthly basic salary',
+          kind: 'basic_salary',
+          monthlyAmount: '100000.00',
+        },
+        {
+          code: 'transport',
+          name: 'Transport allowance',
+          kind: 'allowance',
+          monthlyAmount: '5000',
+        },
+      ],
+      reason: 'Approved initial compensation',
+    }),
+  ).toMatchObject({
+    components: [{ code: 'BASIC' }, { code: 'TRANSPORT' }],
+  });
+  for (const components of [
+    [
+      {
+        code: 'ALLOWANCE',
+        name: 'Allowance only',
+        kind: 'allowance',
+        monthlyAmount: '100',
+      },
+    ],
+    [
+      {
+        code: 'BASIC',
+        name: 'Basic one',
+        kind: 'basic_salary',
+        monthlyAmount: '100',
+      },
+      {
+        code: 'BASIC',
+        name: 'Basic duplicate',
+        kind: 'basic_salary',
+        monthlyAmount: '200',
+      },
+    ],
+    [
+      {
+        code: 'BASIC',
+        name: 'Zero basic',
+        kind: 'basic_salary',
+        monthlyAmount: '0.00',
+      },
+    ],
+  ])
+    expect(
+      employeeCompensationRevisionSchema.safeParse({
+        expectedAgreementVersion: 0,
+        effectiveFrom: '2026-09-01',
+        components,
+        reason: 'Invalid compensation snapshot',
+      }).success,
+    ).toBe(false);
 });
 it('accepts only explicit administrator invitation authority', () => {
   expect(

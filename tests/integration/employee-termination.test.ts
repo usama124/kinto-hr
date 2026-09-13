@@ -44,7 +44,17 @@ const actor = (identityId: string, mfaVerified = true) => ({
   mfaVerified,
 });
 const date = (offset: number) => {
-  const value = new Date();
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Karachi',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((item) => item.type === type)?.value;
+  const value = new Date(
+    `${part('year')}-${part('month')}-${part('day')}T12:00:00.000Z`,
+  );
   value.setUTCDate(value.getUTCDate() + offset);
   return value.toISOString().slice(0, 10);
 };

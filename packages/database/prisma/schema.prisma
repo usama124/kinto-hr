@@ -17,6 +17,9 @@ model Tenant {
   createdAt                    DateTime                      @default(now()) @map("created_at") @db.Timestamptz()
   employees                    Employee[]
   employeePrivateDetails       EmployeePrivateDetail[]
+  compensationAgreements       CompensationAgreement[]
+  salaryComponents             SalaryComponent[]
+  compensationComponentVersions CompensationComponentVersion[]
   employmentPeriods            EmploymentPeriod[]
   employeeAssignments          EmployeeAssignment[]
   auditEvents                  AuditEvent[]
@@ -65,6 +68,7 @@ model Identity {
   createdEntitlementOverrides  EntitlementOverride[]          @relation("OverrideCreatedBy")
   revokedEntitlementOverrides  EntitlementOverride[]          @relation("OverrideRevokedBy")
   updatedEmployeePrivateDetails EmployeePrivateDetail[]         @relation("PrivateDetailsUpdatedBy")
+  createdCompensationVersions   CompensationComponentVersion[]   @relation("CompensationVersionCreatedBy")
 
   @@unique([issuer, subject])
   @@map("identities")
@@ -401,6 +405,7 @@ model Employee {
   assignments            EmployeeAssignment[]    @relation("AssignedEmployee")
   managedAssignments     EmployeeAssignment[]    @relation("AssignmentManager")
   privateDetails         EmployeePrivateDetail?
+  compensationAgreement CompensationAgreement?
 
   @@unique([tenantId, id])
   @@unique([tenantId, employeeNumber])
@@ -429,6 +434,65 @@ model EmployeePrivateDetail {
   @@unique([tenantId, id])
   @@unique([tenantId, employeeId])
   @@map("employee_private_details")
+}
+
+model CompensationAgreement {
+  id            String                         @id @db.Uuid
+  tenantId      String                         @map("tenant_id") @db.Uuid
+  employeeId    String                         @map("employee_id") @db.Uuid
+  currencyCode  String                         @default("PKR") @map("currency_code") @db.Char(3)
+  version       Int                            @default(1)
+  createdAt     DateTime                       @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt     DateTime                       @updatedAt @map("updated_at") @db.Timestamptz()
+  tenant        Tenant                         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  employee      Employee                       @relation(fields: [tenantId, employeeId], references: [tenantId, id], onDelete: Restrict)
+  components    SalaryComponent[]
+  versions      CompensationComponentVersion[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, employeeId])
+  @@map("compensation_agreements")
+}
+
+model SalaryComponent {
+  id          String                         @id @db.Uuid
+  tenantId    String                         @map("tenant_id") @db.Uuid
+  agreementId String                         @map("agreement_id") @db.Uuid
+  code        String                         @db.VarChar(30)
+  createdAt   DateTime                       @default(now()) @map("created_at") @db.Timestamptz()
+  tenant      Tenant                         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  agreement   CompensationAgreement          @relation(fields: [tenantId, agreementId], references: [tenantId, id], onDelete: Restrict)
+  versions    CompensationComponentVersion[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, agreementId, code])
+  @@unique([tenantId, agreementId, id])
+  @@map("salary_components")
+}
+
+model CompensationComponentVersion {
+  id                  String                @id @db.Uuid
+  tenantId            String                @map("tenant_id") @db.Uuid
+  agreementId         String                @map("agreement_id") @db.Uuid
+  componentId         String                @map("component_id") @db.Uuid
+  revision            Int
+  name                String                @db.VarChar(100)
+  kind                String                @db.VarChar(20)
+  monthlyAmount       Decimal               @map("monthly_amount") @db.Decimal(15, 2)
+  effectiveFrom       DateTime              @map("effective_from") @db.Date
+  effectiveTo         DateTime?             @map("effective_to") @db.Date
+  reason              String                @db.VarChar(240)
+  createdByIdentityId String                @map("created_by_identity_id") @db.Uuid
+  createdAt           DateTime              @default(now()) @map("created_at") @db.Timestamptz()
+  tenant              Tenant                @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  agreement           CompensationAgreement @relation(fields: [tenantId, agreementId], references: [tenantId, id], onDelete: Restrict)
+  component           SalaryComponent       @relation(fields: [tenantId, agreementId, componentId], references: [tenantId, agreementId, id], onDelete: Restrict)
+  createdBy           Identity              @relation("CompensationVersionCreatedBy", fields: [createdByIdentityId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, agreementId, revision, componentId])
+  @@index([tenantId, agreementId, effectiveFrom])
+  @@map("compensation_component_versions")
 }
 
 model EmploymentPeriod {

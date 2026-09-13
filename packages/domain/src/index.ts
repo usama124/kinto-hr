@@ -18,6 +18,8 @@ export type Permission =
   | 'employees.write'
   | 'employees.private.read'
   | 'employees.private.write'
+  | 'payroll.compensation.read'
+  | 'payroll.compensation.write'
   | 'payroll.prepare'
   | 'payroll.finalize'
   | 'billing.manage'
@@ -48,8 +50,12 @@ const permissions: Record<Role, readonly Permission[]> = {
     'company_policies.read',
     'entitlements.read',
   ],
-  payroll_preparer: ['payroll.prepare'],
-  payroll_approver: ['payroll.finalize'],
+  payroll_preparer: [
+    'payroll.compensation.read',
+    'payroll.compensation.write',
+    'payroll.prepare',
+  ],
+  payroll_approver: ['payroll.compensation.read', 'payroll.finalize'],
   employee: [],
   platform_operator: [],
 };
