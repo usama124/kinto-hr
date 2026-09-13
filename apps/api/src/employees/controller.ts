@@ -17,6 +17,7 @@ import {
   employeeArchiveSchema,
   employeeRehireSchema,
   employeeProfileUpdateSchema,
+  employeePrivateDetailsUpdateSchema,
   employeeRecordCreateSchema,
   tenantIdSchema,
 } from '@kinto/contracts';
@@ -128,6 +129,41 @@ export class EmployeesController {
     if (!employee.success || !input.success) throw new BadRequestException();
     const context = await this.context(req, tenantId, true);
     return this.database.createEmployeeAssignment(
+      context.actor,
+      context.tenantId,
+      employee.data,
+      input.data,
+    );
+  }
+
+  @Get(':employeeId/private-details')
+  async readPrivateDetails(
+    @Req() req: AuthRequest,
+    @Param('tenantId') tenantId: unknown,
+    @Param('employeeId') employeeId: unknown,
+  ) {
+    const employee = tenantIdSchema.safeParse(employeeId);
+    if (!employee.success) throw new BadRequestException();
+    const context = await this.context(req, tenantId);
+    return this.database.readEmployeePrivateDetails(
+      context.actor,
+      context.tenantId,
+      employee.data,
+    );
+  }
+
+  @Put(':employeeId/private-details')
+  async updatePrivateDetails(
+    @Req() req: AuthRequest,
+    @Param('tenantId') tenantId: unknown,
+    @Param('employeeId') employeeId: unknown,
+    @Body() body: unknown,
+  ) {
+    const employee = tenantIdSchema.safeParse(employeeId);
+    const input = employeePrivateDetailsUpdateSchema.safeParse(body);
+    if (!employee.success || !input.success) throw new BadRequestException();
+    const context = await this.context(req, tenantId, true);
+    return this.database.updateEmployeePrivateDetails(
       context.actor,
       context.tenantId,
       employee.data,

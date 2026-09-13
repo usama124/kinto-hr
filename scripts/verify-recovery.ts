@@ -33,6 +33,7 @@ import {
   reconcileAdministratorInvitationProvider,
   markAdministratorInvitationDelivered,
   scheduleTenantEmployeeTermination,
+  updateTenantEmployeePrivateDetails,
   type PrismaClient,
 } from '@kinto/database';
 import { processEvent } from '../apps/worker/src/processor';
@@ -65,6 +66,7 @@ async function snapshot(db: PrismaClient) {
       'employee_assignments',
       'employee_identity_links',
       'employee_invitations',
+      'employee_private_details',
       'employees',
       'employment_periods',
       'entitlement_grants',
@@ -110,6 +112,9 @@ async function snapshot(db: PrismaClient) {
       orderBy: { id: 'asc' },
     }),
     employeeAssignments: await db.employeeAssignment.findMany({
+      orderBy: { id: 'asc' },
+    }),
+    employeePrivateDetails: await db.employeePrivateDetail.findMany({
       orderBy: { id: 'asc' },
     }),
     employmentPeriods: await db.employmentPeriod.findMany({
@@ -394,6 +399,22 @@ async function main() {
           managerEmployeeId: null,
           topLevelReason: 'Recovery fixture top-level employee',
           reason: 'Recovery fixture complete employee record',
+        },
+      );
+      await updateTenantEmployeePrivateDetails(
+        sourceApp,
+        principal,
+        tenantId,
+        completeEmployee.id,
+        {
+          expectedVersion: 0,
+          personalEmail: `private-${tenantId}@recovery.example`,
+          mobilePhone: null,
+          residentialAddress: 'Synthetic recovery address',
+          emergencyContactName: null,
+          emergencyContactPhone: null,
+          cnic: null,
+          reason: 'Recovery fixture private employee details',
         },
       );
       stage = 'complete employee activation';
@@ -693,7 +714,7 @@ async function main() {
     const policies = await restored.$queryRaw<
       { enabled: boolean; forced: boolean }[]
     >`SELECT relrowsecurity AS enabled, relforcerowsecurity AS forced FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND relkind='r' AND relname <> '_prisma_migrations'`;
-    assert.equal(policies.length, 29);
+    assert.equal(policies.length, 30);
     assert.ok(policies.every((row) => row.enabled && row.forced));
     assert.deepEqual(await restoredApp.employee.findMany(), []);
     stage = 'restored tenant lifecycle visibility';
@@ -745,6 +766,10 @@ async function main() {
       });
       stage = `restored tenant ${tenantIndex + 1} employment periods (${employmentPeriodCount})`;
       assert.equal(employmentPeriodCount, 3);
+      assert.equal(
+        await restored.employeePrivateDetail.count({ where: { tenantId } }),
+        1,
+      );
     }
     stage = 'restored tenant write isolation';
     await assert.rejects(
@@ -801,6 +826,7 @@ async function main() {
       organizationPolicyHistoryPreserved: true,
       organizationCatalogsPreserved: true,
       employeeAssignmentsPreserved: true,
+      employeePrivateDetailsPreserved: true,
       completeEmployeeActivationPreserved: true,
       scheduledTerminationPreserved: true,
       archivedEmployeeHistoryPreserved: true,

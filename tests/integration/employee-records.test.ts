@@ -9,7 +9,9 @@ import {
   createTenantLegalEntity,
   createTenantOrganizationCatalogEntry,
   readTenantEmployee,
+  readTenantEmployeePrivateDetails,
   readTenantEmployees,
+  updateTenantEmployeePrivateDetails,
   updateTenantEmployeeProfile,
 } from '@kinto/database';
 
@@ -31,7 +33,10 @@ const admin = createDatabase(adminUrl);
 const runtime = createDatabase(runtimeUrl);
 let tenantId: string;
 let otherTenantId: string;
-let identities: Record<'owner' | 'hr' | 'employee' | 'otherOwner', string>;
+let identities: Record<
+  'owner' | 'hr' | 'payroll' | 'employee' | 'otherOwner',
+  string
+>;
 const actor = (identityId: string, mfaVerified = true) => ({
   identityId,
   mfaVerified,
@@ -100,6 +105,7 @@ describe('tenant employee records and effective assignments', () => {
       owner: randomUUID(),
       hr: randomUUID(),
       employee: randomUUID(),
+      payroll: randomUUID(),
       otherOwner: randomUUID(),
     };
     await admin.tenant.createMany({
@@ -122,6 +128,11 @@ describe('tenant employee records and effective assignments', () => {
         { tenantId, identityId: identities.hr, roles: ['hr_admin'] },
         { tenantId, identityId: identities.employee, roles: ['employee'] },
         {
+          tenantId,
+          identityId: identities.payroll,
+          roles: ['payroll_preparer'],
+        },
+        {
           tenantId: otherTenantId,
           identityId: identities.otherOwner,
           roles: ['owner'],
@@ -143,6 +154,9 @@ describe('tenant employee records and effective assignments', () => {
     });
     await admin.auditEvent.deleteMany({ where: { tenantId: { in: tenants } } });
     await admin.employeeAssignment.deleteMany({
+      where: { tenantId: { in: tenants } },
+    });
+    await admin.employeePrivateDetail.deleteMany({
       where: { tenantId: { in: tenants } },
     });
     await admin.employmentPeriod.deleteMany({
@@ -262,6 +276,122 @@ describe('tenant employee records and effective assignments', () => {
       },
     );
     expect(sameNumber.id).not.toBe(created.id);
+  });
+
+  it('isolates versioned private details behind owner/HR permission and recent MFA', async () => {
+    const refs = await setupOrganization(tenantId, identities.owner, 'PRIVATE');
+    const employee = await createTenantEmployee(
+      runtime,
+      actor(identities.hr),
+      tenantId,
+      {
+        employeeNumber: 'PRIVATE-001',
+        name: 'Private Details Fixture',
+        joiningDate: date(-1),
+        employmentType: 'monthly_salaried',
+        ...refs,
+        managerEmployeeId: null,
+        topLevelReason: 'Approved top-level fixture',
+        reason: 'Create private details fixture',
+      },
+    );
+    expect(
+      await readTenantEmployeePrivateDetails(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        employee.id,
+      ),
+    ).toEqual({ details: null });
+    const input = {
+      expectedVersion: 0,
+      personalEmail: 'private@example.com',
+      mobilePhone: '+923001234567',
+      residentialAddress: 'Synthetic Lahore address',
+      emergencyContactName: 'Synthetic Emergency Contact',
+      emergencyContactPhone: '03007654321',
+      cnic: '3520212345671',
+      reason: 'Approved synthetic private details',
+    };
+    expect(
+      await updateTenantEmployeePrivateDetails(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        employee.id,
+        input,
+      ),
+    ).toMatchObject({ version: 1 });
+    const result = await readTenantEmployeePrivateDetails(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      employee.id,
+    );
+    expect(result.details).toMatchObject({
+      version: 1,
+      personalEmail: input.personalEmail,
+      cnic: input.cnic,
+    });
+    const publicRecord = await readTenantEmployee(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      employee.id,
+    );
+    expect(JSON.stringify(publicRecord)).not.toContain(input.personalEmail);
+    expect(JSON.stringify(publicRecord)).not.toContain(input.cnic);
+
+    for (const deniedActor of [
+      actor(identities.hr, false),
+      actor(identities.employee),
+      actor(identities.payroll),
+      actor(identities.otherOwner),
+    ]) {
+      await expect(
+        readTenantEmployeePrivateDetails(
+          runtime,
+          deniedActor,
+          tenantId,
+          employee.id,
+        ),
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    }
+    await expect(
+      updateTenantEmployeePrivateDetails(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        employee.id,
+        input,
+      ),
+    ).rejects.toMatchObject({ code: 'STALE_VERSION' });
+    expect(
+      await updateTenantEmployeePrivateDetails(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        employee.id,
+        { ...input, expectedVersion: 1, reason: 'Approved contact refresh' },
+      ),
+    ).toMatchObject({ version: 2 });
+    await expect(runtime.employeePrivateDetail.findMany()).rejects.toThrow();
+
+    const audit = await admin.auditEvent.findMany({
+      where: {
+        tenantId,
+        action: { startsWith: 'employee.private_details_' },
+      },
+    });
+    const outbox = await admin.outboxEvent.findMany({
+      where: { tenantId, type: 'employee.private_details_changed.v1' },
+    });
+    expect(audit).toHaveLength(2);
+    expect(outbox).toHaveLength(2);
+    expect(JSON.stringify({ audit, outbox })).not.toContain(input.cnic);
+    expect(JSON.stringify({ audit, outbox })).not.toContain(
+      input.personalEmail,
+    );
   });
 
   it('versions profiles and rejects stale, no-op and inactive organization references', async () => {

@@ -4,8 +4,10 @@ import Link from 'next/link';
 import { FormEvent, useEffect, useState } from 'react';
 import {
   employeeRosterSchema,
+  employeePrivateDetailsResponseSchema,
   organizationSnapshotSchema,
   type EmployeeRoster,
+  type EmployeePrivateDetailsResponse,
   type OrganizationSnapshot,
 } from '@kinto/contracts';
 
@@ -45,6 +47,9 @@ export default function Employees() {
   const [rehireManagers, setRehireManagers] = useState<Record<string, string>>(
     {},
   );
+  const [privateDetails, setPrivateDetails] = useState<
+    Record<string, EmployeePrivateDetailsResponse>
+  >({});
 
   async function load(selectedTenantId: string) {
     const [employeeResponse, organizationResponse] = await Promise.all([
@@ -169,6 +174,71 @@ export default function Employees() {
     } catch {
       setMessage(
         'The employee could not be created. Check unique number and organization selections.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function loadPrivateDetails(employeeId: string) {
+    setBusy(true);
+    setMessage('');
+    try {
+      const response = await fetch(
+        `/api/v1/tenants/${tenantId}/employees/${employeeId}/private-details`,
+        { cache: 'no-store' },
+      );
+      if (response.status === 403) return setState('denied');
+      if (!response.ok) throw new Error('Request failed');
+      const details = employeePrivateDetailsResponseSchema.parse(
+        await response.json(),
+      );
+      setPrivateDetails((current) => ({ ...current, [employeeId]: details }));
+    } catch {
+      setMessage('Private employee details could not be loaded.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function savePrivateDetails(
+    event: FormEvent<HTMLFormElement>,
+    employeeId: string,
+  ) {
+    event.preventDefault();
+    setBusy(true);
+    setMessage('');
+    const form = new FormData(event.currentTarget);
+    const nullable = (name: string) =>
+      String(form.get(name) || '').trim() || null;
+    try {
+      const response = await fetch(
+        `/api/v1/tenants/${tenantId}/employees/${employeeId}/private-details`,
+        {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': csrf,
+          },
+          body: JSON.stringify({
+            expectedVersion: privateDetails[employeeId]?.details?.version ?? 0,
+            personalEmail: nullable('personalEmail'),
+            mobilePhone: nullable('mobilePhone'),
+            residentialAddress: nullable('residentialAddress'),
+            emergencyContactName: nullable('emergencyContactName'),
+            emergencyContactPhone: nullable('emergencyContactPhone'),
+            cnic: nullable('cnic'),
+            reason: form.get('privateDetailsReason'),
+          }),
+        },
+      );
+      if (response.status === 403) return setState('denied');
+      if (!response.ok) throw new Error('Request failed');
+      await loadPrivateDetails(employeeId);
+      setMessage('Private employee details saved with an audit record.');
+    } catch {
+      setMessage(
+        'Private details were not saved. Check contact formats, emergency contact pair and current version.',
       );
     } finally {
       setBusy(false);
@@ -402,6 +472,103 @@ export default function Employees() {
                       </small>
                     </div>
                   </div>
+                  {!privateDetails[employee.id] ? (
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void loadPrivateDetails(employee.id)}
+                    >
+                      Load restricted details
+                    </button>
+                  ) : (
+                    <form
+                      className="employee-activation"
+                      onSubmit={(event) =>
+                        savePrivateDetails(event, employee.id)
+                      }
+                    >
+                      <p className="employee-schedule">
+                        Restricted to owner/HR with recent MFA. Bank and salary
+                        data are managed separately.
+                      </p>
+                      <label>
+                        Personal email
+                        <input
+                          name="personalEmail"
+                          type="email"
+                          defaultValue={
+                            privateDetails[employee.id].details
+                              ?.personalEmail ?? ''
+                          }
+                        />
+                      </label>
+                      <label>
+                        Mobile phone
+                        <input
+                          name="mobilePhone"
+                          defaultValue={
+                            privateDetails[employee.id].details?.mobilePhone ??
+                            ''
+                          }
+                        />
+                      </label>
+                      <label>
+                        Residential address
+                        <textarea
+                          name="residentialAddress"
+                          maxLength={500}
+                          defaultValue={
+                            privateDetails[employee.id].details
+                              ?.residentialAddress ?? ''
+                          }
+                        />
+                      </label>
+                      <label>
+                        Emergency contact name
+                        <input
+                          name="emergencyContactName"
+                          defaultValue={
+                            privateDetails[employee.id].details
+                              ?.emergencyContactName ?? ''
+                          }
+                        />
+                      </label>
+                      <label>
+                        Emergency contact phone
+                        <input
+                          name="emergencyContactPhone"
+                          defaultValue={
+                            privateDetails[employee.id].details
+                              ?.emergencyContactPhone ?? ''
+                          }
+                        />
+                      </label>
+                      <label>
+                        CNIC
+                        <input
+                          name="cnic"
+                          inputMode="numeric"
+                          placeholder="35202-1234567-1"
+                          defaultValue={
+                            privateDetails[employee.id].details?.cnic ?? ''
+                          }
+                        />
+                      </label>
+                      <label>
+                        Change reason
+                        <input
+                          name="privateDetailsReason"
+                          required
+                          minLength={3}
+                          maxLength={240}
+                        />
+                      </label>
+                      <button className="secondary-button" disabled={busy}>
+                        {busy ? 'Saving…' : 'Save restricted details'}
+                      </button>
+                    </form>
+                  )}
                   {employee.status === 'draft' && (
                     <form
                       className="employee-activation"
@@ -765,8 +932,9 @@ export default function Employees() {
         </section>
       </div>
       <p className="audit-note">
-        Employee numbers are unique inside this company. Salary, CNIC, bank and
-        emergency details are intentionally outside this public record.
+        Employee numbers are unique inside this company. Restricted contact,
+        emergency, address and CNIC details load only on request. Salary and
+        bank details remain unavailable in this workflow.
       </p>
     </>
   );

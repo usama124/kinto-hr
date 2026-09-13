@@ -49,6 +49,8 @@ import {
   employeeTerminationSchema,
   employeeArchiveSchema,
   employeeRehireSchema,
+  employeePrivateDetailsUpdateSchema,
+  employeePrivateDetailsResponseSchema,
   employeeAssignmentCreateSchema,
   employeeRecordViewSchema,
   employeeRosterSchema,
@@ -58,6 +60,7 @@ import {
   type EmployeeTermination,
   type EmployeeArchive,
   type EmployeeRehire,
+  type EmployeePrivateDetailsUpdate,
   type EmployeeAssignmentCreate,
 } from '@kinto/contracts';
 import {
@@ -1302,6 +1305,60 @@ export async function updateTenantEmployeeProfile(
     )
   `;
   return assertPeopleMutation(rows[0]);
+}
+export async function readTenantEmployeePrivateDetails(
+  db: PrismaClient,
+  actor: PeopleActor,
+  tenantId: string,
+  employeeId: string,
+) {
+  validatePeopleActor(actor, tenantId);
+  tenantIdSchema.parse(employeeId);
+  const rows = await db.$queryRaw<
+    { outcome: 'ok' | 'forbidden' | 'not_found'; snapshot: unknown }[]
+  >`SELECT * FROM public.read_tenant_employee_private_details(
+    ${actor.identityId}::uuid, ${actor.mfaVerified}, ${tenantId}::uuid,
+    ${employeeId}::uuid
+  )`;
+  if (!rows[0] || rows[0].outcome === 'forbidden')
+    throw new DomainError('FORBIDDEN');
+  if (rows[0].outcome === 'not_found') throw new DomainError('NOT_FOUND');
+  return employeePrivateDetailsResponseSchema.parse(rows[0].snapshot);
+}
+export async function updateTenantEmployeePrivateDetails(
+  db: PrismaClient,
+  actor: PeopleActor,
+  tenantId: string,
+  employeeId: string,
+  input: EmployeePrivateDetailsUpdate,
+) {
+  validatePeopleActor(actor, tenantId);
+  tenantIdSchema.parse(employeeId);
+  const value = employeePrivateDetailsUpdateSchema.parse(input);
+  const rows = await db.$queryRaw<
+    {
+      outcome:
+        'updated' | 'forbidden' | 'not_found' | 'stale' | 'invalid_state';
+      details_id: string | null;
+      details_version: number | null;
+    }[]
+  >`SELECT * FROM public.update_tenant_employee_private_details(
+    ${actor.identityId}::uuid, ${actor.mfaVerified}, ${tenantId}::uuid,
+    ${employeeId}::uuid, ${randomUUID()}::uuid,
+    ${value.expectedVersion}::integer, ${value.personalEmail}::varchar,
+    ${value.mobilePhone}::varchar, ${value.residentialAddress}::varchar,
+    ${value.emergencyContactName}::varchar,
+    ${value.emergencyContactPhone}::varchar, ${value.cnic}::varchar,
+    ${value.reason}::varchar, ${randomUUID()}::uuid, ${randomUUID()}::uuid
+  )`;
+  const row = rows[0];
+  if (!row || row.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (row.outcome === 'not_found') throw new DomainError('NOT_FOUND');
+  if (row.outcome === 'stale') throw new DomainError('STALE_VERSION');
+  if (row.outcome === 'invalid_state') throw new DomainError('INVALID_STATE');
+  if (!row.details_id || !row.details_version)
+    throw new Error('Invalid employee private-details mutation result');
+  return { id: row.details_id, version: row.details_version };
 }
 export async function createTenantEmployeeAssignment(
   db: PrismaClient,

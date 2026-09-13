@@ -29,12 +29,58 @@ import {
   employeeTerminationSchema,
   employeeArchiveSchema,
   employeeRehireSchema,
+  employeePrivateDetailsUpdateSchema,
   employeeAssignmentCreateSchema,
 } from './index';
 it('trims names while preserving employee identifiers as strings', () => {
   expect(
     employeeDraftSchema.parse({ employeeNumber: '0012', name: ' Sana Khan ' }),
   ).toEqual({ employeeNumber: '0012', name: 'Sana Khan' });
+});
+
+it('normalizes private employee details and rejects incomplete emergency or payroll data', () => {
+  expect(
+    employeePrivateDetailsUpdateSchema.parse({
+      expectedVersion: 0,
+      personalEmail: ' PERSON@Example.COM ',
+      mobilePhone: '+92 300-1234567',
+      residentialAddress: 'Lahore, Pakistan',
+      emergencyContactName: 'Emergency Contact',
+      emergencyContactPhone: '0300 7654321',
+      cnic: '35202-1234567-1',
+      reason: 'Initial employee private details',
+    }),
+  ).toMatchObject({
+    personalEmail: 'person@example.com',
+    mobilePhone: '+923001234567',
+    emergencyContactPhone: '03007654321',
+    cnic: '3520212345671',
+  });
+  expect(
+    employeePrivateDetailsUpdateSchema.safeParse({
+      expectedVersion: 1,
+      personalEmail: null,
+      mobilePhone: null,
+      residentialAddress: null,
+      emergencyContactName: 'Emergency Contact',
+      emergencyContactPhone: null,
+      cnic: null,
+      reason: 'Invalid partial emergency contact',
+    }).success,
+  ).toBe(false);
+  expect(
+    employeePrivateDetailsUpdateSchema.safeParse({
+      expectedVersion: 1,
+      personalEmail: 'person@example.com',
+      mobilePhone: null,
+      residentialAddress: null,
+      emergencyContactName: null,
+      emergencyContactPhone: null,
+      cnic: null,
+      bankAccount: 'PK00FORBIDDEN',
+      reason: 'Reject payroll data in private profile',
+    }).success,
+  ).toBe(false);
 });
 it('accepts only explicit administrator invitation authority', () => {
   expect(

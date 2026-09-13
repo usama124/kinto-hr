@@ -351,6 +351,77 @@ export const employeeRosterSchema = z.strictObject({
 });
 export type EmployeeRecordView = z.infer<typeof employeeRecordViewSchema>;
 export type EmployeeRoster = z.infer<typeof employeeRosterSchema>;
+const privatePhoneSchema = z
+  .string()
+  .trim()
+  .regex(/^\+?[0-9 -]{7,20}$/)
+  .transform((value) => value.replaceAll(' ', '').replaceAll('-', ''));
+const privateNullableText = (maximum: number) =>
+  z.string().trim().min(1).max(maximum).nullable();
+export const employeePrivateDetailsUpdateSchema = z
+  .strictObject({
+    expectedVersion: z.number().int().min(0),
+    personalEmail: z.string().trim().toLowerCase().pipe(z.email()).nullable(),
+    mobilePhone: privatePhoneSchema.nullable(),
+    residentialAddress: privateNullableText(500),
+    emergencyContactName: privateNullableText(160),
+    emergencyContactPhone: privatePhoneSchema.nullable(),
+    cnic: z
+      .string()
+      .trim()
+      .regex(/^(?:[0-9]{13}|[0-9]{5}-[0-9]{7}-[0-9])$/)
+      .transform((value) => value.replaceAll('-', ''))
+      .nullable(),
+    reason: employeeReasonSchema,
+  })
+  .superRefine((value, context) => {
+    if (
+      (value.emergencyContactName === null) !==
+      (value.emergencyContactPhone === null)
+    )
+      context.addIssue({
+        code: 'custom',
+        path: ['emergencyContactPhone'],
+        message: 'Emergency contact name and phone must be supplied together',
+      });
+    if (
+      [
+        value.personalEmail,
+        value.mobilePhone,
+        value.residentialAddress,
+        value.emergencyContactName,
+        value.cnic,
+      ].every((field) => field === null)
+    )
+      context.addIssue({
+        code: 'custom',
+        path: ['personalEmail'],
+        message: 'At least one private detail is required',
+      });
+  });
+export const employeePrivateDetailsViewSchema = z.strictObject({
+  id: tenantIdSchema,
+  version: z.number().int().positive(),
+  personalEmail: z.email().nullable(),
+  mobilePhone: z.string().nullable(),
+  residentialAddress: z.string().max(500).nullable(),
+  emergencyContactName: z.string().max(160).nullable(),
+  emergencyContactPhone: z.string().nullable(),
+  cnic: z
+    .string()
+    .regex(/^[0-9]{13}$/)
+    .nullable(),
+  updatedAt: z.iso.datetime({ offset: true }),
+});
+export const employeePrivateDetailsResponseSchema = z.strictObject({
+  details: employeePrivateDetailsViewSchema.nullable(),
+});
+export type EmployeePrivateDetailsUpdate = z.infer<
+  typeof employeePrivateDetailsUpdateSchema
+>;
+export type EmployeePrivateDetailsResponse = z.infer<
+  typeof employeePrivateDetailsResponseSchema
+>;
 export const healthSchema = z
   .object({ status: z.literal('ok'), service: z.literal('kinto-api') })
   .strict();
