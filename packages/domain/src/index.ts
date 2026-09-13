@@ -16,6 +16,8 @@ export type Role =
 export type Permission =
   | 'employees.read'
   | 'employees.write'
+  | 'employees.private.read'
+  | 'employees.private.write'
   | 'payroll.prepare'
   | 'payroll.finalize'
   | 'billing.manage'
@@ -28,6 +30,8 @@ const permissions: Record<Role, readonly Permission[]> = {
   owner: [
     'employees.read',
     'employees.write',
+    'employees.private.read',
+    'employees.private.write',
     'billing.manage',
     'organization.read',
     'organization.manage',
@@ -38,6 +42,8 @@ const permissions: Record<Role, readonly Permission[]> = {
   hr_admin: [
     'employees.read',
     'employees.write',
+    'employees.private.read',
+    'employees.private.write',
     'organization.read',
     'company_policies.read',
     'entitlements.read',

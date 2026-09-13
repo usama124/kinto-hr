@@ -113,6 +113,8 @@ try {
     'CREATE POLICY platform_control ON employment_periods FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON employee_assignments',
     'CREATE POLICY platform_control ON employee_assignments FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
+    'DROP POLICY IF EXISTS platform_control ON employee_private_details',
+    'CREATE POLICY platform_control ON employee_private_details FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON company_policy_versions',
     'CREATE POLICY platform_control ON company_policy_versions FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON plan_versions',
@@ -169,6 +171,9 @@ try {
     'GRANT SELECT, INSERT, UPDATE ON employment_periods, employee_assignments TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
+    'GRANT SELECT, INSERT, UPDATE ON employee_private_details TO kinto_control_owner',
+  );
+  await database.$executeRawUnsafe(
     'GRANT SELECT ON plan_versions TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
@@ -223,6 +228,7 @@ try {
     'public.create_entitlement_change(uuid, boolean, uuid, uuid, varchar, timestamptz, timestamptz, integer, integer, varchar, uuid, uuid)',
     'public.revoke_entitlement_change(uuid, boolean, uuid, varchar, uuid, integer, varchar, uuid, uuid)',
     'public.read_tenant_employees(uuid, boolean, uuid, uuid)',
+    'public.read_tenant_employee_private_details(uuid, boolean, uuid, uuid)',
     'public.create_tenant_employee(uuid, boolean, uuid, uuid, uuid, uuid, varchar, varchar, varchar, date, varchar, uuid, uuid, uuid, uuid, varchar, varchar, uuid, uuid)',
     'public.update_tenant_employee_profile(uuid, boolean, uuid, uuid, integer, varchar, varchar, varchar, uuid, uuid)',
     'public.create_tenant_employee_assignment(uuid, boolean, uuid, uuid, uuid, integer, date, uuid, uuid, uuid, uuid, varchar, varchar, uuid, uuid)',
@@ -230,6 +236,7 @@ try {
     'public.schedule_tenant_employee_termination(uuid, boolean, uuid, uuid, integer, date, varchar, uuid, uuid)',
     'public.archive_tenant_employee(uuid, boolean, uuid, uuid, integer, varchar, uuid, uuid)',
     'public.rehire_tenant_employee(uuid, boolean, uuid, uuid, uuid, uuid, integer, date, uuid, uuid, uuid, uuid, varchar, varchar, uuid, uuid)',
+    'public.update_tenant_employee_private_details(uuid, boolean, uuid, uuid, uuid, integer, varchar, varchar, varchar, varchar, varchar, varchar, varchar, uuid, uuid)',
   ]) {
     await database.$executeRawUnsafe(
       `ALTER FUNCTION ${signature} OWNER TO kinto_control_owner`,
@@ -247,6 +254,7 @@ try {
     'public.reject_overlapping_entitlement_override()',
     'public.tenant_people_authorized(uuid, boolean, uuid, boolean)',
     'public.employee_record_json(uuid, uuid)',
+    'public.tenant_employee_private_authorized(uuid, boolean, uuid, varchar)',
   ])
     await database.$executeRawUnsafe(
       `ALTER FUNCTION ${signature} OWNER TO kinto_control_owner`,

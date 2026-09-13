@@ -562,6 +562,7 @@ test('HR creates, activates, separates, archives and rehires an employee', async
   const csrf = 'b'.repeat(43);
   const joiningDate = '2026-09-08';
   const employees: Record<string, unknown>[] = [];
+  let privateDetails: Record<string, unknown> | null = null;
   const organization = {
     legalEntity: null,
     branches: [
@@ -616,6 +617,43 @@ test('HR creates, activates, separates, archives and rehires an employee', async
       contentType: 'application/json',
       body: JSON.stringify(organization),
     }),
+  );
+  await page.route(
+    `**/api/v1/tenants/${tenantId}/employees/${employeeId}/private-details`,
+    async (route) => {
+      const request = route.request();
+      if (request.method() === 'PUT') {
+        expect(request.headers()['x-csrf-token']).toBe(csrf);
+        const input = request.postDataJSON();
+        expect(input).toMatchObject({
+          expectedVersion: 0,
+          personalEmail: 'sana@example.com',
+          cnic: '35202-1234567-1',
+          reason: 'Approved private employee details',
+        });
+        privateDetails = {
+          id: '2ca9fe8f-d494-4b3a-9940-c78873ea03d9',
+          version: 1,
+          personalEmail: 'sana@example.com',
+          mobilePhone: null,
+          residentialAddress: null,
+          emergencyContactName: null,
+          emergencyContactPhone: null,
+          cnic: '3520212345671',
+          updatedAt: '2026-09-13T12:00:00.000Z',
+        };
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ id: privateDetails.id, version: 1 }),
+        });
+      }
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ details: privateDetails }),
+      });
+    },
   );
   await page.route(
     `**/api/v1/tenants/${tenantId}/employees/${employeeId}/activate`,
@@ -813,8 +851,16 @@ test('HR creates, activates, separates, archives and rehires an employee', async
   await expect(
     page.getByText(/Payroll setup remains incomplete/),
   ).toBeVisible();
+  await expect(page.getByText(/Salary and bank details remain/)).toBeVisible();
+  await page.getByRole('button', { name: 'Load restricted details' }).click();
+  await page.getByLabel('Personal email').fill('sana@example.com');
+  await page.getByLabel('CNIC').fill('35202-1234567-1');
+  await page
+    .getByLabel('Change reason')
+    .fill('Approved private employee details');
+  await page.getByRole('button', { name: 'Save restricted details' }).click();
   await expect(
-    page.getByText(/Salary, CNIC, bank and emergency details/),
+    page.getByText('Private employee details saved with an audit record.'),
   ).toBeVisible();
   await page
     .getByLabel('Activation reason for Sana Khan')

@@ -16,6 +16,7 @@ model Tenant {
   billingMode                  String                        @default("free") @map("billing_mode") @db.VarChar(20)
   createdAt                    DateTime                      @default(now()) @map("created_at") @db.Timestamptz()
   employees                    Employee[]
+  employeePrivateDetails       EmployeePrivateDetail[]
   employmentPeriods            EmploymentPeriod[]
   employeeAssignments          EmployeeAssignment[]
   auditEvents                  AuditEvent[]
@@ -63,6 +64,7 @@ model Identity {
   revokedEntitlementGrants     EntitlementGrant[]             @relation("GrantRevokedBy")
   createdEntitlementOverrides  EntitlementOverride[]          @relation("OverrideCreatedBy")
   revokedEntitlementOverrides  EntitlementOverride[]          @relation("OverrideRevokedBy")
+  updatedEmployeePrivateDetails EmployeePrivateDetail[]         @relation("PrivateDetailsUpdatedBy")
 
   @@unique([issuer, subject])
   @@map("identities")
@@ -398,11 +400,35 @@ model Employee {
   employmentPeriods      EmploymentPeriod[]
   assignments            EmployeeAssignment[]    @relation("AssignedEmployee")
   managedAssignments     EmployeeAssignment[]    @relation("AssignmentManager")
+  privateDetails         EmployeePrivateDetail?
 
   @@unique([tenantId, id])
   @@unique([tenantId, employeeNumber])
   @@index([tenantId, status])
   @@map("employees")
+}
+
+model EmployeePrivateDetail {
+  id                    String   @id @db.Uuid
+  tenantId              String   @map("tenant_id") @db.Uuid
+  employeeId            String   @map("employee_id") @db.Uuid
+  personalEmail         String?  @map("personal_email") @db.VarChar(320)
+  mobilePhone           String?  @map("mobile_phone") @db.VarChar(16)
+  residentialAddress    String?  @map("residential_address") @db.VarChar(500)
+  emergencyContactName  String?  @map("emergency_contact_name") @db.VarChar(160)
+  emergencyContactPhone String?  @map("emergency_contact_phone") @db.VarChar(16)
+  cnic                  String?  @db.VarChar(13)
+  version               Int      @default(1)
+  updatedByIdentityId   String   @map("updated_by_identity_id") @db.Uuid
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+  tenant                Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  employee              Employee @relation(fields: [tenantId, employeeId], references: [tenantId, id], onDelete: Restrict)
+  updatedBy             Identity @relation("PrivateDetailsUpdatedBy", fields: [updatedByIdentityId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, employeeId])
+  @@map("employee_private_details")
 }
 
 model EmploymentPeriod {

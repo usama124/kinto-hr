@@ -34,8 +34,10 @@ const session = {
 const methods = {
   readEmployees: vi.fn(),
   readEmployee: vi.fn(),
+  readEmployeePrivateDetails: vi.fn(),
   createEmployee: vi.fn(),
   updateEmployeeProfile: vi.fn(),
+  updateEmployeePrivateDetails: vi.fn(),
   createEmployeeAssignment: vi.fn(),
   activateEmployee: vi.fn(),
   scheduleEmployeeTermination: vi.fn(),
@@ -168,6 +170,48 @@ it('versions public profiles and effective assignments behind CSRF', async () =>
     employeeId,
     assignment,
   );
+});
+
+it('reads and versions private details on a separate strict route', async () => {
+  methods.readEmployeePrivateDetails.mockResolvedValueOnce({ details: null });
+  await authenticated('get', `${base}/${employeeId}/private-details`).expect(
+    200,
+    { details: null },
+  );
+  expect(methods.readEmployeePrivateDetails).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+    employeeId,
+  );
+  const details = {
+    expectedVersion: 0,
+    personalEmail: 'person@example.com',
+    mobilePhone: '+923001234567',
+    residentialAddress: 'Lahore, Pakistan',
+    emergencyContactName: 'Emergency Contact',
+    emergencyContactPhone: '03007654321',
+    cnic: '3520212345671',
+    reason: 'Approved private details',
+  };
+  methods.updateEmployeePrivateDetails.mockResolvedValueOnce({
+    id: randomUUID(),
+    version: 1,
+  });
+  await mutation('put', `${base}/${employeeId}/private-details`)
+    .send(details)
+    .expect(200);
+  expect(methods.updateEmployeePrivateDetails).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+    employeeId,
+    details,
+  );
+  await mutation('put', `${base}/${employeeId}/private-details`)
+    .send({ ...details, bankAccount: 'PK00FORBIDDEN' })
+    .expect(400);
+  await authenticated('put', `${base}/${employeeId}/private-details`)
+    .send(details)
+    .expect(403);
 });
 
 it('activates a draft with an expected version, recent MFA and audit reason', async () => {

@@ -44,6 +44,8 @@ import {
   scheduleTenantEmployeeTermination,
   archiveTenantEmployee,
   rehireTenantEmployee,
+  readTenantEmployeePrivateDetails,
+  updateTenantEmployeePrivateDetails,
 } from '@kinto/database';
 import {
   type AuthenticatedIdentity,
@@ -70,6 +72,7 @@ import {
   type EmployeeTermination,
   type EmployeeArchive,
   type EmployeeRehire,
+  type EmployeePrivateDetailsUpdate,
 } from '@kinto/contracts';
 import { readConfig } from './config';
 @Injectable()
@@ -362,6 +365,32 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     input: EmployeeProfileUpdate,
   ) {
     return updateTenantEmployeeProfile(
+      this.db,
+      actor,
+      tenantId,
+      employeeId,
+      input,
+    );
+  }
+  readEmployeePrivateDetails(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    employeeId: string,
+  ) {
+    return readTenantEmployeePrivateDetails(
+      this.db,
+      actor,
+      tenantId,
+      employeeId,
+    );
+  }
+  updateEmployeePrivateDetails(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    employeeId: string,
+    input: EmployeePrivateDetailsUpdate,
+  ) {
+    return updateTenantEmployeePrivateDetails(
       this.db,
       actor,
       tenantId,

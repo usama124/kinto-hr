@@ -50,6 +50,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 13 September 2026 — restricted employee private details
+
+Engineering continued P01-04 with a separate forced-RLS record for personal contact, residential address, emergency contact and CNIC format data. Owner/HR access requires recent MFA and an explicit private read/write permission; payroll-only and employee roles receive no access. Values never enter the public roster, audit reason or outbox payload. Writes use optimistic versions and are allowed only for draft/active employees, while retained terminated/archive values remain readable. Bank details and compensation stay outside this boundary for a later explicit payroll permission model. CNIC format validation is not government verification. Field encryption must be resolved by the deployment security review before live personal data is accepted. See [evidence](../evidence/phase-01/employee-private-details.md).
+
 ### 13 September 2026 — capacity-backed employee rehire
 
 Engineering completed the public P01-04 lifecycle with an explicit owner/HR `archived → active` rehire command. It requires recent MFA, optimistic version, an employer-local joining date after the prior final working date, fresh active organization references and a valid reporting assignment. Under the same tenant advisory lock as activation, it rechecks current entitlements/capacity and atomically appends employment period N+1 plus its first assignment, then emits audit/outbox facts. All prior periods, assignments and archive evidence remain intact. Rehire deliberately does not restore the revoked tenant membership or old invitation/account request; employment without a login remains valid, and account reactivation needs a separate explicit security flow. See [evidence](../evidence/phase-01/employee-rehire.md).

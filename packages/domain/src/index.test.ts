@@ -35,6 +35,10 @@ describe('capacity and permissions', () => {
   it('does not grant owners, HR or operators implicit payroll privileges', () => {
     expect(hasPermission(['owner'], 'employees.write')).toBe(true);
     expect(hasPermission(['hr_admin'], 'employees.read')).toBe(true);
+    expect(hasPermission(['hr_admin'], 'employees.private.write')).toBe(true);
+    expect(hasPermission(['payroll_preparer'], 'employees.private.read')).toBe(
+      false,
+    );
     expect(
       hasPermission(
         ['owner', 'hr_admin', 'platform_operator'],
