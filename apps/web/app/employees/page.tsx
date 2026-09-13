@@ -42,6 +42,9 @@ export default function Employees() {
   const [managerEmployeeId, setManagerEmployeeId] = useState('');
   const [topLevelReason, setTopLevelReason] = useState('');
   const [reason, setReason] = useState('');
+  const [rehireManagers, setRehireManagers] = useState<Record<string, string>>(
+    {},
+  );
 
   async function load(selectedTenantId: string) {
     const [employeeResponse, organizationResponse] = await Promise.all([
@@ -286,6 +289,54 @@ export default function Employees() {
     }
   }
 
+  async function rehireEmployee(
+    event: FormEvent<HTMLFormElement>,
+    employeeId: string,
+    expectedVersion: number,
+  ) {
+    event.preventDefault();
+    setBusy(true);
+    setMessage('');
+    const form = new FormData(event.currentTarget);
+    const manager = String(form.get('rehireManagerEmployeeId') || '');
+    try {
+      const response = await fetch(
+        `/api/v1/tenants/${tenantId}/employees/${employeeId}/rehire`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': csrf,
+          },
+          body: JSON.stringify({
+            expectedVersion,
+            joiningDate: form.get('rehireJoiningDate'),
+            branchId: form.get('rehireBranchId'),
+            departmentId: form.get('rehireDepartmentId'),
+            designationId: form.get('rehireDesignationId'),
+            managerEmployeeId: manager || null,
+            ...(manager
+              ? {}
+              : { topLevelReason: form.get('rehireTopLevelReason') }),
+            reason: form.get('rehireReason'),
+          }),
+        },
+      );
+      if (response.status === 403) return setState('denied');
+      if (!response.ok) throw new Error('Request failed');
+      await load(tenantId);
+      setMessage(
+        'Employee rehired with a new employment period and allocated seat. Login access remains revoked.',
+      );
+    } catch {
+      setMessage(
+        'Rehire was blocked. Check the new date, organization assignment and employee capacity.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (state !== 'ready' || !organization) {
     const copy = {
       loading: 'Loading employee records…',
@@ -433,12 +484,123 @@ export default function Employees() {
                       </button>
                     </form>
                   )}
-                  {employee.status === 'archived' && employee.archivedAt && (
-                    <p className="employee-schedule">
-                      Archived{' '}
-                      {new Date(employee.archivedAt).toLocaleDateString()}.
-                      Employment history is retained.
-                    </p>
+                  {employee.status === 'archived' && (
+                    <>
+                      {employee.archivedAt && (
+                        <p className="employee-schedule">
+                          Archived{' '}
+                          {new Date(employee.archivedAt).toLocaleDateString()}.
+                          Employment history is retained.
+                        </p>
+                      )}
+                      <form
+                        className="employee-activation"
+                        onSubmit={(event) =>
+                          rehireEmployee(event, employee.id, employee.version)
+                        }
+                      >
+                        <label>
+                          New joining date for {employee.name}
+                          <input
+                            name="rehireJoiningDate"
+                            type="date"
+                            min={todayInKarachi()}
+                            required
+                          />
+                        </label>
+                        <label>
+                          Branch
+                          <select name="rehireBranchId" required>
+                            {organization.branches
+                              .filter(({ status }) => status === 'active')
+                              .map((branch) => (
+                                <option key={branch.id} value={branch.id}>
+                                  {branch.code} · {branch.name}
+                                </option>
+                              ))}
+                          </select>
+                        </label>
+                        <label>
+                          Department
+                          <select name="rehireDepartmentId" required>
+                            {organization.departments
+                              .filter(({ status }) => status === 'active')
+                              .map((department) => (
+                                <option
+                                  key={department.id}
+                                  value={department.id}
+                                >
+                                  {department.code} · {department.name}
+                                </option>
+                              ))}
+                          </select>
+                        </label>
+                        <label>
+                          Designation
+                          <select name="rehireDesignationId" required>
+                            {organization.designations
+                              .filter(({ status }) => status === 'active')
+                              .map((designation) => (
+                                <option
+                                  key={designation.id}
+                                  value={designation.id}
+                                >
+                                  {designation.code} · {designation.name}
+                                </option>
+                              ))}
+                          </select>
+                        </label>
+                        <label>
+                          Manager
+                          <select
+                            name="rehireManagerEmployeeId"
+                            value={rehireManagers[employee.id] || ''}
+                            onChange={(event) =>
+                              setRehireManagers((current) => ({
+                                ...current,
+                                [employee.id]: event.target.value,
+                              }))
+                            }
+                          >
+                            <option value="">No manager</option>
+                            {roster.employees
+                              .filter(
+                                (candidate) =>
+                                  candidate.status === 'active' &&
+                                  candidate.id !== employee.id,
+                              )
+                              .map((candidate) => (
+                                <option key={candidate.id} value={candidate.id}>
+                                  {candidate.employeeNumber} · {candidate.name}
+                                </option>
+                              ))}
+                          </select>
+                        </label>
+                        {!rehireManagers[employee.id] && (
+                          <label>
+                            Top-level reporting reason
+                            <input
+                              name="rehireTopLevelReason"
+                              required
+                              minLength={3}
+                              maxLength={240}
+                            />
+                          </label>
+                        )}
+                        <label>
+                          Rehire reason
+                          <input
+                            name="rehireReason"
+                            required
+                            minLength={3}
+                            maxLength={240}
+                          />
+                        </label>
+                        <button className="secondary-button" disabled={busy}>
+                          {busy ? 'Rehiring…' : 'Rehire employee'}
+                        </button>
+                      </form>
+                    </>
                   )}
                 </li>
               ))}

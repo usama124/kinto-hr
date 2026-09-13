@@ -20,4 +20,4 @@ Status: locally verified · 9 September 2026 · P01-04 increment
 
 ## Remaining P01-04 work
 
-Archive is delivered in the [next evidence increment](employee-archive.md). Rehire remains next. Private employee details, permission-separated compensation history and onboarding/offboarding checklists are also incomplete. Provider delivery/reconciliation and production operational approval remain gates. This preview is not approved for customer data.
+Archive is delivered in the [next evidence increment](employee-archive.md), followed by [capacity-backed rehire](employee-rehire.md). Private employee details, permission-separated compensation history and onboarding/offboarding checklists are still incomplete. Provider delivery/reconciliation and production operational approval remain gates. This preview is not approved for customer data.

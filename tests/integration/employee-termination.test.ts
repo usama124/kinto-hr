@@ -4,6 +4,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   activateTenantEmployee,
   archiveTenantEmployee,
+  rehireTenantEmployee,
   createDatabase,
   createTenantBranch,
   createTenantEmployee,
@@ -599,5 +600,239 @@ describe('scheduled employee termination and access revocation', () => {
     ).resolves.toEqual([
       { outcome: 'invalid_state', employee_id: null, employee_version: null },
     ]);
+  });
+
+  it('rehires an archived employee into a new capacity-backed period without rewriting history', async () => {
+    const refs = await setupOrganization();
+    const employee = await createActive('EMP-REHIRE', refs, date(-20));
+    await makeTerminated(employee.id);
+    await archiveTenantEmployee(
+      runtime,
+      actor(ownerId),
+      tenantId,
+      employee.id,
+      {
+        expectedVersion: 4,
+        reason: 'Approved historical employee archive',
+      },
+    );
+    const periodsBefore = await admin.employmentPeriod.findMany({
+      where: { tenantId, employeeId: employee.id },
+      orderBy: { periodNumber: 'asc' },
+    });
+    const assignmentsBefore = await admin.employeeAssignment.findMany({
+      where: { tenantId, employeeId: employee.id },
+      orderBy: { effectiveFrom: 'asc' },
+    });
+    const joiningDate = date(1);
+    await expect(
+      rehireTenantEmployee(runtime, actor(hrId), tenantId, employee.id, {
+        expectedVersion: 5,
+        joiningDate,
+        ...refs,
+        managerEmployeeId: null,
+        topLevelReason: 'Approved returning top-level role',
+        reason: 'Approved employee rehire',
+      }),
+    ).resolves.toEqual({ id: employee.id, version: 6, status: 'active' });
+
+    const periodsAfter = await admin.employmentPeriod.findMany({
+      where: { tenantId, employeeId: employee.id },
+      orderBy: { periodNumber: 'asc' },
+    });
+    const assignmentsAfter = await admin.employeeAssignment.findMany({
+      where: { tenantId, employeeId: employee.id },
+      orderBy: { effectiveFrom: 'asc' },
+    });
+    expect(periodsAfter).toHaveLength(2);
+    expect(periodsAfter[0]).toEqual(periodsBefore[0]);
+    expect(periodsAfter[1]).toMatchObject({
+      periodNumber: 2,
+      joiningDate: new Date(`${joiningDate}T00:00:00.000Z`),
+      finalWorkingDate: null,
+      status: 'active',
+    });
+    expect(assignmentsAfter).toHaveLength(2);
+    expect(assignmentsAfter[0]).toEqual(assignmentsBefore[0]);
+    expect(assignmentsAfter[1]).toMatchObject({
+      employmentPeriodId: periodsAfter[1].id,
+      effectiveFrom: new Date(`${joiningDate}T00:00:00.000Z`),
+      effectiveTo: null,
+      ...refs,
+    });
+    await expect(
+      readTenantEmployee(runtime, actor(ownerId), tenantId, employee.id),
+    ).resolves.toMatchObject({
+      status: 'active',
+      version: 6,
+      finalWorkingDate: null,
+      employmentHistory: [
+        { periodNumber: 2, joiningDate, status: 'active' },
+        { periodNumber: 1, finalWorkingDate: date(-1), status: 'ended' },
+      ],
+    });
+    expect(
+      await admin.auditEvent.count({
+        where: {
+          tenantId,
+          resourceId: employee.id,
+          action: 'employee.rehired',
+        },
+      }),
+    ).toBe(1);
+    expect(
+      await admin.outboxEvent.count({
+        where: {
+          tenantId,
+          aggregateId: employee.id,
+          type: 'employee.rehired.v1',
+        },
+      }),
+    ).toBe(1);
+  });
+
+  it('rejects stale, premature, unauthorized, repeated and over-capacity rehires', async () => {
+    const refs = await setupOrganization();
+    const employee = await createActive('EMP-REHIRE', refs, date(-20));
+    await makeTerminated(employee.id);
+    await archiveTenantEmployee(
+      runtime,
+      actor(ownerId),
+      tenantId,
+      employee.id,
+      {
+        expectedVersion: 4,
+        reason: 'Approved historical employee archive',
+      },
+    );
+    const input = {
+      expectedVersion: 5,
+      joiningDate: date(1),
+      ...refs,
+      managerEmployeeId: null,
+      topLevelReason: 'Approved returning top-level role',
+      reason: 'Approved employee rehire',
+    };
+    await expect(
+      rehireTenantEmployee(runtime, actor(ownerId), tenantId, employee.id, {
+        ...input,
+        expectedVersion: 4,
+      }),
+    ).rejects.toThrow('STALE_VERSION');
+    await expect(
+      rehireTenantEmployee(runtime, actor(ownerId), tenantId, employee.id, {
+        ...input,
+        joiningDate: date(-1),
+      }),
+    ).rejects.toThrow('INVALID_STATE');
+    await expect(
+      rehireTenantEmployee(runtime, actor(ownerId), tenantId, employee.id, {
+        ...input,
+        branchId: randomUUID(),
+      }),
+    ).rejects.toThrow('INVALID_STATE');
+    await expect(
+      rehireTenantEmployee(runtime, actor(ownerId), tenantId, employee.id, {
+        ...input,
+        managerEmployeeId: employee.id,
+        topLevelReason: undefined,
+      }),
+    ).rejects.toThrow('INVALID_STATE');
+    await expect(
+      rehireTenantEmployee(
+        runtime,
+        actor(ownerId, false),
+        tenantId,
+        employee.id,
+        input,
+      ),
+    ).rejects.toThrow('FORBIDDEN');
+    await expect(
+      rehireTenantEmployee(
+        runtime,
+        actor(ownerId),
+        otherTenantId,
+        employee.id,
+        input,
+      ),
+    ).rejects.toThrow('FORBIDDEN');
+
+    await admin.tenantSubscription.updateMany({
+      where: { tenantId },
+      data: { employeeLimit: 1 },
+    });
+    await createActive('EMP-CAPACITY', refs);
+    await expect(
+      rehireTenantEmployee(
+        runtime,
+        actor(ownerId),
+        tenantId,
+        employee.id,
+        input,
+      ),
+    ).rejects.toThrow('CAPACITY_REACHED');
+    await admin.tenantSubscription.updateMany({
+      where: { tenantId },
+      data: { employeeLimit: 10 },
+    });
+    await rehireTenantEmployee(
+      runtime,
+      actor(ownerId),
+      tenantId,
+      employee.id,
+      input,
+    );
+    await expect(
+      rehireTenantEmployee(runtime, actor(ownerId), tenantId, employee.id, {
+        ...input,
+        expectedVersion: 6,
+      }),
+    ).rejects.toThrow('INVALID_STATE');
+  });
+
+  it('serializes simultaneous rehires competing for the final seat', async () => {
+    const refs = await setupOrganization();
+    const employees = await Promise.all([
+      createActive('EMP-REHIRE-A', refs, date(-20)),
+      createActive('EMP-REHIRE-B', refs, date(-20)),
+    ]);
+    for (const employee of employees) {
+      await makeTerminated(employee.id);
+      await archiveTenantEmployee(
+        runtime,
+        actor(ownerId),
+        tenantId,
+        employee.id,
+        {
+          expectedVersion: 4,
+          reason: 'Approved historical employee archive',
+        },
+      );
+    }
+    await admin.tenantSubscription.updateMany({
+      where: { tenantId },
+      data: { employeeLimit: 1 },
+    });
+    const attempts = await Promise.allSettled(
+      employees.map((employee) =>
+        rehireTenantEmployee(runtime, actor(hrId), tenantId, employee.id, {
+          expectedVersion: 5,
+          joiningDate: date(1),
+          ...refs,
+          managerEmployeeId: null,
+          topLevelReason: 'Approved returning top-level role',
+          reason: 'Approved final-seat employee rehire',
+        }),
+      ),
+    );
+    expect(
+      attempts.filter(({ status }) => status === 'fulfilled'),
+    ).toHaveLength(1);
+    expect(attempts.filter(({ status }) => status === 'rejected')).toHaveLength(
+      1,
+    );
+    expect(
+      await admin.employee.count({ where: { tenantId, status: 'active' } }),
+    ).toBe(1);
   });
 });

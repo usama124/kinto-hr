@@ -40,6 +40,7 @@ const methods = {
   activateEmployee: vi.fn(),
   scheduleEmployeeTermination: vi.fn(),
   archiveEmployee: vi.fn(),
+  rehireEmployee: vi.fn(),
 };
 const limit = vi.fn().mockResolvedValue(undefined);
 const getSession = vi.fn().mockResolvedValue(session);
@@ -239,6 +240,36 @@ it('archives a terminated employee without accepting deletion controls', async (
   );
   await mutation('post', `${base}/${employeeId}/archive`)
     .send({ ...archive, deleteHistory: true })
+    .expect(400);
+});
+
+it('rehire appends a fresh assignment without accepting access restoration controls', async () => {
+  const rehire = {
+    expectedVersion: 6,
+    joiningDate: '2026-10-01',
+    branchId,
+    departmentId,
+    designationId,
+    managerEmployeeId: null,
+    topLevelReason: 'Approved top-level role',
+    reason: 'Approved employee rehire',
+  };
+  methods.rehireEmployee.mockResolvedValueOnce({
+    id: employeeId,
+    version: 7,
+    status: 'active',
+  });
+  await mutation('post', `${base}/${employeeId}/rehire`)
+    .send(rehire)
+    .expect(201, { id: employeeId, version: 7, status: 'active' });
+  expect(methods.rehireEmployee).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+    employeeId,
+    rehire,
+  );
+  await mutation('post', `${base}/${employeeId}/rehire`)
+    .send({ ...rehire, restoreAccess: true })
     .expect(400);
 });
 

@@ -28,6 +28,7 @@ import {
   employeeActivationSchema,
   employeeTerminationSchema,
   employeeArchiveSchema,
+  employeeRehireSchema,
   employeeAssignmentCreateSchema,
 } from './index';
 it('trims names while preserving employee identifiers as strings', () => {
@@ -521,6 +522,30 @@ it('normalizes complete monthly-salaried employee records and reporting rules', 
       expectedVersion: 5,
       reason: 'Retention archive approved',
       deleteHistory: true,
+    }).success,
+  ).toBe(false);
+  expect(
+    employeeRehireSchema.parse({
+      expectedVersion: 5,
+      joiningDate: '2026-10-01',
+      branchId,
+      departmentId,
+      designationId,
+      managerEmployeeId: null,
+      topLevelReason: 'Approved top-level role',
+      reason: 'Approved employee rehire',
+    }),
+  ).toMatchObject({ joiningDate: '2026-10-01' });
+  expect(
+    employeeRehireSchema.safeParse({
+      expectedVersion: 5,
+      joiningDate: '2026-10-01',
+      branchId,
+      departmentId,
+      designationId,
+      managerEmployeeId: null,
+      reason: 'Approved employee rehire',
+      restoreAccess: true,
     }).success,
   ).toBe(false);
 });

@@ -48,6 +48,7 @@ import {
   employeeActivationSchema,
   employeeTerminationSchema,
   employeeArchiveSchema,
+  employeeRehireSchema,
   employeeAssignmentCreateSchema,
   employeeRecordViewSchema,
   employeeRosterSchema,
@@ -56,6 +57,7 @@ import {
   type EmployeeActivation,
   type EmployeeTermination,
   type EmployeeArchive,
+  type EmployeeRehire,
   type EmployeeAssignmentCreate,
 } from '@kinto/contracts';
 import {
@@ -1381,6 +1383,29 @@ export async function archiveTenantEmployee(
     )
   `;
   return { ...assertPeopleMutation(rows[0]), status: 'archived' as const };
+}
+export async function rehireTenantEmployee(
+  db: PrismaClient,
+  actor: PeopleActor,
+  tenantId: string,
+  employeeId: string,
+  input: EmployeeRehire,
+) {
+  validatePeopleActor(actor, tenantId);
+  tenantIdSchema.parse(employeeId);
+  const value = employeeRehireSchema.parse(input);
+  const rows = await db.$queryRaw<PeopleMutationRow[]>`
+    SELECT * FROM public.rehire_tenant_employee(
+      ${actor.identityId}::uuid, ${actor.mfaVerified}, ${tenantId}::uuid,
+      ${employeeId}::uuid, ${randomUUID()}::uuid, ${randomUUID()}::uuid,
+      ${value.expectedVersion}::integer, ${value.joiningDate}::date,
+      ${value.branchId}::uuid, ${value.departmentId}::uuid,
+      ${value.designationId}::uuid, ${value.managerEmployeeId}::uuid,
+      ${value.topLevelReason ?? null}::varchar, ${value.reason}::varchar,
+      ${randomUUID()}::uuid, ${randomUUID()}::uuid
+    )
+  `;
+  return { ...assertPeopleMutation(rows[0]), status: 'active' as const };
 }
 export async function activateEmployee(
   db: PrismaClient,

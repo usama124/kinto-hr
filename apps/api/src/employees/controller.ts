@@ -15,6 +15,7 @@ import {
   employeeActivationSchema,
   employeeTerminationSchema,
   employeeArchiveSchema,
+  employeeRehireSchema,
   employeeProfileUpdateSchema,
   employeeRecordCreateSchema,
   tenantIdSchema,
@@ -184,6 +185,25 @@ export class EmployeesController {
     if (!employee.success || !input.success) throw new BadRequestException();
     const context = await this.context(req, tenantId, true);
     return this.database.archiveEmployee(
+      context.actor,
+      context.tenantId,
+      employee.data,
+      input.data,
+    );
+  }
+
+  @Post(':employeeId/rehire')
+  async rehire(
+    @Req() req: AuthRequest,
+    @Param('tenantId') tenantId: unknown,
+    @Param('employeeId') employeeId: unknown,
+    @Body() body: unknown,
+  ) {
+    const employee = tenantIdSchema.safeParse(employeeId);
+    const input = employeeRehireSchema.safeParse(body);
+    if (!employee.success || !input.success) throw new BadRequestException();
+    const context = await this.context(req, tenantId, true);
+    return this.database.rehireEmployee(
       context.actor,
       context.tenantId,
       employee.data,
