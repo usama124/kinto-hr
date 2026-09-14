@@ -339,7 +339,7 @@ export const employeeRecordViewSchema = z.strictObject({
   version: z.number().int().positive(),
   joiningDate: z.iso.date(),
   employmentType: z.literal('monthly_salaried'),
-  payrollSetup: z.literal('incomplete'),
+  payrollSetup: z.enum(['incomplete', 'complete']),
   finalWorkingDate: z.iso.date().nullable(),
   archivedAt: z.iso.datetime({ offset: true }).nullable(),
   employmentHistory: employmentPeriodViewSchema.array().max(250),
@@ -421,6 +421,74 @@ export type EmployeePrivateDetailsUpdate = z.infer<
 >;
 export type EmployeePrivateDetailsResponse = z.infer<
   typeof employeePrivateDetailsResponseSchema
+>;
+const compensationAmountSchema = z
+  .string()
+  .trim()
+  .regex(/^(?:0|[1-9][0-9]{0,12})(?:\.[0-9]{1,2})?$/)
+  .refine((value) => !/^0(?:\.0{1,2})?$/.test(value), {
+    message: 'Amount must be greater than zero',
+  });
+const compensationComponentInputSchema = z.strictObject({
+  code: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .min(1)
+    .max(30)
+    .regex(/^[A-Z][A-Z0-9_]*$/),
+  name: z.string().trim().min(1).max(100),
+  kind: z.enum(['basic_salary', 'allowance', 'deduction']),
+  monthlyAmount: compensationAmountSchema,
+});
+export const employeeCompensationRevisionSchema = z
+  .strictObject({
+    expectedAgreementVersion: z.number().int().min(0),
+    effectiveFrom: z.iso.date(),
+    components: compensationComponentInputSchema.array().min(1).max(30),
+    reason: employeeReasonSchema,
+  })
+  .superRefine((value, context) => {
+    const codes = value.components.map(({ code }) => code);
+    if (new Set(codes).size !== codes.length)
+      context.addIssue({
+        code: 'custom',
+        path: ['components'],
+        message: 'Component codes must be unique',
+      });
+    if (
+      value.components.filter(({ kind }) => kind === 'basic_salary').length !==
+      1
+    )
+      context.addIssue({
+        code: 'custom',
+        path: ['components'],
+        message: 'Exactly one basic salary component is required',
+      });
+  });
+const compensationRevisionViewSchema = z.strictObject({
+  revision: z.number().int().positive(),
+  effectiveFrom: z.iso.date(),
+  effectiveTo: z.iso.date().nullable(),
+  components: compensationComponentInputSchema.array().min(1).max(30),
+  createdAt: z.iso.datetime({ offset: true }),
+});
+export const employeeCompensationResponseSchema = z.strictObject({
+  agreement: z
+    .strictObject({
+      id: tenantIdSchema,
+      employeeId: tenantIdSchema,
+      currencyCode: z.literal('PKR'),
+      version: z.number().int().positive(),
+      revisions: compensationRevisionViewSchema.array().min(1).max(250),
+    })
+    .nullable(),
+});
+export type EmployeeCompensationRevision = z.infer<
+  typeof employeeCompensationRevisionSchema
+>;
+export type EmployeeCompensationResponse = z.infer<
+  typeof employeeCompensationResponseSchema
 >;
 export const healthSchema = z
   .object({ status: z.literal('ok'), service: z.literal('kinto-api') })

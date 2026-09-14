@@ -38,6 +38,8 @@ const methods = {
   createEmployee: vi.fn(),
   updateEmployeeProfile: vi.fn(),
   updateEmployeePrivateDetails: vi.fn(),
+  readEmployeeCompensation: vi.fn(),
+  reviseEmployeeCompensation: vi.fn(),
   createEmployeeAssignment: vi.fn(),
   activateEmployee: vi.fn(),
   scheduleEmployeeTermination: vi.fn(),
@@ -212,6 +214,50 @@ it('reads and versions private details on a separate strict route', async () => 
   await authenticated('put', `${base}/${employeeId}/private-details`)
     .send(details)
     .expect(403);
+});
+
+it('keeps typed compensation on a separate payroll-authorized route', async () => {
+  methods.readEmployeeCompensation.mockResolvedValueOnce({ agreement: null });
+  await authenticated('get', `${base}/${employeeId}/compensation`).expect(200, {
+    agreement: null,
+  });
+  expect(methods.readEmployeeCompensation).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+    employeeId,
+  );
+  const revision = {
+    expectedAgreementVersion: 0,
+    effectiveFrom: '2026-09-01',
+    components: [
+      {
+        code: 'BASIC',
+        name: 'Monthly basic salary',
+        kind: 'basic_salary',
+        monthlyAmount: '100000.00',
+      },
+    ],
+    reason: 'Approved initial compensation',
+  };
+  methods.reviseEmployeeCompensation.mockResolvedValueOnce({
+    id: randomUUID(),
+    version: 1,
+  });
+  await mutation('post', `${base}/${employeeId}/compensation`)
+    .send(revision)
+    .expect(201);
+  expect(methods.reviseEmployeeCompensation).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+    employeeId,
+    revision,
+  );
+  await mutation('post', `${base}/${employeeId}/compensation`)
+    .send({ ...revision, currencyCode: 'USD' })
+    .expect(400);
+  await mutation('post', `${base}/${employeeId}/compensation`)
+    .send({ ...revision, components: [] })
+    .expect(400);
 });
 
 it('activates a draft with an expected version, recent MFA and audit reason', async () => {

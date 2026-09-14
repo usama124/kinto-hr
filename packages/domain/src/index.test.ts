@@ -40,6 +40,16 @@ describe('capacity and permissions', () => {
       false,
     );
     expect(
+      hasPermission(['payroll_preparer'], 'payroll.compensation.write'),
+    ).toBe(true);
+    expect(
+      hasPermission(['payroll_approver'], 'payroll.compensation.read'),
+    ).toBe(true);
+    expect(
+      hasPermission(['payroll_approver'], 'payroll.compensation.write'),
+    ).toBe(false);
+    expect(hasPermission(['owner'], 'payroll.compensation.read')).toBe(false);
+    expect(
       hasPermission(
         ['owner', 'hr_admin', 'platform_operator'],
         'payroll.finalize',

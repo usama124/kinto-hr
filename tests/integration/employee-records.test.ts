@@ -10,8 +10,10 @@ import {
   createTenantOrganizationCatalogEntry,
   readTenantEmployee,
   readTenantEmployeePrivateDetails,
+  readTenantEmployeeCompensation,
   readTenantEmployees,
   updateTenantEmployeePrivateDetails,
+  reviseTenantEmployeeCompensation,
   updateTenantEmployeeProfile,
 } from '@kinto/database';
 
@@ -34,7 +36,7 @@ const runtime = createDatabase(runtimeUrl);
 let tenantId: string;
 let otherTenantId: string;
 let identities: Record<
-  'owner' | 'hr' | 'payroll' | 'employee' | 'otherOwner',
+  'owner' | 'hr' | 'payroll' | 'approver' | 'employee' | 'otherOwner',
   string
 >;
 const actor = (identityId: string, mfaVerified = true) => ({
@@ -106,6 +108,7 @@ describe('tenant employee records and effective assignments', () => {
       hr: randomUUID(),
       employee: randomUUID(),
       payroll: randomUUID(),
+      approver: randomUUID(),
       otherOwner: randomUUID(),
     };
     await admin.tenant.createMany({
@@ -133,6 +136,11 @@ describe('tenant employee records and effective assignments', () => {
           roles: ['payroll_preparer'],
         },
         {
+          tenantId,
+          identityId: identities.approver,
+          roles: ['payroll_approver'],
+        },
+        {
           tenantId: otherTenantId,
           identityId: identities.otherOwner,
           roles: ['owner'],
@@ -153,6 +161,15 @@ describe('tenant employee records and effective assignments', () => {
       where: { tenantId: { in: tenants } },
     });
     await admin.auditEvent.deleteMany({ where: { tenantId: { in: tenants } } });
+    await admin.compensationComponentVersion.deleteMany({
+      where: { tenantId: { in: tenants } },
+    });
+    await admin.salaryComponent.deleteMany({
+      where: { tenantId: { in: tenants } },
+    });
+    await admin.compensationAgreement.deleteMany({
+      where: { tenantId: { in: tenants } },
+    });
     await admin.employeeAssignment.deleteMany({
       where: { tenantId: { in: tenants } },
     });
@@ -392,6 +409,162 @@ describe('tenant employee records and effective assignments', () => {
     expect(JSON.stringify({ audit, outbox })).not.toContain(
       input.personalEmail,
     );
+  });
+
+  it('retains effective compensation revisions behind explicit payroll roles', async () => {
+    const refs = await setupOrganization(tenantId, identities.owner, 'PAY');
+    const joiningDate = date(-2);
+    const employee = await createTenantEmployee(
+      runtime,
+      actor(identities.hr),
+      tenantId,
+      {
+        employeeNumber: 'PAY-001',
+        name: 'Compensation Fixture',
+        joiningDate,
+        employmentType: 'monthly_salaried',
+        ...refs,
+        managerEmployeeId: null,
+        topLevelReason: 'Approved top-level fixture',
+        reason: 'Create compensation fixture',
+      },
+    );
+    expect(
+      await readTenantEmployeeCompensation(
+        runtime,
+        actor(identities.approver),
+        tenantId,
+        employee.id,
+      ),
+    ).toEqual({ agreement: null });
+    const initial = {
+      expectedAgreementVersion: 0,
+      effectiveFrom: joiningDate,
+      components: [
+        {
+          code: 'BASIC',
+          name: 'Monthly basic salary',
+          kind: 'basic_salary' as const,
+          monthlyAmount: '100000.00',
+        },
+        {
+          code: 'TRANSPORT',
+          name: 'Transport allowance',
+          kind: 'allowance' as const,
+          monthlyAmount: '5000',
+        },
+      ],
+      reason: 'Approved initial compensation',
+    };
+    expect(
+      await reviseTenantEmployeeCompensation(
+        runtime,
+        actor(identities.payroll),
+        tenantId,
+        employee.id,
+        initial,
+      ),
+    ).toMatchObject({ version: 1 });
+    const incrementDate = date(10);
+    expect(
+      await reviseTenantEmployeeCompensation(
+        runtime,
+        actor(identities.payroll),
+        tenantId,
+        employee.id,
+        {
+          ...initial,
+          expectedAgreementVersion: 1,
+          effectiveFrom: incrementDate,
+          components: [
+            { ...initial.components[0], monthlyAmount: '110000.00' },
+            ...initial.components.slice(1),
+          ],
+          reason: 'Approved future salary increment',
+        },
+      ),
+    ).toMatchObject({ version: 2 });
+    const history = await readTenantEmployeeCompensation(
+      runtime,
+      actor(identities.approver),
+      tenantId,
+      employee.id,
+    );
+    expect(history.agreement).toMatchObject({
+      employeeId: employee.id,
+      currencyCode: 'PKR',
+      version: 2,
+    });
+    expect(history.agreement?.revisions).toHaveLength(2);
+    expect(history.agreement?.revisions[0]).toMatchObject({
+      revision: 2,
+      effectiveFrom: incrementDate,
+      effectiveTo: null,
+    });
+    expect(history.agreement?.revisions[0].components).toContainEqual(
+      expect.objectContaining({ code: 'BASIC', monthlyAmount: '110000.00' }),
+    );
+    expect(history.agreement?.revisions[1]).toMatchObject({
+      revision: 1,
+      effectiveFrom: joiningDate,
+      effectiveTo: date(9),
+    });
+    const publicRecord = await readTenantEmployee(
+      runtime,
+      actor(identities.hr),
+      tenantId,
+      employee.id,
+    );
+    expect(publicRecord.payrollSetup).toBe('complete');
+    expect(JSON.stringify(publicRecord)).not.toContain('110000');
+
+    for (const denied of [
+      actor(identities.owner),
+      actor(identities.hr),
+      actor(identities.employee),
+      actor(identities.payroll, false),
+      actor(identities.otherOwner),
+    ])
+      await expect(
+        readTenantEmployeeCompensation(runtime, denied, tenantId, employee.id),
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(
+      reviseTenantEmployeeCompensation(
+        runtime,
+        actor(identities.approver),
+        tenantId,
+        employee.id,
+        { ...initial, expectedAgreementVersion: 2, effectiveFrom: date(20) },
+      ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(
+      reviseTenantEmployeeCompensation(
+        runtime,
+        actor(identities.payroll),
+        tenantId,
+        employee.id,
+        {
+          ...initial,
+          expectedAgreementVersion: 2,
+          effectiveFrom: incrementDate,
+        },
+      ),
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+    await expect(runtime.compensationAgreement.findMany()).rejects.toThrow();
+    await expect(runtime.salaryComponent.findMany()).rejects.toThrow();
+    await expect(
+      runtime.compensationComponentVersion.findMany(),
+    ).rejects.toThrow();
+
+    const audit = await admin.auditEvent.findMany({
+      where: { tenantId, action: { startsWith: 'employee.compensation_' } },
+    });
+    const outbox = await admin.outboxEvent.findMany({
+      where: { tenantId, type: 'employee.compensation_changed.v1' },
+    });
+    expect(audit).toHaveLength(2);
+    expect(outbox).toHaveLength(2);
+    expect(JSON.stringify({ audit, outbox })).not.toContain('110000');
   });
 
   it('versions profiles and rejects stale, no-op and inactive organization references', async () => {

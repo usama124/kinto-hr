@@ -34,6 +34,7 @@ import {
   markAdministratorInvitationDelivered,
   scheduleTenantEmployeeTermination,
   updateTenantEmployeePrivateDetails,
+  reviseTenantEmployeeCompensation,
   type PrismaClient,
 } from '@kinto/database';
 import { processEvent } from '../apps/worker/src/processor';
@@ -59,6 +60,8 @@ async function snapshot(db: PrismaClient) {
       'branches',
       'company_policy_versions',
       'company_provisioning_requests',
+      'compensation_agreements',
+      'compensation_component_versions',
       'consumer_receipts',
       'departments',
       'designations',
@@ -80,6 +83,7 @@ async function snapshot(db: PrismaClient) {
       'plan_versions',
       'platform_audit_events',
       'platform_operators',
+      'salary_components',
       'tenant_entitlement_states',
       'tenant_subscriptions',
       'tenants',
@@ -117,6 +121,16 @@ async function snapshot(db: PrismaClient) {
     employeePrivateDetails: await db.employeePrivateDetail.findMany({
       orderBy: { id: 'asc' },
     }),
+    compensationAgreements: await db.compensationAgreement.findMany({
+      orderBy: { id: 'asc' },
+    }),
+    salaryComponents: await db.salaryComponent.findMany({
+      orderBy: { id: 'asc' },
+    }),
+    compensationComponentVersions:
+      await db.compensationComponentVersion.findMany({
+        orderBy: { id: 'asc' },
+      }),
     employmentPeriods: await db.employmentPeriod.findMany({
       orderBy: { id: 'asc' },
     }),
@@ -310,7 +324,11 @@ async function main() {
         },
       });
       await source.membership.create({
-        data: { tenantId, identityId: owner.id, roles: ['owner'] },
+        data: {
+          tenantId,
+          identityId: owner.id,
+          roles: ['owner', 'payroll_preparer'],
+        },
       });
       membershipOwners.push(owner.id);
     }
@@ -415,6 +433,25 @@ async function main() {
           emergencyContactPhone: null,
           cnic: null,
           reason: 'Recovery fixture private employee details',
+        },
+      );
+      await reviseTenantEmployeeCompensation(
+        sourceApp,
+        principal,
+        tenantId,
+        completeEmployee.id,
+        {
+          expectedAgreementVersion: 0,
+          effectiveFrom,
+          components: [
+            {
+              code: 'BASIC',
+              name: 'Synthetic monthly basic salary',
+              kind: 'basic_salary',
+              monthlyAmount: '100000.00',
+            },
+          ],
+          reason: 'Recovery fixture employee compensation',
         },
       );
       stage = 'complete employee activation';
@@ -714,7 +751,7 @@ async function main() {
     const policies = await restored.$queryRaw<
       { enabled: boolean; forced: boolean }[]
     >`SELECT relrowsecurity AS enabled, relforcerowsecurity AS forced FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND relkind='r' AND relname <> '_prisma_migrations'`;
-    assert.equal(policies.length, 30);
+    assert.equal(policies.length, 33);
     assert.ok(policies.every((row) => row.enabled && row.forced));
     assert.deepEqual(await restoredApp.employee.findMany(), []);
     stage = 'restored tenant lifecycle visibility';
@@ -768,6 +805,10 @@ async function main() {
       assert.equal(employmentPeriodCount, 3);
       assert.equal(
         await restored.employeePrivateDetail.count({ where: { tenantId } }),
+        1,
+      );
+      assert.equal(
+        await restored.compensationAgreement.count({ where: { tenantId } }),
         1,
       );
     }
@@ -827,6 +868,7 @@ async function main() {
       organizationCatalogsPreserved: true,
       employeeAssignmentsPreserved: true,
       employeePrivateDetailsPreserved: true,
+      employeeCompensationHistoryPreserved: true,
       completeEmployeeActivationPreserved: true,
       scheduledTerminationPreserved: true,
       archivedEmployeeHistoryPreserved: true,
