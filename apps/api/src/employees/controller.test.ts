@@ -18,6 +18,7 @@ const employeeId = randomUUID();
 const branchId = randomUUID();
 const departmentId = randomUUID();
 const designationId = randomUUID();
+const taskId = randomUUID();
 const now = Math.floor(Date.now() / 1000);
 const session = {
   identityId,
@@ -40,6 +41,9 @@ const methods = {
   updateEmployeePrivateDetails: vi.fn(),
   readEmployeeCompensation: vi.fn(),
   reviseEmployeeCompensation: vi.fn(),
+  readEmployeeChecklist: vi.fn(),
+  createEmployeeChecklistTask: vi.fn(),
+  completeEmployeeChecklistTask: vi.fn(),
   createEmployeeAssignment: vi.fn(),
   activateEmployee: vi.fn(),
   scheduleEmployeeTermination: vi.fn(),
@@ -257,6 +261,57 @@ it('keeps typed compensation on a separate payroll-authorized route', async () =
     .expect(400);
   await mutation('post', `${base}/${employeeId}/compensation`)
     .send({ ...revision, components: [] })
+    .expect(400);
+});
+
+it('reads, creates and completes strict employee checklist tasks', async () => {
+  methods.readEmployeeChecklist.mockResolvedValueOnce({ tasks: [] });
+  await authenticated('get', `${base}/${employeeId}/checklist`).expect(200, {
+    tasks: [],
+  });
+  expect(methods.readEmployeeChecklist).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+    employeeId,
+  );
+  const task = {
+    lifecycle: 'onboarding',
+    taskCode: 'COLLECT_DOCUMENTS',
+    title: 'Collect signed documents',
+    assigneeIdentityId: identityId,
+    dueDate: '2026-09-20',
+    reason: 'Prepare employee onboarding',
+  };
+  methods.createEmployeeChecklistTask.mockResolvedValueOnce({
+    id: taskId,
+    version: 1,
+  });
+  await mutation('post', `${base}/${employeeId}/checklist`)
+    .send(task)
+    .expect(201, { id: taskId, version: 1 });
+  expect(methods.createEmployeeChecklistTask).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+    employeeId,
+    task,
+  );
+  const completion = { expectedVersion: 1, reason: 'Documents verified' };
+  methods.completeEmployeeChecklistTask.mockResolvedValueOnce({
+    id: taskId,
+    version: 2,
+  });
+  await mutation('post', `${base}/${employeeId}/checklist/${taskId}/complete`)
+    .send(completion)
+    .expect(201, { id: taskId, version: 2 });
+  expect(methods.completeEmployeeChecklistTask).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+    employeeId,
+    taskId,
+    completion,
+  );
+  await mutation('post', `${base}/${employeeId}/checklist`)
+    .send({ ...task, salary: '100000' })
     .expect(400);
 });
 

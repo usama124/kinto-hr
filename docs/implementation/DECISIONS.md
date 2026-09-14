@@ -50,6 +50,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 14 September 2026 — employment-period checklists
+
+Engineering completed the basic P01-04 checklist boundary. Owner/HR users with recent MFA can create stable-code onboarding or offboarding tasks for the current employment period, assign them to an active owner/HR member and complete them with optimistic versions and actor/time evidence. Termination scheduling atomically creates one `FINAL_SETTLEMENT_REVIEW` task due on the final working date; it is a Phase 3 handoff and performs no calculation. Forced RLS, composite tenant references, reasoned audit/outbox facts and recovery coverage retain task history through archive and rehire. Asset clearance remains Phase 5. See [evidence](../evidence/phase-01/employee-checklists.md).
+
 ### 14 September 2026 — effective-dated employee compensation source
 
 Engineering completed the P01-04 compensation-capture boundary using one PKR agreement per employee, stable component codes and immutable dated component snapshots. Each full revision requires exactly one basic salary and supports fixed monthly allowance/deduction components; later dates close earlier intervals without overwriting them. `payroll_preparer` receives read/write and `payroll_approver` read-only access, while owner/HR roles have no implicit salary visibility. Public employee reads expose only setup completeness; salary values never enter audit/outbox payloads. This is the source Phase 3 must extend for reviewed calculation metadata, not replace. No calculation, statutory claim or money movement is enabled. See [evidence](../evidence/phase-01/employee-compensation.md).

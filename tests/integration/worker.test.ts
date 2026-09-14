@@ -309,6 +309,28 @@ describe('durable outbox worker with real PostgreSQL and Redis', () => {
     ).toBe(0);
   });
 
+  it('observes checklist lifecycle facts without performing workflow mutations', async () => {
+    for (const type of [
+      'employee.checklist.created.v1',
+      'employee.checklist.completed.v1',
+    ]) {
+      const event = await admin.outboxEvent.create({
+        data: {
+          tenantId: tenantA,
+          type,
+          aggregateId: randomUUID(),
+          aggregateVersion: 1,
+        },
+      });
+      const ref = { eventId: event.id, tenantId: tenantA };
+      await expect(processEvent(worker, ref)).resolves.toBe('completed');
+      await expect(delivery(ref)).resolves.toMatchObject({
+        status: 'completed',
+        attempts: 1,
+      });
+    }
+  });
+
   it('serializes a tenant across workers without blocking another company', async () => {
     const first = await activation();
     const second = await activation();

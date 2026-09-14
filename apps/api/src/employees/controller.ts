@@ -19,6 +19,8 @@ import {
   employeeProfileUpdateSchema,
   employeePrivateDetailsUpdateSchema,
   employeeCompensationRevisionSchema,
+  employeeChecklistTaskCreateSchema,
+  employeeChecklistTaskCompletionSchema,
   employeeRecordCreateSchema,
   tenantIdSchema,
 } from '@kinto/contracts';
@@ -185,6 +187,64 @@ export class EmployeesController {
       context.actor,
       context.tenantId,
       employee.data,
+    );
+  }
+
+  @Get(':employeeId/checklist')
+  async readChecklist(
+    @Req() req: AuthRequest,
+    @Param('tenantId') tenantId: unknown,
+    @Param('employeeId') employeeId: unknown,
+  ) {
+    const employee = tenantIdSchema.safeParse(employeeId);
+    if (!employee.success) throw new BadRequestException();
+    const context = await this.context(req, tenantId);
+    return this.database.readEmployeeChecklist(
+      context.actor,
+      context.tenantId,
+      employee.data,
+    );
+  }
+
+  @Post(':employeeId/checklist')
+  async createChecklistTask(
+    @Req() req: AuthRequest,
+    @Param('tenantId') tenantId: unknown,
+    @Param('employeeId') employeeId: unknown,
+    @Body() body: unknown,
+  ) {
+    const employee = tenantIdSchema.safeParse(employeeId);
+    const input = employeeChecklistTaskCreateSchema.safeParse(body);
+    if (!employee.success || !input.success) throw new BadRequestException();
+    const context = await this.context(req, tenantId, true);
+    return this.database.createEmployeeChecklistTask(
+      context.actor,
+      context.tenantId,
+      employee.data,
+      input.data,
+    );
+  }
+
+  @Post(':employeeId/checklist/:taskId/complete')
+  async completeChecklistTask(
+    @Req() req: AuthRequest,
+    @Param('tenantId') tenantId: unknown,
+    @Param('employeeId') employeeId: unknown,
+    @Param('taskId') taskId: unknown,
+    @Body() body: unknown,
+  ) {
+    const employee = tenantIdSchema.safeParse(employeeId);
+    const task = tenantIdSchema.safeParse(taskId);
+    const input = employeeChecklistTaskCompletionSchema.safeParse(body);
+    if (!employee.success || !task.success || !input.success)
+      throw new BadRequestException();
+    const context = await this.context(req, tenantId, true);
+    return this.database.completeEmployeeChecklistTask(
+      context.actor,
+      context.tenantId,
+      employee.data,
+      task.data,
+      input.data,
     );
   }
 

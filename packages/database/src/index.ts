@@ -53,6 +53,9 @@ import {
   employeePrivateDetailsResponseSchema,
   employeeCompensationRevisionSchema,
   employeeCompensationResponseSchema,
+  employeeChecklistTaskCreateSchema,
+  employeeChecklistTaskCompletionSchema,
+  employeeChecklistResponseSchema,
   employeeAssignmentCreateSchema,
   employeeRecordViewSchema,
   employeeRosterSchema,
@@ -64,6 +67,8 @@ import {
   type EmployeeRehire,
   type EmployeePrivateDetailsUpdate,
   type EmployeeCompensationRevision,
+  type EmployeeChecklistTaskCreate,
+  type EmployeeChecklistTaskCompletion,
   type EmployeeAssignmentCreate,
 } from '@kinto/contracts';
 import {
@@ -1424,6 +1429,92 @@ export async function reviseTenantEmployeeCompensation(
   if (!row.agreement_id || !row.agreement_version)
     throw new Error('Invalid employee compensation mutation result');
   return { id: row.agreement_id, version: row.agreement_version };
+}
+export async function readTenantEmployeeChecklist(
+  db: PrismaClient,
+  actor: PeopleActor,
+  tenantId: string,
+  employeeId: string,
+) {
+  validatePeopleActor(actor, tenantId);
+  tenantIdSchema.parse(employeeId);
+  const rows = await db.$queryRaw<
+    { outcome: 'ok' | 'forbidden' | 'not_found'; snapshot: unknown }[]
+  >`SELECT * FROM public.read_tenant_employee_checklist(
+    ${actor.identityId}::uuid, ${actor.mfaVerified}, ${tenantId}::uuid,
+    ${employeeId}::uuid
+  )`;
+  if (!rows[0] || rows[0].outcome === 'forbidden')
+    throw new DomainError('FORBIDDEN');
+  if (rows[0].outcome === 'not_found') throw new DomainError('NOT_FOUND');
+  return employeeChecklistResponseSchema.parse(rows[0].snapshot);
+}
+export async function createTenantEmployeeChecklistTask(
+  db: PrismaClient,
+  actor: PeopleActor,
+  tenantId: string,
+  employeeId: string,
+  input: EmployeeChecklistTaskCreate,
+) {
+  validatePeopleActor(actor, tenantId);
+  tenantIdSchema.parse(employeeId);
+  const value = employeeChecklistTaskCreateSchema.parse(input);
+  const rows = await db.$queryRaw<
+    {
+      outcome:
+        'created' | 'forbidden' | 'not_found' | 'invalid_state' | 'conflict';
+      task_id: string | null;
+      task_version: number | null;
+    }[]
+  >`SELECT * FROM public.create_tenant_employee_checklist_task(
+    ${actor.identityId}::uuid, ${actor.mfaVerified}, ${tenantId}::uuid,
+    ${employeeId}::uuid, ${randomUUID()}::uuid, ${value.lifecycle}::varchar,
+    ${value.taskCode}::varchar, ${value.title}::varchar,
+    ${value.assigneeIdentityId}::uuid, ${value.dueDate}::date,
+    ${value.reason}::varchar, ${randomUUID()}::uuid, ${randomUUID()}::uuid
+  )`;
+  return assertChecklistMutation(rows[0]);
+}
+export async function completeTenantEmployeeChecklistTask(
+  db: PrismaClient,
+  actor: PeopleActor,
+  tenantId: string,
+  employeeId: string,
+  taskId: string,
+  input: EmployeeChecklistTaskCompletion,
+) {
+  validatePeopleActor(actor, tenantId);
+  tenantIdSchema.parse(employeeId);
+  tenantIdSchema.parse(taskId);
+  const value = employeeChecklistTaskCompletionSchema.parse(input);
+  const rows = await db.$queryRaw<
+    {
+      outcome:
+        'updated' | 'forbidden' | 'not_found' | 'stale' | 'invalid_state';
+      task_id: string | null;
+      task_version: number | null;
+    }[]
+  >`SELECT * FROM public.complete_tenant_employee_checklist_task(
+    ${actor.identityId}::uuid, ${actor.mfaVerified}, ${tenantId}::uuid,
+    ${employeeId}::uuid, ${taskId}::uuid, ${value.expectedVersion}::integer,
+    ${value.reason}::varchar, ${randomUUID()}::uuid, ${randomUUID()}::uuid
+  )`;
+  return assertChecklistMutation(rows[0]);
+}
+
+function assertChecklistMutation(row: {
+  outcome: string;
+  task_id: string | null;
+  task_version: number | null;
+}) {
+  if (!row || row.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (row.outcome === 'not_found') throw new DomainError('NOT_FOUND');
+  if (row.outcome === 'stale') throw new DomainError('STALE_VERSION');
+  if (row.outcome === 'invalid_state') throw new DomainError('INVALID_STATE');
+  if (row.outcome === 'conflict') throw new DomainError('CONFLICT');
+  if (!row.task_id || !row.task_version)
+    throw new Error('Invalid employee checklist mutation result');
+  return { id: row.task_id, version: row.task_version };
 }
 export async function createTenantEmployeeAssignment(
   db: PrismaClient,

@@ -48,6 +48,9 @@ import {
   updateTenantEmployeePrivateDetails,
   readTenantEmployeeCompensation,
   reviseTenantEmployeeCompensation,
+  readTenantEmployeeChecklist,
+  createTenantEmployeeChecklistTask,
+  completeTenantEmployeeChecklistTask,
 } from '@kinto/database';
 import {
   type AuthenticatedIdentity,
@@ -76,6 +79,8 @@ import {
   type EmployeeRehire,
   type EmployeePrivateDetailsUpdate,
   type EmployeeCompensationRevision,
+  type EmployeeChecklistTaskCreate,
+  type EmployeeChecklistTaskCompletion,
 } from '@kinto/contracts';
 import { readConfig } from './config';
 @Injectable()
@@ -419,6 +424,43 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       actor,
       tenantId,
       employeeId,
+      input,
+    );
+  }
+  readEmployeeChecklist(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    employeeId: string,
+  ) {
+    return readTenantEmployeeChecklist(this.db, actor, tenantId, employeeId);
+  }
+  createEmployeeChecklistTask(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    employeeId: string,
+    input: EmployeeChecklistTaskCreate,
+  ) {
+    return createTenantEmployeeChecklistTask(
+      this.db,
+      actor,
+      tenantId,
+      employeeId,
+      input,
+    );
+  }
+  completeEmployeeChecklistTask(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    employeeId: string,
+    taskId: string,
+    input: EmployeeChecklistTaskCompletion,
+  ) {
+    return completeTenantEmployeeChecklistTask(
+      this.db,
+      actor,
+      tenantId,
+      employeeId,
+      taskId,
       input,
     );
   }
