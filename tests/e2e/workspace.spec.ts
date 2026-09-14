@@ -550,6 +550,91 @@ test('owner reviews the effective complimentary plan and employee capacity', asy
   ).toBe(true);
 });
 
+test('HR uploads a fixed employee CSV and reviews validation without committing', async ({
+  page,
+}) => {
+  const tenantId = '9d2ea3ef-3938-42d0-84f9-d2248f692f67';
+  const batchId = 'dc8989e6-cffd-42f8-a44d-4903bab988f8';
+  const csrf = 'b'.repeat(43);
+  const content =
+    'employee_number,display_name,legal_name,joining_date,branch_code,department_code,designation_code,manager_employee_number,top_level_reason\nEMP-001,Sana Khan,,2026-09-14,LHR-01,ENG,SWE,,Company leader\n';
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        csrfToken: csrf,
+        selectedTenantId: tenantId,
+        tenants: [
+          { id: tenantId, name: 'Synthetic Company', roles: ['hr_admin'] },
+        ],
+      }),
+    }),
+  );
+  await page.route(
+    `**/api/v1/tenants/${tenantId}/employee-imports`,
+    async (route) => {
+      expect(route.request().method()).toBe('POST');
+      expect(route.request().headers()['x-csrf-token']).toBe(csrf);
+      expect(route.request().headers()['idempotency-key']).toMatch(
+        /^[0-9a-f-]{36}$/,
+      );
+      expect(route.request().postDataJSON()).toEqual({
+        fileName: 'employees.csv',
+        content,
+        reason: 'Preview initial employee import',
+      });
+      await route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          id: batchId,
+          fileName: 'employees.csv',
+          fileDigest: 'a'.repeat(64),
+          previewRevision: 1,
+          status: 'ready',
+          rowCount: 1,
+          errorCount: 0,
+          fileErrors: [],
+          rows: [
+            {
+              rowNumber: 2,
+              values: {
+                employeeNumber: 'EMP-001',
+                name: 'Sana Khan',
+                legalName: null,
+                joiningDate: '2026-09-14',
+                branchCode: 'LHR-01',
+                departmentCode: 'ENG',
+                designationCode: 'SWE',
+                managerEmployeeNumber: null,
+                topLevelReason: 'Company leader',
+              },
+              errors: [],
+            },
+          ],
+          createdAt: '2026-09-14T12:00:00.000Z',
+        }),
+      });
+    },
+  );
+  await page.goto('/employee-imports');
+  await page.getByLabel('Employee CSV').setInputFiles({
+    name: 'employees.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from(content),
+  });
+  await page
+    .getByLabel('Preview reason')
+    .fill('Preview initial employee import');
+  await page.getByRole('button', { name: 'Upload and validate' }).click();
+  await expect(page.getByText('Row 2 · EMP-001')).toBeVisible();
+  await expect(
+    page.getByText(/No employee records have been created/),
+  ).toBeVisible();
+  await expect(page.getByText(/SHA-256: a{64}/)).toBeVisible();
+});
+
 test('HR creates, activates, separates, archives and rehires an employee', async ({
   page,
 }) => {

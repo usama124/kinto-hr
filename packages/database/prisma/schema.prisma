@@ -21,6 +21,8 @@ model Tenant {
   salaryComponents             SalaryComponent[]
   compensationComponentVersions CompensationComponentVersion[]
   checklistTasks               ChecklistTask[]
+  employeeImportBatches        EmployeeImportBatch[]
+  employeeImportRows           EmployeeImportRow[]
   employmentPeriods            EmploymentPeriod[]
   employeeAssignments          EmployeeAssignment[]
   auditEvents                  AuditEvent[]
@@ -73,6 +75,7 @@ model Identity {
   assignedChecklistTasks        ChecklistTask[]                   @relation("ChecklistAssignee")
   completedChecklistTasks       ChecklistTask[]                   @relation("ChecklistCompletedBy")
   createdChecklistTasks         ChecklistTask[]                   @relation("ChecklistCreatedBy")
+  createdEmployeeImportBatches  EmployeeImportBatch[]              @relation("EmployeeImportCreatedBy")
 
   @@unique([issuer, subject])
   @@map("identities")
@@ -552,6 +555,47 @@ model ChecklistTask {
   @@unique([tenantId, employmentPeriodId, taskCode])
   @@index([tenantId, employeeId, status, dueDate])
   @@map("checklist_tasks")
+}
+
+model EmployeeImportBatch {
+  id                  String              @id @db.Uuid
+  tenantId            String              @map("tenant_id") @db.Uuid
+  fileName            String              @map("file_name") @db.VarChar(120)
+  fileDigest          String              @map("file_digest") @db.Char(64)
+  requestKey          String              @map("request_key") @db.Uuid
+  requestDigest       String              @map("request_digest") @db.Char(64)
+  previewRevision     Int                 @default(1) @map("preview_revision")
+  status              String              @db.VarChar(20)
+  rowCount            Int                 @map("row_count")
+  errorCount          Int                 @map("error_count")
+  fileErrors          Json                @default("[]") @map("file_errors") @db.JsonB
+  createdByIdentityId String              @map("created_by_identity_id") @db.Uuid
+  reason              String              @db.VarChar(240)
+  createdAt           DateTime            @default(now()) @map("created_at") @db.Timestamptz()
+  tenant              Tenant              @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  createdBy           Identity            @relation("EmployeeImportCreatedBy", fields: [createdByIdentityId], references: [id], onDelete: Restrict)
+  rows                EmployeeImportRow[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, requestKey])
+  @@index([tenantId, createdAt])
+  @@map("employee_import_batches")
+}
+
+model EmployeeImportRow {
+  id               String              @id @db.Uuid
+  tenantId         String              @map("tenant_id") @db.Uuid
+  batchId          String              @map("batch_id") @db.Uuid
+  rowNumber        Int                 @map("row_number")
+  normalizedValues Json                @map("normalized_values") @db.JsonB
+  errors           Json                @default("[]") @db.JsonB
+  createdAt        DateTime            @default(now()) @map("created_at") @db.Timestamptz()
+  tenant           Tenant              @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  batch            EmployeeImportBatch @relation(fields: [tenantId, batchId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, batchId, rowNumber])
+  @@map("employee_import_rows")
 }
 
 model EmployeeAssignment {

@@ -33,6 +33,8 @@ import {
   employeeCompensationRevisionSchema,
   employeeChecklistTaskCreateSchema,
   employeeChecklistTaskCompletionSchema,
+  employeeImportUploadSchema,
+  parseEmployeeImportCsv,
   employeeAssignmentCreateSchema,
 } from './index';
 it('trims names while preserving employee identifiers as strings', () => {
@@ -181,6 +183,75 @@ it('normalizes checklist codes and rejects unrecognized task fields', () => {
       completedByIdentityId: crypto.randomUUID(),
     }).success,
   ).toBe(false);
+});
+it('parses the fixed employee CSV template with physical row numbers', () => {
+  const header =
+    'employee_number,display_name,legal_name,joining_date,branch_code,department_code,designation_code,manager_employee_number,top_level_reason';
+  const result = parseEmployeeImportCsv(
+    `${header}\r\nEMP-001,"Sana,\nKhan",,2026-09-14,LHR-01,ENG,SWE,,Company leader\r\n\r\nEMP-002,Ali Khan,,2026-09-15,LHR-01,ENG,SWE,EMP-001,`,
+  );
+  expect(result.fileErrors).toEqual([]);
+  expect(result.rows).toMatchObject([
+    {
+      rowNumber: 2,
+      values: { employeeNumber: 'EMP-001', name: 'Sana,\nKhan' },
+      errors: [],
+    },
+    {
+      rowNumber: 5,
+      values: {
+        employeeNumber: 'EMP-002',
+        managerEmployeeNumber: 'EMP-001',
+      },
+      errors: [],
+    },
+  ]);
+  expect(
+    employeeImportUploadSchema.safeParse({
+      fileName: '../employees.csv',
+      content: header,
+      reason: 'Preview employee import',
+    }).success,
+  ).toBe(false);
+  expect(
+    employeeImportUploadSchema.safeParse({
+      fileName: 'employees.csv',
+      content: 'é'.repeat(40_000),
+      reason: 'Preview employee import',
+    }).success,
+  ).toBe(false);
+  const afterBlankLines = parseEmployeeImportCsv(
+    `${header}${'\n'.repeat(300)}EMP-003,Ayesha Khan,,2026-09-16,LHR-01,ENG,SWE,,Company leader`,
+  );
+  expect(afterBlankLines.fileErrors).toEqual([]);
+  expect(afterBlankLines.rows).toMatchObject([{ rowNumber: 301 }]);
+});
+
+it('reports malformed, duplicate and spreadsheet-formula CSV values', () => {
+  const header =
+    'employee_number,display_name,legal_name,joining_date,branch_code,department_code,designation_code,manager_employee_number,top_level_reason';
+  const parsed = parseEmployeeImportCsv(
+    `${header}\nEMP-001,=CMD(),,bad-date,LHR,ENG,SWE,,ok\nEMP-001,Second Person,,2026-09-14,LHR,ENG,SWE,,Top level`,
+  );
+  expect(parsed.rows[0].errors).toEqual(
+    expect.arrayContaining([
+      { field: 'name', code: 'spreadsheet_formula' },
+      { field: 'joiningDate', code: 'invalid_value' },
+    ]),
+  );
+  expect(parsed.rows[1].errors).toContainEqual({
+    field: 'employeeNumber',
+    code: 'duplicate_employee_number',
+  });
+  expect(parseEmployeeImportCsv('wrong,headers').fileErrors).toEqual([
+    { field: 'headers', code: 'invalid_headers' },
+  ]);
+  expect(parseEmployeeImportCsv(`${header}\n"unterminated`).fileErrors).toEqual(
+    [{ field: 'file', code: 'malformed_csv' }],
+  );
+  expect(parseEmployeeImportCsv(`${header}\n"closed"junk`).fileErrors).toEqual([
+    { field: 'file', code: 'malformed_csv' },
+  ]);
 });
 it('accepts only explicit administrator invitation authority', () => {
   expect(

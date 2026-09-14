@@ -309,10 +309,11 @@ describe('durable outbox worker with real PostgreSQL and Redis', () => {
     ).toBe(0);
   });
 
-  it('observes checklist lifecycle facts without performing workflow mutations', async () => {
+  it('observes checklist and import facts without performing workflow mutations', async () => {
     for (const type of [
       'employee.checklist.created.v1',
       'employee.checklist.completed.v1',
+      'employee.import_previewed.v1',
     ]) {
       const event = await admin.outboxEvent.create({
         data: {

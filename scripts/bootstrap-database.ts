@@ -123,6 +123,10 @@ try {
     'CREATE POLICY platform_control ON compensation_component_versions FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON checklist_tasks',
     'CREATE POLICY platform_control ON checklist_tasks FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
+    'DROP POLICY IF EXISTS platform_control ON employee_import_batches',
+    'CREATE POLICY platform_control ON employee_import_batches FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
+    'DROP POLICY IF EXISTS platform_control ON employee_import_rows',
+    'CREATE POLICY platform_control ON employee_import_rows FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON company_policy_versions',
     'CREATE POLICY platform_control ON company_policy_versions FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON plan_versions',
@@ -188,6 +192,9 @@ try {
     'GRANT SELECT, INSERT, UPDATE ON checklist_tasks TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
+    'GRANT SELECT, INSERT, UPDATE ON employee_import_batches, employee_import_rows TO kinto_control_owner',
+  );
+  await database.$executeRawUnsafe(
     'GRANT SELECT ON plan_versions TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
@@ -245,6 +252,7 @@ try {
     'public.read_tenant_employee_private_details(uuid, boolean, uuid, uuid)',
     'public.read_tenant_employee_compensation(uuid, boolean, uuid, uuid)',
     'public.read_tenant_employee_checklist(uuid, boolean, uuid, uuid)',
+    'public.read_tenant_employee_import_preview(uuid, boolean, uuid, uuid)',
     'public.create_tenant_employee(uuid, boolean, uuid, uuid, uuid, uuid, varchar, varchar, varchar, date, varchar, uuid, uuid, uuid, uuid, varchar, varchar, uuid, uuid)',
     'public.update_tenant_employee_profile(uuid, boolean, uuid, uuid, integer, varchar, varchar, varchar, uuid, uuid)',
     'public.create_tenant_employee_assignment(uuid, boolean, uuid, uuid, uuid, integer, date, uuid, uuid, uuid, uuid, varchar, varchar, uuid, uuid)',
@@ -256,6 +264,7 @@ try {
     'public.revise_tenant_employee_compensation(uuid, boolean, uuid, uuid, uuid, integer, date, jsonb, varchar, uuid, uuid)',
     'public.create_tenant_employee_checklist_task(uuid, boolean, uuid, uuid, uuid, varchar, varchar, varchar, uuid, date, varchar, uuid, uuid)',
     'public.complete_tenant_employee_checklist_task(uuid, boolean, uuid, uuid, uuid, integer, varchar, uuid, uuid)',
+    'public.create_tenant_employee_import_preview_idempotent(uuid, boolean, uuid, uuid, varchar, uuid, varchar, varchar, jsonb, jsonb, varchar, uuid, uuid)',
   ]) {
     await database.$executeRawUnsafe(
       `ALTER FUNCTION ${signature} OWNER TO kinto_control_owner`,
@@ -278,6 +287,9 @@ try {
     'public.reject_compensation_version_overlap()',
     'public.tenant_checklist_authorized(uuid, boolean, uuid)',
     'public.create_final_settlement_checklist()',
+    'public.tenant_employee_import_authorized(uuid, boolean, uuid)',
+    'public.employee_import_preview_json(uuid, uuid)',
+    'public.create_tenant_employee_import_preview(uuid, boolean, uuid, uuid, varchar, varchar, jsonb, jsonb, varchar, uuid, uuid)',
   ])
     await database.$executeRawUnsafe(
       `ALTER FUNCTION ${signature} OWNER TO kinto_control_owner`,

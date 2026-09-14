@@ -35,6 +35,7 @@ import {
   scheduleTenantEmployeeTermination,
   updateTenantEmployeePrivateDetails,
   reviseTenantEmployeeCompensation,
+  createTenantEmployeeImportPreview,
   type PrismaClient,
 } from '@kinto/database';
 import { processEvent } from '../apps/worker/src/processor';
@@ -69,6 +70,8 @@ async function snapshot(db: PrismaClient) {
       'employee_account_requests',
       'employee_assignments',
       'employee_identity_links',
+      'employee_import_batches',
+      'employee_import_rows',
       'employee_invitations',
       'employee_private_details',
       'employees',
@@ -114,6 +117,12 @@ async function snapshot(db: PrismaClient) {
       orderBy: { id: 'asc' },
     }),
     employeeIdentityLinks: await db.employeeIdentityLink.findMany({
+      orderBy: { id: 'asc' },
+    }),
+    employeeImportBatches: await db.employeeImportBatch.findMany({
+      orderBy: { id: 'asc' },
+    }),
+    employeeImportRows: await db.employeeImportRow.findMany({
       orderBy: { id: 'asc' },
     }),
     employeeAssignments: await db.employeeAssignment.findMany({
@@ -383,6 +392,19 @@ async function main() {
         month: '2-digit',
         day: '2-digit',
       }).format(new Date());
+      await createTenantEmployeeImportPreview(
+        sourceApp,
+        principal,
+        tenantId,
+        randomUUID(),
+        {
+          fileName: 'recovery-employees.csv',
+          content:
+            `employee_number,display_name,legal_name,joining_date,branch_code,department_code,designation_code,manager_employee_number,top_level_reason\n` +
+            `RESTORE-IMPORT-001,Synthetic import preview,,${effectiveFrom},LHR-01,ENG,SWE,,Recovery top-level employee`,
+          reason: 'Recovery fixture employee import preview',
+        },
+      );
       const policy = await createOrganizationPolicyDraft(
         sourceApp,
         principal,
@@ -753,7 +775,7 @@ async function main() {
     const policies = await restored.$queryRaw<
       { enabled: boolean; forced: boolean }[]
     >`SELECT relrowsecurity AS enabled, relforcerowsecurity AS forced FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND relkind='r' AND relname <> '_prisma_migrations'`;
-    assert.equal(policies.length, 34);
+    assert.equal(policies.length, 36);
     assert.ok(policies.every((row) => row.enabled && row.forced));
     assert.deepEqual(await restoredApp.employee.findMany(), []);
     stage = 'restored tenant lifecycle visibility';
@@ -811,6 +833,10 @@ async function main() {
       );
       assert.equal(
         await restored.compensationAgreement.count({ where: { tenantId } }),
+        1,
+      );
+      assert.equal(
+        await restored.employeeImportBatch.count({ where: { tenantId } }),
         1,
       );
     }
@@ -871,6 +897,7 @@ async function main() {
       employeeAssignmentsPreserved: true,
       employeePrivateDetailsPreserved: true,
       employeeChecklistsPreserved: true,
+      employeeImportPreviewsPreserved: true,
       employeeCompensationHistoryPreserved: true,
       completeEmployeeActivationPreserved: true,
       scheduledTerminationPreserved: true,
