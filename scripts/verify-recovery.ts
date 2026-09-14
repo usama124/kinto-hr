@@ -58,6 +58,7 @@ async function snapshot(db: PrismaClient) {
       'administrator_invitations',
       'audit_events',
       'branches',
+      'checklist_tasks',
       'company_policy_versions',
       'company_provisioning_requests',
       'compensation_agreements',
@@ -131,6 +132,7 @@ async function snapshot(db: PrismaClient) {
       await db.compensationComponentVersion.findMany({
         orderBy: { id: 'asc' },
       }),
+    checklistTasks: await db.checklistTask.findMany({ orderBy: { id: 'asc' } }),
     employmentPeriods: await db.employmentPeriod.findMany({
       orderBy: { id: 'asc' },
     }),
@@ -751,7 +753,7 @@ async function main() {
     const policies = await restored.$queryRaw<
       { enabled: boolean; forced: boolean }[]
     >`SELECT relrowsecurity AS enabled, relforcerowsecurity AS forced FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND relkind='r' AND relname <> '_prisma_migrations'`;
-    assert.equal(policies.length, 33);
+    assert.equal(policies.length, 34);
     assert.ok(policies.every((row) => row.enabled && row.forced));
     assert.deepEqual(await restoredApp.employee.findMany(), []);
     stage = 'restored tenant lifecycle visibility';
@@ -868,6 +870,7 @@ async function main() {
       organizationCatalogsPreserved: true,
       employeeAssignmentsPreserved: true,
       employeePrivateDetailsPreserved: true,
+      employeeChecklistsPreserved: true,
       employeeCompensationHistoryPreserved: true,
       completeEmployeeActivationPreserved: true,
       scheduledTerminationPreserved: true,

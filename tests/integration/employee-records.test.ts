@@ -11,9 +11,12 @@ import {
   readTenantEmployee,
   readTenantEmployeePrivateDetails,
   readTenantEmployeeCompensation,
+  readTenantEmployeeChecklist,
   readTenantEmployees,
   updateTenantEmployeePrivateDetails,
   reviseTenantEmployeeCompensation,
+  createTenantEmployeeChecklistTask,
+  completeTenantEmployeeChecklistTask,
   updateTenantEmployeeProfile,
 } from '@kinto/database';
 
@@ -168,6 +171,9 @@ describe('tenant employee records and effective assignments', () => {
       where: { tenantId: { in: tenants } },
     });
     await admin.compensationAgreement.deleteMany({
+      where: { tenantId: { in: tenants } },
+    });
+    await admin.checklistTask.deleteMany({
       where: { tenantId: { in: tenants } },
     });
     await admin.employeeAssignment.deleteMany({
@@ -565,6 +571,117 @@ describe('tenant employee records and effective assignments', () => {
     expect(audit).toHaveLength(2);
     expect(outbox).toHaveLength(2);
     expect(JSON.stringify({ audit, outbox })).not.toContain('110000');
+  });
+
+  it('versions tenant-scoped onboarding tasks without exposing workflow writes to payroll', async () => {
+    const refs = await setupOrganization(tenantId, identities.owner, 'CL');
+    const created = await createTenantEmployee(
+      runtime,
+      actor(identities.hr),
+      tenantId,
+      {
+        employeeNumber: 'EMP-CL-001',
+        name: 'Checklist Employee',
+        joiningDate: date(0),
+        employmentType: 'monthly_salaried',
+        ...refs,
+        managerEmployeeId: null,
+        topLevelReason: 'Company leadership role',
+        reason: 'Create checklist fixture',
+      },
+    );
+    const task = await createTenantEmployeeChecklistTask(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      created.id,
+      {
+        lifecycle: 'onboarding',
+        taskCode: ' collect_documents ',
+        title: 'Collect signed documents',
+        assigneeIdentityId: identities.hr,
+        dueDate: date(2),
+        reason: 'Prepare employee onboarding',
+      },
+    );
+    expect(task.version).toBe(1);
+    await expect(
+      createTenantEmployeeChecklistTask(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        created.id,
+        {
+          lifecycle: 'onboarding',
+          taskCode: 'COLLECT_DOCUMENTS',
+          title: 'Duplicate task',
+          assigneeIdentityId: identities.owner,
+          dueDate: date(2),
+          reason: 'Attempt duplicate checklist task',
+        },
+      ),
+    ).rejects.toThrow('CONFLICT');
+    await expect(
+      readTenantEmployeeChecklist(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        created.id,
+      ),
+    ).resolves.toMatchObject({
+      tasks: [
+        {
+          id: task.id,
+          lifecycle: 'onboarding',
+          taskCode: 'COLLECT_DOCUMENTS',
+          assigneeIdentityId: identities.hr,
+          status: 'pending',
+          version: 1,
+        },
+      ],
+    });
+    await expect(
+      completeTenantEmployeeChecklistTask(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        created.id,
+        task.id,
+        { expectedVersion: 1, reason: 'Documents verified' },
+      ),
+    ).resolves.toEqual({ id: task.id, version: 2 });
+    await expect(
+      completeTenantEmployeeChecklistTask(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        created.id,
+        task.id,
+        { expectedVersion: 1, reason: 'Repeat completion' },
+      ),
+    ).rejects.toThrow('STALE_VERSION');
+    await expect(
+      readTenantEmployeeChecklist(
+        runtime,
+        actor(identities.payroll),
+        tenantId,
+        created.id,
+      ),
+    ).rejects.toThrow('FORBIDDEN');
+    await expect(
+      readTenantEmployeeChecklist(
+        runtime,
+        actor(identities.owner, false),
+        tenantId,
+        created.id,
+      ),
+    ).rejects.toThrow('FORBIDDEN');
+    await expect(runtime.checklistTask.findMany()).rejects.toThrow();
+    await expect(
+      admin.auditEvent.findMany({
+        where: { tenantId, resourceId: task.id },
+      }),
+    ).resolves.toHaveLength(2);
   });
 
   it('versions profiles and rejects stale, no-op and inactive organization references', async () => {

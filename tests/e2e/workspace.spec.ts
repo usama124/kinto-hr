@@ -559,11 +559,13 @@ test('HR creates, activates, separates, archives and rehires an employee', async
   const departmentId = 'eb071d7d-89e8-493a-b5b7-3edaf41d4ae3';
   const designationId = '5fa15252-0934-4abe-8074-67b764424d65';
   const assignmentId = '2415cafa-d6dc-45ae-8b50-4cd2d0035cdd';
+  const checklistTaskId = 'c4f368b7-6690-47d4-98db-09defce41b8e';
   const csrf = 'b'.repeat(43);
   const joiningDate = '2026-09-08';
   const employees: Record<string, unknown>[] = [];
   let privateDetails: Record<string, unknown> | null = null;
   let compensation: Record<string, unknown> | null = null;
+  const checklistTasks: Record<string, unknown>[] = [];
   const organization = {
     legalEntity: null,
     branches: [
@@ -605,6 +607,7 @@ test('HR creates, activates, separates, archives and rehires an employee', async
       contentType: 'application/json',
       body: JSON.stringify({
         csrfToken: csrf,
+        identityId: '18e19e63-bb7d-4b2d-87e8-2117f065951a',
         selectedTenantId: tenantId,
         tenants: [
           {
@@ -622,6 +625,63 @@ test('HR creates, activates, separates, archives and rehires an employee', async
       contentType: 'application/json',
       body: JSON.stringify(organization),
     }),
+  );
+  await page.route(
+    `**/api/v1/tenants/${tenantId}/employees/${employeeId}/checklist**`,
+    async (route) => {
+      const request = route.request();
+      if (request.url().endsWith('/complete')) {
+        expect(request.headers()['x-csrf-token']).toBe(csrf);
+        expect(request.postDataJSON()).toEqual({
+          expectedVersion: 1,
+          reason: 'Documents verified',
+        });
+        Object.assign(checklistTasks[0], {
+          status: 'completed',
+          version: 2,
+          completedAt: '2026-09-14T12:00:00.000Z',
+          completedByIdentityId: '18e19e63-bb7d-4b2d-87e8-2117f065951a',
+        });
+        return route.fulfill({
+          status: 201,
+          contentType: 'application/json',
+          body: JSON.stringify({ id: checklistTaskId, version: 2 }),
+        });
+      }
+      if (request.method() === 'POST') {
+        expect(request.headers()['x-csrf-token']).toBe(csrf);
+        expect(request.postDataJSON()).toMatchObject({
+          lifecycle: 'onboarding',
+          taskCode: 'COLLECT_DOCUMENTS',
+          title: 'Collect signed documents',
+          assigneeIdentityId: '18e19e63-bb7d-4b2d-87e8-2117f065951a',
+          dueDate: '2026-09-10',
+        });
+        checklistTasks.push({
+          id: checklistTaskId,
+          employmentPeriodId: '3265216e-bcea-4d3f-854f-b728e9534531',
+          lifecycle: 'onboarding',
+          taskCode: 'COLLECT_DOCUMENTS',
+          title: 'Collect signed documents',
+          assigneeIdentityId: '18e19e63-bb7d-4b2d-87e8-2117f065951a',
+          dueDate: '2026-09-10',
+          status: 'pending',
+          version: 1,
+          completedAt: null,
+          completedByIdentityId: null,
+        });
+        return route.fulfill({
+          status: 201,
+          contentType: 'application/json',
+          body: JSON.stringify({ id: checklistTaskId, version: 1 }),
+        });
+      }
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ tasks: checklistTasks }),
+      });
+    },
   );
   await page.route(
     `**/api/v1/tenants/${tenantId}/employees/${employeeId}/compensation`,
@@ -911,6 +971,24 @@ test('HR creates, activates, separates, archives and rehires an employee', async
     page.getByText(/Payroll setup remains incomplete/),
   ).toBeVisible();
   await expect(page.getByText(/Salary and bank details remain/)).toBeVisible();
+  await page
+    .getByRole('button', { name: 'Load onboarding/offboarding checklist' })
+    .click();
+  await page.getByLabel('Stable task code').fill('COLLECT_DOCUMENTS');
+  await page.getByLabel('Task title').fill('Collect signed documents');
+  await page.getByLabel('Due date').fill('2026-09-10');
+  await page.getByLabel('Creation reason').fill('Prepare employee onboarding');
+  await page
+    .getByRole('button', { name: 'Create task assigned to me' })
+    .click();
+  await expect(
+    page.getByText(/Collect signed documents.*pending/),
+  ).toBeVisible();
+  page.once('dialog', (dialog) => dialog.accept('Documents verified'));
+  await page.getByRole('button', { name: 'Complete', exact: true }).click();
+  await expect(
+    page.getByText(/Collect signed documents.*completed/),
+  ).toBeVisible();
   await page.getByRole('button', { name: 'Load restricted details' }).click();
   await page.getByLabel('Personal email').fill('sana@example.com');
   await page.getByLabel('CNIC').fill('35202-1234567-1');

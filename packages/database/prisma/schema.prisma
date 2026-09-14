@@ -20,6 +20,7 @@ model Tenant {
   compensationAgreements       CompensationAgreement[]
   salaryComponents             SalaryComponent[]
   compensationComponentVersions CompensationComponentVersion[]
+  checklistTasks               ChecklistTask[]
   employmentPeriods            EmploymentPeriod[]
   employeeAssignments          EmployeeAssignment[]
   auditEvents                  AuditEvent[]
@@ -69,6 +70,9 @@ model Identity {
   revokedEntitlementOverrides  EntitlementOverride[]          @relation("OverrideRevokedBy")
   updatedEmployeePrivateDetails EmployeePrivateDetail[]         @relation("PrivateDetailsUpdatedBy")
   createdCompensationVersions   CompensationComponentVersion[]   @relation("CompensationVersionCreatedBy")
+  assignedChecklistTasks        ChecklistTask[]                   @relation("ChecklistAssignee")
+  completedChecklistTasks       ChecklistTask[]                   @relation("ChecklistCompletedBy")
+  createdChecklistTasks         ChecklistTask[]                   @relation("ChecklistCreatedBy")
 
   @@unique([issuer, subject])
   @@map("identities")
@@ -406,6 +410,7 @@ model Employee {
   managedAssignments     EmployeeAssignment[]    @relation("AssignmentManager")
   privateDetails         EmployeePrivateDetail?
   compensationAgreement CompensationAgreement?
+  checklistTasks         ChecklistTask[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, employeeNumber])
@@ -510,12 +515,43 @@ model EmploymentPeriod {
   tenant           Tenant    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   employee         Employee  @relation(fields: [tenantId, employeeId], references: [tenantId, id], onDelete: Restrict)
   assignments      EmployeeAssignment[]
+  checklistTasks   ChecklistTask[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, id, employeeId])
   @@unique([tenantId, employeeId, periodNumber])
   @@index([tenantId, employeeId, status])
   @@map("employment_periods")
+}
+
+model ChecklistTask {
+  id                    String           @id @db.Uuid
+  tenantId              String           @map("tenant_id") @db.Uuid
+  employeeId            String           @map("employee_id") @db.Uuid
+  employmentPeriodId    String           @map("employment_period_id") @db.Uuid
+  lifecycle             String           @db.VarChar(20)
+  taskCode              String           @map("task_code") @db.VarChar(50)
+  title                 String           @db.VarChar(160)
+  assigneeIdentityId    String           @map("assignee_identity_id") @db.Uuid
+  dueDate               DateTime         @map("due_date") @db.Date
+  status                String           @default("pending") @db.VarChar(20)
+  version               Int              @default(1)
+  completedAt           DateTime?        @map("completed_at") @db.Timestamptz()
+  completedByIdentityId String?          @map("completed_by_identity_id") @db.Uuid
+  createdByIdentityId   String           @map("created_by_identity_id") @db.Uuid
+  createdAt             DateTime         @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt             DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz()
+  tenant                Tenant           @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  employee              Employee         @relation(fields: [tenantId, employeeId], references: [tenantId, id], onDelete: Restrict)
+  employmentPeriod      EmploymentPeriod @relation(fields: [tenantId, employmentPeriodId, employeeId], references: [tenantId, id, employeeId], onDelete: Restrict)
+  assignee              Identity         @relation("ChecklistAssignee", fields: [assigneeIdentityId], references: [id], onDelete: Restrict)
+  completedBy           Identity?        @relation("ChecklistCompletedBy", fields: [completedByIdentityId], references: [id], onDelete: Restrict)
+  createdBy             Identity         @relation("ChecklistCreatedBy", fields: [createdByIdentityId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, employmentPeriodId, taskCode])
+  @@index([tenantId, employeeId, status, dueDate])
+  @@map("checklist_tasks")
 }
 
 model EmployeeAssignment {

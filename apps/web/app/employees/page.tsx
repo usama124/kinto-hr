@@ -6,10 +6,12 @@ import {
   employeeRosterSchema,
   employeePrivateDetailsResponseSchema,
   employeeCompensationResponseSchema,
+  employeeChecklistResponseSchema,
   organizationSnapshotSchema,
   type EmployeeRoster,
   type EmployeePrivateDetailsResponse,
   type EmployeeCompensationResponse,
+  type EmployeeChecklistResponse,
   type OrganizationSnapshot,
 } from '@kinto/contracts';
 
@@ -28,6 +30,7 @@ const todayInKarachi = () =>
 export default function Employees() {
   const [state, setState] = useState<ViewState>('loading');
   const [tenantId, setTenantId] = useState('');
+  const [identityId, setIdentityId] = useState('');
   const [csrf, setCsrf] = useState('');
   const [companyName, setCompanyName] = useState('');
   const [tenantRoles, setTenantRoles] = useState<string[]>([]);
@@ -55,6 +58,9 @@ export default function Employees() {
   >({});
   const [compensation, setCompensation] = useState<
     Record<string, EmployeeCompensationResponse>
+  >({});
+  const [checklists, setChecklists] = useState<
+    Record<string, EmployeeChecklistResponse>
   >({});
   type CompensationDraft = {
     code: string;
@@ -122,6 +128,9 @@ export default function Employees() {
           !data ||
           typeof data !== 'object' ||
           !('selectedTenantId' in data) ||
+          !('identityId' in data) ||
+          typeof data.identityId !== 'string' ||
+          !uuid.test(data.identityId) ||
           !('csrfToken' in data) ||
           typeof data.csrfToken !== 'string' ||
           !('tenants' in data) ||
@@ -145,6 +154,7 @@ export default function Employees() {
         );
         if (!tenant || !('name' in tenant)) throw new Error('Invalid company');
         setTenantId(data.selectedTenantId);
+        setIdentityId(data.identityId);
         setCsrf(data.csrfToken);
         setCompanyName(String(tenant.name));
         if ('roles' in tenant && Array.isArray(tenant.roles))
@@ -217,6 +227,103 @@ export default function Employees() {
       setPrivateDetails((current) => ({ ...current, [employeeId]: details }));
     } catch {
       setMessage('Private employee details could not be loaded.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function loadChecklist(employeeId: string) {
+    setBusy(true);
+    setMessage('');
+    try {
+      const response = await fetch(
+        `/api/v1/tenants/${tenantId}/employees/${employeeId}/checklist`,
+        { cache: 'no-store' },
+      );
+      if (response.status === 403) return setState('denied');
+      if (!response.ok) throw new Error('Request failed');
+      const checklist = employeeChecklistResponseSchema.parse(
+        await response.json(),
+      );
+      setChecklists((current) => ({ ...current, [employeeId]: checklist }));
+    } catch {
+      setMessage('Employee checklist could not be loaded.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function createChecklistTask(
+    event: FormEvent<HTMLFormElement>,
+    employeeId: string,
+  ) {
+    event.preventDefault();
+    setBusy(true);
+    setMessage('');
+    const formElement = event.currentTarget;
+    const form = new FormData(event.currentTarget);
+    try {
+      const response = await fetch(
+        `/api/v1/tenants/${tenantId}/employees/${employeeId}/checklist`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': csrf,
+          },
+          body: JSON.stringify({
+            lifecycle: form.get('checklistLifecycle'),
+            taskCode: form.get('checklistTaskCode'),
+            title: form.get('checklistTitle'),
+            assigneeIdentityId: identityId,
+            dueDate: form.get('checklistDueDate'),
+            reason: form.get('checklistReason'),
+          }),
+        },
+      );
+      if (response.status === 403) return setState('denied');
+      if (!response.ok) throw new Error('Request failed');
+      formElement.reset();
+      await loadChecklist(employeeId);
+      setMessage('Checklist task created and assigned to you.');
+    } catch {
+      setMessage(
+        'Checklist task was not created. Check the lifecycle, code, due date and duplicate tasks.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function completeChecklistTask(
+    employeeId: string,
+    taskId: string,
+    expectedVersion: number,
+  ) {
+    const reason = window.prompt('Completion reason');
+    if (!reason) return;
+    setBusy(true);
+    setMessage('');
+    try {
+      const response = await fetch(
+        `/api/v1/tenants/${tenantId}/employees/${employeeId}/checklist/${taskId}/complete`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': csrf,
+          },
+          body: JSON.stringify({ expectedVersion, reason }),
+        },
+      );
+      if (response.status === 403) return setState('denied');
+      if (!response.ok) throw new Error('Request failed');
+      await loadChecklist(employeeId);
+      setMessage('Checklist task completed with an audit record.');
+    } catch {
+      setMessage(
+        'Checklist task was not completed. Refresh its current version.',
+      );
     } finally {
       setBusy(false);
     }
@@ -585,6 +692,108 @@ export default function Employees() {
                       </small>
                     </div>
                   </div>
+                  {!checklists[employee.id] ? (
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void loadChecklist(employee.id)}
+                    >
+                      Load onboarding/offboarding checklist
+                    </button>
+                  ) : (
+                    <div className="employee-activation">
+                      <p className="employee-schedule">
+                        {checklists[employee.id].tasks.length} checklist task(s)
+                      </p>
+                      {checklists[employee.id].tasks.map((task) => (
+                        <p key={task.id}>
+                          <strong>{task.title}</strong> · {task.lifecycle} · due{' '}
+                          {task.dueDate} · {task.status}
+                          {task.status === 'pending' && (
+                            <button
+                              type="button"
+                              className="secondary-button"
+                              disabled={busy}
+                              onClick={() =>
+                                void completeChecklistTask(
+                                  employee.id,
+                                  task.id,
+                                  task.version,
+                                )
+                              }
+                            >
+                              Complete
+                            </button>
+                          )}
+                        </p>
+                      ))}
+                      {employee.status !== 'terminated' &&
+                        employee.status !== 'archived' && (
+                          <form
+                            className="employee-activation"
+                            onSubmit={(event) =>
+                              createChecklistTask(event, employee.id)
+                            }
+                          >
+                            <label>
+                              Lifecycle
+                              <select name="checklistLifecycle" required>
+                                <option value="onboarding">Onboarding</option>
+                                {employee.finalWorkingDate && (
+                                  <option value="offboarding">
+                                    Offboarding
+                                  </option>
+                                )}
+                              </select>
+                            </label>
+                            <label>
+                              Stable task code
+                              <input
+                                name="checklistTaskCode"
+                                placeholder="COLLECT_DOCUMENTS"
+                                pattern="[A-Za-z][A-Za-z0-9_]*"
+                                maxLength={50}
+                                required
+                              />
+                            </label>
+                            <label>
+                              Task title
+                              <input
+                                name="checklistTitle"
+                                maxLength={160}
+                                required
+                              />
+                            </label>
+                            <label>
+                              Due date
+                              <input
+                                name="checklistDueDate"
+                                type="date"
+                                min={employee.joiningDate}
+                                max={employee.finalWorkingDate ?? undefined}
+                                required
+                              />
+                            </label>
+                            <label>
+                              Creation reason
+                              <input
+                                name="checklistReason"
+                                minLength={3}
+                                maxLength={240}
+                                required
+                              />
+                            </label>
+                            <button
+                              className="secondary-button"
+                              disabled={busy}
+                            >
+                              Create task assigned to me
+                            </button>
+                          </form>
+                        )}
+                    </div>
+                  )}
                   {!privateDetails[employee.id] ? (
                     <button
                       className="secondary-button"

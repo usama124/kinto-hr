@@ -208,6 +208,9 @@ describe('scheduled employee termination and access revocation', () => {
     await admin.employeeAssignment.deleteMany({
       where: { tenantId: { in: tenants } },
     });
+    await admin.checklistTask.deleteMany({
+      where: { tenantId: { in: tenants } },
+    });
     await admin.employmentPeriod.deleteMany({
       where: { tenantId: { in: tenants } },
     });
@@ -277,6 +280,20 @@ describe('scheduled employee termination and access revocation', () => {
         },
       }),
     ).resolves.toMatchObject({ reason: 'Approved employee separation' });
+    await expect(
+      admin.checklistTask.findMany({
+        where: { tenantId, employeeId: employee.id },
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        lifecycle: 'offboarding',
+        taskCode: 'FINAL_SETTLEMENT_REVIEW',
+        title: 'Review final settlement inputs',
+        assigneeIdentityId: hrId,
+        dueDate: new Date(`${finalWorkingDate}T00:00:00.000Z`),
+        status: 'pending',
+      }),
+    ]);
   });
 
   it('rejects stale, repeated, unauthorized and manager-with-active-report schedules', async () => {

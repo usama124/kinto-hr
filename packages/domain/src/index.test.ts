@@ -36,6 +36,14 @@ describe('capacity and permissions', () => {
     expect(hasPermission(['owner'], 'employees.write')).toBe(true);
     expect(hasPermission(['hr_admin'], 'employees.read')).toBe(true);
     expect(hasPermission(['hr_admin'], 'employees.private.write')).toBe(true);
+    expect(hasPermission(['owner'], 'employees.checklists.write')).toBe(true);
+    expect(hasPermission(['hr_admin'], 'employees.checklists.read')).toBe(true);
+    expect(
+      hasPermission(['payroll_preparer'], 'employees.checklists.read'),
+    ).toBe(false);
+    expect(hasPermission(['employee'], 'employees.checklists.write')).toBe(
+      false,
+    );
     expect(hasPermission(['payroll_preparer'], 'employees.private.read')).toBe(
       false,
     );

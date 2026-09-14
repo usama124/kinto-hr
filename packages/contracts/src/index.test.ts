@@ -31,6 +31,8 @@ import {
   employeeRehireSchema,
   employeePrivateDetailsUpdateSchema,
   employeeCompensationRevisionSchema,
+  employeeChecklistTaskCreateSchema,
+  employeeChecklistTaskCompletionSchema,
   employeeAssignmentCreateSchema,
 } from './index';
 it('trims names while preserving employee identifiers as strings', () => {
@@ -147,6 +149,38 @@ it('accepts one typed basic salary and rejects ambiguous compensation snapshots'
         reason: 'Invalid compensation snapshot',
       }).success,
     ).toBe(false);
+});
+it('normalizes checklist codes and rejects unrecognized task fields', () => {
+  expect(
+    employeeChecklistTaskCreateSchema.parse({
+      lifecycle: 'onboarding',
+      taskCode: ' collect_documents ',
+      title: ' Collect signed documents ',
+      assigneeIdentityId: crypto.randomUUID(),
+      dueDate: '2026-09-20',
+      reason: 'Prepare employee onboarding',
+    }),
+  ).toMatchObject({
+    taskCode: 'COLLECT_DOCUMENTS',
+    title: 'Collect signed documents',
+  });
+  expect(
+    employeeChecklistTaskCreateSchema.safeParse({
+      lifecycle: 'onboarding',
+      taskCode: 'COLLECT-DOCUMENTS',
+      title: 'Collect signed documents',
+      assigneeIdentityId: crypto.randomUUID(),
+      dueDate: '2026-09-20',
+      reason: 'Prepare employee onboarding',
+    }).success,
+  ).toBe(false);
+  expect(
+    employeeChecklistTaskCompletionSchema.safeParse({
+      expectedVersion: 1,
+      reason: 'Documents verified',
+      completedByIdentityId: crypto.randomUUID(),
+    }).success,
+  ).toBe(false);
 });
 it('accepts only explicit administrator invitation authority', () => {
   expect(

@@ -490,6 +490,50 @@ export type EmployeeCompensationRevision = z.infer<
 export type EmployeeCompensationResponse = z.infer<
   typeof employeeCompensationResponseSchema
 >;
+const checklistTaskCodeSchema = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .min(1)
+  .max(50)
+  .regex(/^[A-Z][A-Z0-9_]*$/);
+export const employeeChecklistTaskCreateSchema = z.strictObject({
+  lifecycle: z.enum(['onboarding', 'offboarding']),
+  taskCode: checklistTaskCodeSchema,
+  title: z.string().trim().min(1).max(160),
+  assigneeIdentityId: tenantIdSchema,
+  dueDate: z.iso.date(),
+  reason: employeeReasonSchema,
+});
+export const employeeChecklistTaskCompletionSchema = z.strictObject({
+  expectedVersion: z.number().int().positive(),
+  reason: employeeReasonSchema,
+});
+const employeeChecklistTaskViewSchema = z.strictObject({
+  id: tenantIdSchema,
+  employmentPeriodId: tenantIdSchema,
+  lifecycle: z.enum(['onboarding', 'offboarding']),
+  taskCode: checklistTaskCodeSchema,
+  title: z.string().min(1).max(160),
+  assigneeIdentityId: tenantIdSchema,
+  dueDate: z.iso.date(),
+  status: z.enum(['pending', 'completed']),
+  version: z.number().int().positive(),
+  completedAt: z.iso.datetime({ offset: true }).nullable(),
+  completedByIdentityId: tenantIdSchema.nullable(),
+});
+export const employeeChecklistResponseSchema = z.strictObject({
+  tasks: employeeChecklistTaskViewSchema.array().max(250),
+});
+export type EmployeeChecklistTaskCreate = z.infer<
+  typeof employeeChecklistTaskCreateSchema
+>;
+export type EmployeeChecklistTaskCompletion = z.infer<
+  typeof employeeChecklistTaskCompletionSchema
+>;
+export type EmployeeChecklistResponse = z.infer<
+  typeof employeeChecklistResponseSchema
+>;
 export const healthSchema = z
   .object({ status: z.literal('ok'), service: z.literal('kinto-api') })
   .strict();
