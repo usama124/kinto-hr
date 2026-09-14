@@ -50,6 +50,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 14 September 2026 — employee import upload and validation preview
+
+Engineering started P01-05 with a fixed create-only CSV template and a separate preview boundary. Owner/HR users with recent MFA can submit a bounded CSV and reason; parsing rejects malformed quoting, unexpected columns, invalid required values, duplicate employee numbers and spreadsheet-formula-leading text. PostgreSQL adds current tenant duplicate and active organization/manager validation, then retains only normalized rows, safe error codes, the exact SHA-256 digest and preview revision under forced RLS. Raw CSV content and employees are not stored by preview. Confirmation must later match the digest/revision, revalidate authorization/references/capacity, commit atomically and return the prior result on retry. See [evidence](../evidence/phase-01/employee-import-preview.md).
+
 ### 14 September 2026 — employment-period checklists
 
 Engineering completed the basic P01-04 checklist boundary. Owner/HR users with recent MFA can create stable-code onboarding or offboarding tasks for the current employment period, assign them to an active owner/HR member and complete them with optimistic versions and actor/time evidence. Termination scheduling atomically creates one `FINAL_SETTLEMENT_REVIEW` task due on the final working date; it is a Phase 3 handoff and performs no calculation. Forced RLS, composite tenant references, reasoned audit/outbox facts and recovery coverage retain task history through archive and rehire. Asset clearance remains Phase 5. See [evidence](../evidence/phase-01/employee-checklists.md).

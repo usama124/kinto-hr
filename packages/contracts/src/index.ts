@@ -295,6 +295,278 @@ export type EmployeeRehire = z.infer<typeof employeeRehireSchema>;
 export type EmployeeAssignmentCreate = z.infer<
   typeof employeeAssignmentCreateSchema
 >;
+export const employeeImportHeaders = [
+  'employee_number',
+  'display_name',
+  'legal_name',
+  'joining_date',
+  'branch_code',
+  'department_code',
+  'designation_code',
+  'manager_employee_number',
+  'top_level_reason',
+] as const;
+const importFileNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(120)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._ -]*\.csv$/i);
+export const employeeImportUploadSchema = z.strictObject({
+  fileName: importFileNameSchema,
+  content: z
+    .string()
+    .min(1)
+    .max(65_536)
+    .refine((value) => !value.includes('\0'))
+    .refine((value) => new TextEncoder().encode(value).byteLength <= 65_536),
+  reason: employeeReasonSchema,
+});
+export type EmployeeImportUpload = z.infer<typeof employeeImportUploadSchema>;
+export const employeeImportErrorSchema = z.strictObject({
+  field: z.string().min(1).max(40),
+  code: z.enum([
+    'malformed_csv',
+    'invalid_headers',
+    'empty_value',
+    'invalid_value',
+    'spreadsheet_formula',
+    'duplicate_employee_number',
+    'unknown_branch',
+    'unknown_department',
+    'unknown_designation',
+    'unknown_manager',
+  ]),
+});
+export type EmployeeImportError = z.infer<typeof employeeImportErrorSchema>;
+const employeeImportValuesSchema = z.strictObject({
+  employeeNumber: employeeNumberSchema.nullable(),
+  name: employeeNameSchema.nullable(),
+  legalName: employeeNameSchema.nullable(),
+  joiningDate: z.iso.date().nullable(),
+  branchCode: z.string().max(20).nullable(),
+  departmentCode: z.string().max(20).nullable(),
+  designationCode: z.string().max(20).nullable(),
+  managerEmployeeNumber: employeeNumberSchema.nullable(),
+  topLevelReason: z.string().max(240).nullable(),
+});
+export const employeeImportParsedRowSchema = z.strictObject({
+  rowNumber: z.number().int().min(2).max(65_537),
+  values: employeeImportValuesSchema,
+  errors: employeeImportErrorSchema.array().max(20),
+});
+export type EmployeeImportParsedRow = z.infer<
+  typeof employeeImportParsedRowSchema
+>;
+export const employeeImportPreviewSchema = z.strictObject({
+  id: tenantIdSchema,
+  fileName: importFileNameSchema,
+  fileDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  previewRevision: z.number().int().positive(),
+  status: z.enum(['ready', 'invalid']),
+  rowCount: z.number().int().min(0).max(250),
+  errorCount: z.number().int().min(0),
+  fileErrors: employeeImportErrorSchema.array().max(20),
+  rows: employeeImportParsedRowSchema.array().max(250),
+  createdAt: z.iso.datetime({ offset: true }),
+});
+export type EmployeeImportPreview = z.infer<typeof employeeImportPreviewSchema>;
+
+const safeSpreadsheetValue = (value: string) => !/^[=+\-@\t\r]/.test(value);
+function csvCells(
+  content: string,
+): { cells: string[]; rowNumber: number }[] | null {
+  const rows: { cells: string[]; rowNumber: number }[] = [];
+  let row: string[] = [];
+  let cell = '';
+  let quoted = false;
+  let quoteClosed = false;
+  let physicalLine = 1;
+  let rowNumber = 1;
+  for (let index = 0; index < content.length; index += 1) {
+    const character = content[index];
+    if (quoted) {
+      if (character === '"' && content[index + 1] === '"') {
+        cell += '"';
+        index += 1;
+      } else if (character === '"') {
+        quoted = false;
+        quoteClosed = true;
+      } else {
+        cell += character;
+        if (character === '\n') physicalLine += 1;
+      }
+      continue;
+    }
+    if (character === '"') {
+      if (cell.length || quoteClosed) return null;
+      quoted = true;
+    } else if (character === ',') {
+      row.push(cell);
+      cell = '';
+      quoteClosed = false;
+    } else if (character === '\n') {
+      row.push(cell.endsWith('\r') ? cell.slice(0, -1) : cell);
+      rows.push({ cells: row, rowNumber });
+      physicalLine += 1;
+      rowNumber = physicalLine;
+      row = [];
+      cell = '';
+      quoteClosed = false;
+    } else {
+      if (quoteClosed) return null;
+      cell += character;
+    }
+  }
+  if (quoted) return null;
+  row.push(cell.endsWith('\r') ? cell.slice(0, -1) : cell);
+  if (row.some((value) => value.length) || rows.length === 0)
+    rows.push({ cells: row, rowNumber });
+  return rows;
+}
+export function parseEmployeeImportCsv(content: string): {
+  fileErrors: EmployeeImportError[];
+  rows: EmployeeImportParsedRow[];
+} {
+  const parsed = csvCells(content.replace(/^\uFEFF/, ''));
+  if (!parsed)
+    return {
+      fileErrors: [{ field: 'file', code: 'malformed_csv' }],
+      rows: [],
+    };
+  const [headerRow = { cells: [] }, ...data] = parsed;
+  const headers = headerRow.cells;
+  if (
+    headers.length !== employeeImportHeaders.length ||
+    headers.some(
+      (header, index) => header.trim() !== employeeImportHeaders[index],
+    )
+  )
+    return {
+      fileErrors: [{ field: 'headers', code: 'invalid_headers' }],
+      rows: [],
+    };
+  const nonEmptyData = data.filter(({ cells }) =>
+    cells.some((cell) => cell.trim()),
+  );
+  if (nonEmptyData.length > 250)
+    return {
+      fileErrors: [{ field: 'file', code: 'invalid_value' }],
+      rows: [],
+    };
+  const seen = new Set<string>();
+  const rows = nonEmptyData.map(({ cells, rowNumber }) => {
+    const errors: EmployeeImportError[] = [];
+    if (cells.length !== employeeImportHeaders.length)
+      errors.push({ field: 'row', code: 'malformed_csv' });
+    const values = [...cells, ...Array(9).fill('')]
+      .slice(0, 9)
+      .map((value) => value.trim());
+    const [
+      employeeNumber,
+      name,
+      legalName,
+      joiningDate,
+      branchCode,
+      departmentCode,
+      designationCode,
+      managerEmployeeNumber,
+      topLevelReason,
+    ] = values;
+    const required = [
+      ['employeeNumber', employeeNumber],
+      ['name', name],
+      ['joiningDate', joiningDate],
+      ['branchCode', branchCode],
+      ['departmentCode', departmentCode],
+      ['designationCode', designationCode],
+    ] as const;
+    for (const [field, value] of required)
+      if (!value) errors.push({ field, code: 'empty_value' });
+    for (const [field, value] of [
+      ['employeeNumber', employeeNumber],
+      ['name', name],
+      ['legalName', legalName],
+      ['branchCode', branchCode],
+      ['departmentCode', departmentCode],
+      ['designationCode', designationCode],
+      ['managerEmployeeNumber', managerEmployeeNumber],
+      ['topLevelReason', topLevelReason],
+    ] as const)
+      if (value && !safeSpreadsheetValue(value))
+        errors.push({ field, code: 'spreadsheet_formula' });
+    const numberResult = employeeNumberSchema.safeParse(employeeNumber);
+    const nameResult = employeeNameSchema.safeParse(name);
+    const legalResult = legalName
+      ? employeeNameSchema.safeParse(legalName)
+      : null;
+    const dateResult = z.iso.date().safeParse(joiningDate);
+    const code = z
+      .string()
+      .trim()
+      .toUpperCase()
+      .min(1)
+      .max(20)
+      .regex(/^[A-Z0-9][A-Z0-9_-]*$/);
+    const branchResult = code.safeParse(branchCode);
+    const departmentResult = code.safeParse(departmentCode);
+    const designationResult = code.safeParse(designationCode);
+    const managerResult = managerEmployeeNumber
+      ? employeeNumberSchema.safeParse(managerEmployeeNumber)
+      : null;
+    const topLevelResult = topLevelReason
+      ? z.string().trim().min(3).max(240).safeParse(topLevelReason)
+      : null;
+    for (const [field, result] of [
+      ['employeeNumber', numberResult],
+      ['name', nameResult],
+      ['legalName', legalResult],
+      ['joiningDate', dateResult],
+      ['branchCode', branchResult],
+      ['departmentCode', departmentResult],
+      ['designationCode', designationResult],
+      ['managerEmployeeNumber', managerResult],
+      ['topLevelReason', topLevelResult],
+    ] as const)
+      if (
+        result &&
+        !result.success &&
+        !errors.some((error) => error.field === field)
+      )
+        errors.push({ field, code: 'invalid_value' });
+    if (!!managerEmployeeNumber === !!topLevelReason)
+      errors.push({ field: 'reporting', code: 'invalid_value' });
+    const normalizedNumber = numberResult.success ? numberResult.data : null;
+    if (normalizedNumber && seen.has(normalizedNumber))
+      errors.push({
+        field: 'employeeNumber',
+        code: 'duplicate_employee_number',
+      });
+    if (normalizedNumber) seen.add(normalizedNumber);
+    return employeeImportParsedRowSchema.parse({
+      rowNumber,
+      values: {
+        employeeNumber: normalizedNumber,
+        name: nameResult.success ? nameResult.data : null,
+        legalName: legalResult?.success ? legalResult.data : null,
+        joiningDate: dateResult.success ? dateResult.data : null,
+        branchCode: branchResult.success ? branchResult.data : null,
+        departmentCode: departmentResult.success ? departmentResult.data : null,
+        designationCode: designationResult.success
+          ? designationResult.data
+          : null,
+        managerEmployeeNumber: managerResult?.success
+          ? managerResult.data
+          : null,
+        topLevelReason: topLevelResult?.success ? topLevelResult.data : null,
+      },
+      errors,
+    });
+  });
+  if (!rows.length)
+    return { fileErrors: [{ field: 'file', code: 'empty_value' }], rows: [] };
+  return { fileErrors: [], rows };
+}
 const employeeAssignmentViewSchema = z.strictObject({
   id: tenantIdSchema,
   effectiveFrom: z.iso.date(),

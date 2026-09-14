@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { PrismaClient, type Prisma } from '@prisma/client';
 import {
   employeeDraftSchema,
@@ -56,6 +56,9 @@ import {
   employeeChecklistTaskCreateSchema,
   employeeChecklistTaskCompletionSchema,
   employeeChecklistResponseSchema,
+  employeeImportUploadSchema,
+  employeeImportPreviewSchema,
+  parseEmployeeImportCsv,
   employeeAssignmentCreateSchema,
   employeeRecordViewSchema,
   employeeRosterSchema,
@@ -69,6 +72,7 @@ import {
   type EmployeeCompensationRevision,
   type EmployeeChecklistTaskCreate,
   type EmployeeChecklistTaskCompletion,
+  type EmployeeImportUpload,
   type EmployeeAssignmentCreate,
 } from '@kinto/contracts';
 import {
@@ -1238,6 +1242,61 @@ function assertPeopleMutation(row?: PeopleMutationRow) {
   if (!row.employee_id || !row.employee_version)
     throw new Error('Invalid employee mutation result');
   return { id: row.employee_id, version: row.employee_version };
+}
+export async function createTenantEmployeeImportPreview(
+  db: PrismaClient,
+  actor: PeopleActor,
+  tenantId: string,
+  requestKey: string,
+  input: EmployeeImportUpload,
+) {
+  validatePeopleActor(actor, tenantId);
+  tenantIdSchema.parse(requestKey);
+  const value = employeeImportUploadSchema.parse(input);
+  const parsed = parseEmployeeImportCsv(value.content);
+  const digest = createHash('sha256')
+    .update(value.content, 'utf8')
+    .digest('hex');
+  const requestDigest = createHash('sha256')
+    .update(JSON.stringify(value), 'utf8')
+    .digest('hex');
+  const rows = await db.$queryRaw<
+    {
+      outcome: 'created' | 'forbidden' | 'invalid_state' | 'conflict';
+      snapshot: unknown;
+    }[]
+  >`SELECT * FROM public.create_tenant_employee_import_preview_idempotent(
+    ${actor.identityId}::uuid, ${actor.mfaVerified}, ${tenantId}::uuid,
+    ${requestKey}::uuid, ${requestDigest}::varchar, ${randomUUID()}::uuid,
+    ${value.fileName}::varchar, ${digest}::varchar,
+    ${JSON.stringify(parsed.rows)}::jsonb, ${JSON.stringify(parsed.fileErrors)}::jsonb,
+    ${value.reason}::varchar, ${randomUUID()}::uuid, ${randomUUID()}::uuid
+  )`;
+  if (!rows[0] || rows[0].outcome === 'forbidden')
+    throw new DomainError('FORBIDDEN');
+  if (rows[0].outcome === 'invalid_state')
+    throw new DomainError('INVALID_STATE');
+  if (rows[0].outcome === 'conflict') throw new DomainError('CONFLICT');
+  return employeeImportPreviewSchema.parse(rows[0].snapshot);
+}
+export async function readTenantEmployeeImportPreview(
+  db: PrismaClient,
+  actor: PeopleActor,
+  tenantId: string,
+  batchId: string,
+) {
+  validatePeopleActor(actor, tenantId);
+  tenantIdSchema.parse(batchId);
+  const rows = await db.$queryRaw<
+    { outcome: 'ok' | 'forbidden' | 'not_found'; snapshot: unknown }[]
+  >`SELECT * FROM public.read_tenant_employee_import_preview(
+    ${actor.identityId}::uuid, ${actor.mfaVerified}, ${tenantId}::uuid,
+    ${batchId}::uuid
+  )`;
+  if (!rows[0] || rows[0].outcome === 'forbidden')
+    throw new DomainError('FORBIDDEN');
+  if (rows[0].outcome === 'not_found') throw new DomainError('NOT_FOUND');
+  return employeeImportPreviewSchema.parse(rows[0].snapshot);
 }
 export async function readTenantEmployees(
   db: PrismaClient,

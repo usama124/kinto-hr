@@ -20,6 +20,8 @@ export type Permission =
   | 'employees.private.write'
   | 'employees.checklists.read'
   | 'employees.checklists.write'
+  | 'employees.imports.read'
+  | 'employees.imports.write'
   | 'payroll.compensation.read'
   | 'payroll.compensation.write'
   | 'payroll.prepare'
@@ -38,6 +40,8 @@ const permissions: Record<Role, readonly Permission[]> = {
     'employees.private.write',
     'employees.checklists.read',
     'employees.checklists.write',
+    'employees.imports.read',
+    'employees.imports.write',
     'billing.manage',
     'organization.read',
     'organization.manage',
@@ -52,6 +56,8 @@ const permissions: Record<Role, readonly Permission[]> = {
     'employees.private.write',
     'employees.checklists.read',
     'employees.checklists.write',
+    'employees.imports.read',
+    'employees.imports.write',
     'organization.read',
     'company_policies.read',
     'entitlements.read',
