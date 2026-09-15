@@ -34,6 +34,7 @@ import {
   employeeChecklistTaskCreateSchema,
   employeeChecklistTaskCompletionSchema,
   employeeImportUploadSchema,
+  employeeImportConfirmationSchema,
   parseEmployeeImportCsv,
   employeeAssignmentCreateSchema,
 } from './index';
@@ -252,6 +253,24 @@ it('reports malformed, duplicate and spreadsheet-formula CSV values', () => {
   expect(parseEmployeeImportCsv(`${header}\n"closed"junk`).fileErrors).toEqual([
     { field: 'file', code: 'malformed_csv' },
   ]);
+});
+it('requires an exact immutable employee import confirmation reference', () => {
+  const input = {
+    previewRevision: 1,
+    fileDigest: 'a'.repeat(64),
+    reason: 'Approve validated employee import',
+  };
+  expect(employeeImportConfirmationSchema.parse(input)).toEqual(input);
+  expect(
+    employeeImportConfirmationSchema.safeParse({ ...input, activate: false })
+      .success,
+  ).toBe(false);
+  expect(
+    employeeImportConfirmationSchema.safeParse({
+      ...input,
+      previewRevision: 0,
+    }).success,
+  ).toBe(false);
 });
 it('accepts only explicit administrator invitation authority', () => {
   expect(

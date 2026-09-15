@@ -20,6 +20,8 @@ export default function EmployeeImports() {
   const [file, setFile] = useState<File | null>(null);
   const [requestKey, setRequestKey] = useState('');
   const [reason, setReason] = useState('');
+  const [confirmationReason, setConfirmationReason] = useState('');
+  const [confirmationKey, setConfirmationKey] = useState('');
   const [preview, setPreview] = useState<EmployeeImportPreview | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -104,6 +106,7 @@ export default function EmployeeImports() {
       if (!response.ok) throw new Error('Request failed');
       const result = employeeImportPreviewSchema.parse(await response.json());
       setPreview(result);
+      setConfirmationKey(crypto.randomUUID());
       setMessage(
         result.status === 'ready'
           ? 'Preview is valid. No employee records have been created.'
@@ -112,6 +115,51 @@ export default function EmployeeImports() {
     } catch {
       setMessage(
         'The CSV could not be previewed. Use the template and a file no larger than 64 KiB.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirm(event: FormEvent) {
+    event.preventDefault();
+    if (!preview || preview.status !== 'ready' || !confirmationKey) return;
+    setBusy(true);
+    setMessage('');
+    try {
+      const response = await fetch(
+        `/api/v1/tenants/${tenantId}/employee-imports/${preview.id}/confirm`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': csrf,
+            'Idempotency-Key': confirmationKey,
+          },
+          body: JSON.stringify({
+            previewRevision: preview.previewRevision,
+            fileDigest: preview.fileDigest,
+            reason: confirmationReason,
+          }),
+        },
+      );
+      if (response.status === 403) return setState('denied');
+      if (!response.ok) throw new Error('Request failed');
+      const result = employeeImportPreviewSchema.parse(await response.json());
+      setPreview(result);
+      if (result.status === 'committed')
+        setMessage(
+          `${result.employees.length} employees were created and activated atomically.`,
+        );
+      else {
+        setConfirmationKey('');
+        setMessage(
+          'Confirmation found changed references or duplicate employees. Upload a corrected CSV for a new preview.',
+        );
+      }
+    } catch {
+      setMessage(
+        'The import could not be confirmed. Check capacity and refresh the preview before trying again.',
       );
     } finally {
       setBusy(false);
@@ -168,6 +216,8 @@ export default function EmployeeImports() {
                   setRequestKey(crypto.randomUUID());
                   setPreview(null);
                   setMessage('');
+                  setConfirmationKey('');
+                  setConfirmationReason('');
                 }}
               />
             </label>
@@ -240,14 +290,46 @@ export default function EmployeeImports() {
                   </li>
                 ))}
               </ol>
+              {preview.status === 'ready' && (
+                <form className="settings-form" onSubmit={confirm}>
+                  <label>
+                    Confirmation reason
+                    <input
+                      required
+                      minLength={3}
+                      maxLength={240}
+                      value={confirmationReason}
+                      onChange={(event) =>
+                        setConfirmationReason(event.target.value)
+                      }
+                    />
+                  </label>
+                  <button
+                    className="primary-button"
+                    disabled={busy || !confirmationKey}
+                  >
+                    {busy
+                      ? 'Committing…'
+                      : `Create ${preview.rowCount} employees`}
+                  </button>
+                </form>
+              )}
+              {preview.status === 'committed' && (
+                <div className="notice" role="status">
+                  <strong>Import committed</strong>
+                  <p>
+                    {preview.employees.length} active employees were created.
+                  </p>
+                </div>
+              )}
             </>
           )}
         </section>
       </div>
       <p className="audit-note">
         Kinto stores the normalized preview, digest, row errors and audit
-        reason. The uploaded CSV content is not retained. Confirmation and
-        employee creation are not available in this increment.
+        reason. The uploaded CSV content is not retained. Confirmation locks
+        tenant capacity and creates the whole validated batch atomically.
       </p>
     </>
   );

@@ -550,7 +550,7 @@ test('owner reviews the effective complimentary plan and employee capacity', asy
   ).toBe(true);
 });
 
-test('HR uploads a fixed employee CSV and reviews validation without committing', async ({
+test('HR validates and atomically commits a fixed employee CSV', async ({
   page,
 }) => {
   const tenantId = '9d2ea3ef-3938-42d0-84f9-d2248f692f67';
@@ -614,6 +614,65 @@ test('HR uploads a fixed employee CSV and reviews validation without committing'
             },
           ],
           createdAt: '2026-09-14T12:00:00.000Z',
+          committedAt: null,
+          employees: [],
+        }),
+      });
+    },
+  );
+  await page.route(
+    `**/api/v1/tenants/${tenantId}/employee-imports/${batchId}/confirm`,
+    async (route) => {
+      expect(route.request().method()).toBe('POST');
+      expect(route.request().headers()['x-csrf-token']).toBe(csrf);
+      expect(route.request().headers()['idempotency-key']).toMatch(
+        /^[0-9a-f-]{36}$/,
+      );
+      expect(route.request().postDataJSON()).toEqual({
+        previewRevision: 1,
+        fileDigest: 'a'.repeat(64),
+        reason: 'Approve employee migration',
+      });
+      await route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          id: batchId,
+          fileName: 'employees.csv',
+          fileDigest: 'a'.repeat(64),
+          previewRevision: 1,
+          status: 'committed',
+          rowCount: 1,
+          errorCount: 0,
+          fileErrors: [],
+          rows: [
+            {
+              rowNumber: 2,
+              values: {
+                employeeNumber: 'EMP-001',
+                name: 'Sana Khan',
+                legalName: null,
+                joiningDate: '2026-09-14',
+                branchCode: 'LHR-01',
+                departmentCode: 'ENG',
+                designationCode: 'SWE',
+                managerEmployeeNumber: null,
+                topLevelReason: 'Company leader',
+              },
+              errors: [],
+            },
+          ],
+          createdAt: '2026-09-14T12:00:00.000Z',
+          committedAt: '2026-09-15T09:00:00.000Z',
+          employees: [
+            {
+              rowNumber: 2,
+              employeeId: '71dc8ea7-3ca0-42e7-b758-ff281923f902',
+              employeeNumber: 'EMP-001',
+              status: 'active',
+              version: 2,
+            },
+          ],
         }),
       });
     },
@@ -633,6 +692,12 @@ test('HR uploads a fixed employee CSV and reviews validation without committing'
     page.getByText(/No employee records have been created/),
   ).toBeVisible();
   await expect(page.getByText(/SHA-256: a{64}/)).toBeVisible();
+  await page
+    .getByLabel('Confirmation reason')
+    .fill('Approve employee migration');
+  await page.getByRole('button', { name: 'Create 1 employees' }).click();
+  await expect(page.getByText('Import committed')).toBeVisible();
+  await expect(page.getByText(/1 active employees were created/)).toBeVisible();
 });
 
 test('HR creates, activates, separates, archives and rehires an employee', async ({

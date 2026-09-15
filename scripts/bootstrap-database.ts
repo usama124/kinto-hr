@@ -265,6 +265,7 @@ try {
     'public.create_tenant_employee_checklist_task(uuid, boolean, uuid, uuid, uuid, varchar, varchar, varchar, uuid, date, varchar, uuid, uuid)',
     'public.complete_tenant_employee_checklist_task(uuid, boolean, uuid, uuid, uuid, integer, varchar, uuid, uuid)',
     'public.create_tenant_employee_import_preview_idempotent(uuid, boolean, uuid, uuid, varchar, uuid, varchar, varchar, jsonb, jsonb, varchar, uuid, uuid)',
+    'public.confirm_tenant_employee_import(uuid, boolean, uuid, uuid, uuid, varchar, integer, varchar, varchar, uuid, uuid)',
   ]) {
     await database.$executeRawUnsafe(
       `ALTER FUNCTION ${signature} OWNER TO kinto_control_owner`,

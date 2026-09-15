@@ -363,14 +363,33 @@ export const employeeImportPreviewSchema = z.strictObject({
   fileName: importFileNameSchema,
   fileDigest: z.string().regex(/^[a-f0-9]{64}$/),
   previewRevision: z.number().int().positive(),
-  status: z.enum(['ready', 'invalid']),
+  status: z.enum(['ready', 'invalid', 'committed']),
   rowCount: z.number().int().min(0).max(250),
   errorCount: z.number().int().min(0),
   fileErrors: employeeImportErrorSchema.array().max(20),
   rows: employeeImportParsedRowSchema.array().max(250),
   createdAt: z.iso.datetime({ offset: true }),
+  committedAt: z.iso.datetime({ offset: true }).nullable(),
+  employees: z
+    .strictObject({
+      rowNumber: z.number().int().min(2).max(65_537),
+      employeeId: tenantIdSchema,
+      employeeNumber: employeeNumberSchema,
+      status: z.literal('active'),
+      version: z.literal(2),
+    })
+    .array()
+    .max(250),
 });
 export type EmployeeImportPreview = z.infer<typeof employeeImportPreviewSchema>;
+export const employeeImportConfirmationSchema = z.strictObject({
+  previewRevision: z.number().int().positive(),
+  fileDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  reason: employeeReasonSchema,
+});
+export type EmployeeImportConfirmation = z.infer<
+  typeof employeeImportConfirmationSchema
+>;
 
 const safeSpreadsheetValue = (value: string) => !/^[=+\-@\t\r]/.test(value);
 function csvCells(

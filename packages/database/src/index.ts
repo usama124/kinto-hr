@@ -57,6 +57,7 @@ import {
   employeeChecklistTaskCompletionSchema,
   employeeChecklistResponseSchema,
   employeeImportUploadSchema,
+  employeeImportConfirmationSchema,
   employeeImportPreviewSchema,
   parseEmployeeImportCsv,
   employeeAssignmentCreateSchema,
@@ -73,6 +74,7 @@ import {
   type EmployeeChecklistTaskCreate,
   type EmployeeChecklistTaskCompletion,
   type EmployeeImportUpload,
+  type EmployeeImportConfirmation,
   type EmployeeAssignmentCreate,
 } from '@kinto/contracts';
 import {
@@ -1297,6 +1299,53 @@ export async function readTenantEmployeeImportPreview(
     throw new DomainError('FORBIDDEN');
   if (rows[0].outcome === 'not_found') throw new DomainError('NOT_FOUND');
   return employeeImportPreviewSchema.parse(rows[0].snapshot);
+}
+export async function confirmTenantEmployeeImport(
+  db: PrismaClient,
+  actor: PeopleActor,
+  tenantId: string,
+  batchId: string,
+  requestKey: string,
+  input: EmployeeImportConfirmation,
+) {
+  validatePeopleActor(actor, tenantId);
+  tenantIdSchema.parse(batchId);
+  tenantIdSchema.parse(requestKey);
+  const value = employeeImportConfirmationSchema.parse(input);
+  const requestDigest = createHash('sha256')
+    .update(JSON.stringify({ batchId, ...value }), 'utf8')
+    .digest('hex');
+  const rows = await db.$queryRaw<
+    {
+      outcome:
+        | 'committed'
+        | 'validation_failed'
+        | 'forbidden'
+        | 'not_found'
+        | 'stale'
+        | 'invalid_state'
+        | 'capacity_reached'
+        | 'tenant_unavailable'
+        | 'conflict';
+      snapshot: unknown;
+    }[]
+  >`SELECT * FROM public.confirm_tenant_employee_import(
+    ${actor.identityId}::uuid, ${actor.mfaVerified}, ${tenantId}::uuid,
+    ${batchId}::uuid, ${requestKey}::uuid, ${requestDigest}::varchar,
+    ${value.previewRevision}::integer, ${value.fileDigest}::varchar, ${value.reason}::varchar,
+    ${randomUUID()}::uuid, ${randomUUID()}::uuid
+  )`;
+  const row = rows[0];
+  if (!row || row.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (row.outcome === 'not_found') throw new DomainError('NOT_FOUND');
+  if (row.outcome === 'stale') throw new DomainError('STALE_VERSION');
+  if (row.outcome === 'invalid_state') throw new DomainError('INVALID_STATE');
+  if (row.outcome === 'capacity_reached')
+    throw new DomainError('CAPACITY_REACHED');
+  if (row.outcome === 'tenant_unavailable')
+    throw new DomainError('TENANT_UNAVAILABLE');
+  if (row.outcome === 'conflict') throw new DomainError('CONFLICT');
+  return employeeImportPreviewSchema.parse(row.snapshot);
 }
 export async function readTenantEmployees(
   db: PrismaClient,

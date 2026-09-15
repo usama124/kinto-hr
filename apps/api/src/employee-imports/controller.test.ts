@@ -32,6 +32,7 @@ const session = {
 const methods = {
   createEmployeeImportPreview: vi.fn(),
   readEmployeeImportPreview: vi.fn(),
+  confirmEmployeeImport: vi.fn(),
 };
 const limit = vi.fn().mockResolvedValue(undefined);
 const getSession = vi.fn().mockResolvedValue(session);
@@ -96,6 +97,59 @@ it('reads only a UUID-addressed preview in the selected tenant', async () => {
     .get(`${path}/not-a-uuid`)
     .set('Cookie', `__Host-kinto-session=${token}`)
     .expect(400);
+});
+
+it('confirms an exact digest and revision with independent retry evidence', async () => {
+  const input = {
+    previewRevision: 1,
+    fileDigest: 'a'.repeat(64),
+    reason: 'Approve validated employee import',
+  };
+  methods.confirmEmployeeImport.mockResolvedValueOnce({
+    id: batchId,
+    status: 'committed',
+  });
+  await request(app.getHttpServer())
+    .post(`${path}/${batchId}/confirm`)
+    .set('Cookie', `__Host-kinto-session=${token}`)
+    .set('Origin', origin)
+    .set('X-CSRF-Token', csrf)
+    .set('Idempotency-Key', requestKey)
+    .send(input)
+    .expect(201, { id: batchId, status: 'committed' });
+  expect(methods.confirmEmployeeImport).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+    batchId,
+    requestKey,
+    input,
+  );
+  await request(app.getHttpServer())
+    .post(`${path}/${batchId}/confirm`)
+    .set('Cookie', `__Host-kinto-session=${token}`)
+    .set('Idempotency-Key', requestKey)
+    .send(input)
+    .expect(403);
+  await request(app.getHttpServer())
+    .post(`${path}/${batchId}/confirm`)
+    .set('Cookie', `__Host-kinto-session=${token}`)
+    .set('Origin', origin)
+    .set('X-CSRF-Token', csrf)
+    .send(input)
+    .expect(400);
+  for (const invalid of [
+    { ...input, previewRevision: 0 },
+    { ...input, fileDigest: 'bad' },
+    { ...input, employeeLimit: 250 },
+  ])
+    await request(app.getHttpServer())
+      .post(`${path}/${batchId}/confirm`)
+      .set('Cookie', `__Host-kinto-session=${token}`)
+      .set('Origin', origin)
+      .set('X-CSRF-Token', csrf)
+      .set('Idempotency-Key', requestKey)
+      .send(invalid)
+      .expect(400);
 });
 
 it('requires CSRF and rejects mass assignment or unsafe file names', async () => {

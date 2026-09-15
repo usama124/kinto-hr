@@ -120,6 +120,10 @@ button {
   color: var(--muted);
   font-size: 0.88rem;
 }
+.employee-schedule code {
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
 .employee-activation label {
   display: grid;
   gap: 5px;
@@ -139,6 +143,7 @@ button {
   min-height: 35px;
 }
 .settings-card {
+  min-width: 0;
   background: var(--white);
   border: 1px solid var(--line);
   border-radius: 9px;
