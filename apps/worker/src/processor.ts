@@ -38,6 +38,7 @@ const observeLifecycle: Handler = async (_tx, event) => {
       'employee.checklist.created.v1',
       'employee.checklist.completed.v1',
       'employee.import_previewed.v1',
+      'employee.import_committed.v1',
     ].includes(event.type)
   )
     throw new ProcessingError('UNSUPPORTED_EVENT');

@@ -36,6 +36,7 @@ import {
   updateTenantEmployeePrivateDetails,
   reviseTenantEmployeeCompensation,
   createTenantEmployeeImportPreview,
+  confirmTenantEmployeeImport,
   type PrismaClient,
 } from '@kinto/database';
 import { processEvent } from '../apps/worker/src/processor';
@@ -392,7 +393,7 @@ async function main() {
         month: '2-digit',
         day: '2-digit',
       }).format(new Date());
-      await createTenantEmployeeImportPreview(
+      const importPreview = await createTenantEmployeeImportPreview(
         sourceApp,
         principal,
         tenantId,
@@ -403,6 +404,18 @@ async function main() {
             `employee_number,display_name,legal_name,joining_date,branch_code,department_code,designation_code,manager_employee_number,top_level_reason\n` +
             `RESTORE-IMPORT-001,Synthetic import preview,,${effectiveFrom},LHR-01,ENG,SWE,,Recovery top-level employee`,
           reason: 'Recovery fixture employee import preview',
+        },
+      );
+      await confirmTenantEmployeeImport(
+        sourceApp,
+        principal,
+        tenantId,
+        importPreview.id,
+        randomUUID(),
+        {
+          previewRevision: importPreview.previewRevision,
+          fileDigest: importPreview.fileDigest,
+          reason: 'Recovery fixture employee import confirmation',
         },
       );
       const policy = await createOrganizationPolicyDraft(
@@ -794,7 +807,7 @@ async function main() {
           'employees.read',
           (tx) => tx.employee.count(),
         ),
-        3,
+        4,
       );
       stage = `restored tenant ${tenantIndex + 1} cross-tenant denial`;
       await assert.rejects(
@@ -810,12 +823,12 @@ async function main() {
       const employees = await inTenant(restoredApp, tenantId, (tx) =>
         tx.employee.findMany(),
       );
-      assert.equal(employees.length, 3);
+      assert.equal(employees.length, 4);
       assert.ok(employees.every((employee) => employee.tenantId === tenantId));
       stage = `restored tenant ${tenantIndex + 1} active state`;
       assert.equal(
         employees.filter((employee) => employee.status === 'active').length,
-        3,
+        4,
       );
       stage = `restored tenant ${tenantIndex + 1} archived state`;
       assert.equal(
@@ -826,7 +839,7 @@ async function main() {
         where: { tenantId },
       });
       stage = `restored tenant ${tenantIndex + 1} employment periods (${employmentPeriodCount})`;
-      assert.equal(employmentPeriodCount, 3);
+      assert.equal(employmentPeriodCount, 4);
       assert.equal(
         await restored.employeePrivateDetail.count({ where: { tenantId } }),
         1,
@@ -884,7 +897,7 @@ async function main() {
       archiveBytes: archive.length,
       archiveSha256: checksum,
       tenants: 2,
-      snapshotEmployees: 6,
+      snapshotEmployees: 8,
       completedReplayPreserved: true,
       pendingResumedOnce: true,
       deadPreserved: true,
@@ -897,7 +910,7 @@ async function main() {
       employeeAssignmentsPreserved: true,
       employeePrivateDetailsPreserved: true,
       employeeChecklistsPreserved: true,
-      employeeImportPreviewsPreserved: true,
+      committedEmployeeImportsPreserved: true,
       employeeCompensationHistoryPreserved: true,
       completeEmployeeActivationPreserved: true,
       scheduledTerminationPreserved: true,

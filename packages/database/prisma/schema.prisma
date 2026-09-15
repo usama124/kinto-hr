@@ -76,6 +76,7 @@ model Identity {
   completedChecklistTasks       ChecklistTask[]                   @relation("ChecklistCompletedBy")
   createdChecklistTasks         ChecklistTask[]                   @relation("ChecklistCreatedBy")
   createdEmployeeImportBatches  EmployeeImportBatch[]              @relation("EmployeeImportCreatedBy")
+  committedEmployeeImportBatches EmployeeImportBatch[]              @relation("EmployeeImportCommittedBy")
 
   @@unique([issuer, subject])
   @@map("identities")
@@ -414,6 +415,7 @@ model Employee {
   privateDetails         EmployeePrivateDetail?
   compensationAgreement CompensationAgreement?
   checklistTasks         ChecklistTask[]
+  importedByRows         EmployeeImportRow[]     @relation("ImportedEmployee")
 
   @@unique([tenantId, id])
   @@unique([tenantId, employeeNumber])
@@ -572,12 +574,19 @@ model EmployeeImportBatch {
   createdByIdentityId String              @map("created_by_identity_id") @db.Uuid
   reason              String              @db.VarChar(240)
   createdAt           DateTime            @default(now()) @map("created_at") @db.Timestamptz()
+  confirmationRequestKey String?           @map("confirmation_request_key") @db.Uuid
+  confirmationRequestDigest String?        @map("confirmation_request_digest") @db.Char(64)
+  committedByIdentityId String?            @map("committed_by_identity_id") @db.Uuid
+  commitReason        String?              @map("commit_reason") @db.VarChar(240)
+  committedAt         DateTime?            @map("committed_at") @db.Timestamptz()
   tenant              Tenant              @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   createdBy           Identity            @relation("EmployeeImportCreatedBy", fields: [createdByIdentityId], references: [id], onDelete: Restrict)
+  committedBy         Identity?           @relation("EmployeeImportCommittedBy", fields: [committedByIdentityId], references: [id], onDelete: Restrict)
   rows                EmployeeImportRow[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, requestKey])
+  @@unique([tenantId, confirmationRequestKey])
   @@index([tenantId, createdAt])
   @@map("employee_import_batches")
 }
@@ -589,9 +598,11 @@ model EmployeeImportRow {
   rowNumber        Int                 @map("row_number")
   normalizedValues Json                @map("normalized_values") @db.JsonB
   errors           Json                @default("[]") @db.JsonB
+  employeeId       String?             @map("employee_id") @db.Uuid
   createdAt        DateTime            @default(now()) @map("created_at") @db.Timestamptz()
   tenant           Tenant              @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   batch            EmployeeImportBatch @relation(fields: [tenantId, batchId], references: [tenantId, id], onDelete: Restrict)
+  employee         Employee?           @relation("ImportedEmployee", fields: [tenantId, employeeId], references: [tenantId, id], onDelete: Restrict)
 
   @@unique([tenantId, id])
   @@unique([tenantId, batchId, rowNumber])

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  confirmTenantEmployeeImport,
   createDatabase,
   createTenantBranch,
   createTenantEmployee,
@@ -27,6 +28,7 @@ if (
 
 const admin = createDatabase(adminUrl);
 const runtime = createDatabase(runtimeUrl);
+const starterPlanId = '10000000-0000-4000-8000-000000000020';
 let tenantId: string;
 let otherTenantId: string;
 let ownerId: string;
@@ -51,6 +53,17 @@ describe('tenant employee CSV import preview', () => {
         id,
         name: 'Synthetic import tenant',
         employeeLimit: 20,
+      })),
+    });
+    await admin.tenantSubscription.createMany({
+      data: [tenantId, otherTenantId].map((id) => ({
+        id: randomUUID(),
+        tenantId: id,
+        subscriptionVersion: 1,
+        planVersionId: starterPlanId,
+        billingMode: 'complimentary',
+        employeeLimit: 20,
+        reason: 'Synthetic import entitlement',
       })),
     });
     await admin.identity.createMany({
@@ -132,6 +145,9 @@ describe('tenant employee CSV import preview', () => {
       where: { tenantId: { in: tenants } },
     });
     await admin.membership.deleteMany({ where: { tenantId: { in: tenants } } });
+    await admin.tenantSubscription.deleteMany({
+      where: { tenantId: { in: tenants } },
+    });
     await admin.tenant.deleteMany({ where: { id: { in: tenants } } });
     await admin.identity.deleteMany({
       where: { id: { in: [ownerId, hrId, payrollId] } },
@@ -279,6 +295,181 @@ describe('tenant employee CSV import preview', () => {
     });
   });
 
+  it('atomically commits active employees and returns the same result on retry', async () => {
+    const content = `${header}\nEMP-101,Sana Khan,,2026-09-15,LHR,ENG,SWE,,Company leader`;
+    const preview = await createTenantEmployeeImportPreview(
+      runtime,
+      actor(hrId),
+      tenantId,
+      randomUUID(),
+      {
+        fileName: 'approved-employees.csv',
+        content,
+        reason: 'Validate approved employee import',
+      },
+    );
+    const requestKey = randomUUID();
+    const confirmation = {
+      previewRevision: preview.previewRevision,
+      fileDigest: preview.fileDigest,
+      reason: 'Approve employee import commit',
+    };
+    const committed = await confirmTenantEmployeeImport(
+      runtime,
+      actor(ownerId),
+      tenantId,
+      preview.id,
+      requestKey,
+      confirmation,
+    );
+    expect(committed).toMatchObject({
+      id: preview.id,
+      status: 'committed',
+      rowCount: 1,
+      errorCount: 0,
+      employees: [
+        {
+          rowNumber: 2,
+          employeeNumber: 'EMP-101',
+          status: 'active',
+          version: 2,
+        },
+      ],
+    });
+    expect(committed.committedAt).toBeTruthy();
+    await expect(
+      confirmTenantEmployeeImport(
+        runtime,
+        actor(ownerId),
+        tenantId,
+        preview.id,
+        requestKey,
+        confirmation,
+      ),
+    ).resolves.toEqual(committed);
+    await expect(
+      confirmTenantEmployeeImport(
+        runtime,
+        actor(ownerId),
+        tenantId,
+        preview.id,
+        randomUUID(),
+        confirmation,
+      ),
+    ).resolves.toEqual(committed);
+    await expect(
+      confirmTenantEmployeeImport(
+        runtime,
+        actor(ownerId),
+        tenantId,
+        preview.id,
+        requestKey,
+        { ...confirmation, reason: 'Changed confirmation payload' },
+      ),
+    ).rejects.toThrow('CONFLICT');
+    await expect(
+      admin.employee.findFirstOrThrow({
+        where: { tenantId, employeeNumber: 'EMP-101' },
+      }),
+    ).resolves.toMatchObject({ status: 'active', version: 2 });
+    await expect(
+      admin.employmentPeriod.findFirstOrThrow({ where: { tenantId } }),
+    ).resolves.toMatchObject({ status: 'active' });
+    expect(
+      await admin.auditEvent.count({
+        where: { tenantId, action: 'employee.import_committed' },
+      }),
+    ).toBe(1);
+  });
+
+  it('revalidates changed references and rejects over-capacity batches atomically', async () => {
+    const stalePreview = await createTenantEmployeeImportPreview(
+      runtime,
+      actor(hrId),
+      tenantId,
+      randomUUID(),
+      {
+        fileName: 'stale-reference.csv',
+        content: `${header}\nEMP-201,Stale Branch,,2026-09-15,LHR,ENG,SWE,,Company leader`,
+        reason: 'Validate reference before it changes',
+      },
+    );
+    await admin.branch.updateMany({
+      where: { tenantId },
+      data: { status: 'inactive' },
+    });
+    const rejectedRequestKey = randomUUID();
+    const rejectedConfirmation = {
+      previewRevision: stalePreview.previewRevision,
+      fileDigest: stalePreview.fileDigest,
+      reason: 'Try stale reference confirmation',
+    };
+    const rejected = await confirmTenantEmployeeImport(
+      runtime,
+      actor(hrId),
+      tenantId,
+      stalePreview.id,
+      rejectedRequestKey,
+      rejectedConfirmation,
+    );
+    expect(rejected).toMatchObject({
+      status: 'invalid',
+      previewRevision: 2,
+      rows: [
+        {
+          rowNumber: 2,
+          errors: [{ field: 'branchCode', code: 'unknown_branch' }],
+        },
+      ],
+    });
+    await expect(
+      confirmTenantEmployeeImport(
+        runtime,
+        actor(hrId),
+        tenantId,
+        stalePreview.id,
+        rejectedRequestKey,
+        rejectedConfirmation,
+      ),
+    ).resolves.toEqual(rejected);
+    expect(await admin.employee.count({ where: { tenantId } })).toBe(0);
+
+    await admin.branch.updateMany({
+      where: { tenantId },
+      data: { status: 'active' },
+    });
+    const capacityPreview = await createTenantEmployeeImportPreview(
+      runtime,
+      actor(ownerId),
+      tenantId,
+      randomUUID(),
+      {
+        fileName: 'over-capacity.csv',
+        content: `${header}\nEMP-202,First Employee,,2026-09-15,LHR,ENG,SWE,,Company leader\nEMP-203,Second Employee,,2026-09-15,LHR,ENG,SWE,,Company leader`,
+        reason: 'Validate capacity batch',
+      },
+    );
+    await admin.tenantSubscription.updateMany({
+      where: { tenantId },
+      data: { employeeLimit: 1 },
+    });
+    await expect(
+      confirmTenantEmployeeImport(
+        runtime,
+        actor(ownerId),
+        tenantId,
+        capacityPreview.id,
+        randomUUID(),
+        {
+          previewRevision: capacityPreview.previewRevision,
+          fileDigest: capacityPreview.fileDigest,
+          reason: 'Attempt over-capacity import',
+        },
+      ),
+    ).rejects.toThrow('CAPACITY_REACHED');
+    expect(await admin.employee.count({ where: { tenantId } })).toBe(0);
+  });
+
   it('denies missing MFA, payroll-only and cross-tenant preview access', async () => {
     const input = {
       fileName: 'employees.csv',
@@ -310,6 +501,41 @@ describe('tenant employee CSV import preview', () => {
       randomUUID(),
       input,
     );
+    const confirmation = {
+      previewRevision: preview.previewRevision,
+      fileDigest: preview.fileDigest,
+      reason: 'Approve isolated employee import',
+    };
+    await expect(
+      confirmTenantEmployeeImport(
+        runtime,
+        actor(hrId, false),
+        tenantId,
+        preview.id,
+        randomUUID(),
+        confirmation,
+      ),
+    ).rejects.toThrow('FORBIDDEN');
+    await expect(
+      confirmTenantEmployeeImport(
+        runtime,
+        actor(payrollId),
+        tenantId,
+        preview.id,
+        randomUUID(),
+        confirmation,
+      ),
+    ).rejects.toThrow('FORBIDDEN');
+    await expect(
+      confirmTenantEmployeeImport(
+        runtime,
+        actor(ownerId),
+        tenantId,
+        preview.id,
+        randomUUID(),
+        { ...confirmation, previewRevision: 2 },
+      ),
+    ).rejects.toThrow('STALE_VERSION');
     await expect(
       readTenantEmployeeImportPreview(
         runtime,

@@ -10,7 +10,11 @@ import {
   Req,
   UnauthorizedException,
 } from '@nestjs/common';
-import { employeeImportUploadSchema, tenantIdSchema } from '@kinto/contracts';
+import {
+  employeeImportConfirmationSchema,
+  employeeImportUploadSchema,
+  tenantIdSchema,
+} from '@kinto/contracts';
 import {
   assertSelectedTenant,
   assertSessionMutation,
@@ -64,6 +68,29 @@ export class EmployeeImportsController {
     return this.database.createEmployeeImportPreview(
       context.actor,
       context.tenantId,
+      key.data,
+      input.data,
+    );
+  }
+
+  @Post(':batchId/confirm')
+  async confirm(
+    @Req() req: AuthRequest,
+    @Param('tenantId') tenantId: unknown,
+    @Param('batchId') batchId: unknown,
+    @Headers('idempotency-key') idempotencyKey: unknown,
+    @Body() body: unknown,
+  ) {
+    const batch = tenantIdSchema.safeParse(batchId);
+    const key = tenantIdSchema.safeParse(idempotencyKey);
+    const input = employeeImportConfirmationSchema.safeParse(body);
+    if (!batch.success || !key.success || !input.success)
+      throw new BadRequestException();
+    const context = await this.context(req, tenantId, true);
+    return this.database.confirmEmployeeImport(
+      context.actor,
+      context.tenantId,
+      batch.data,
       key.data,
       input.data,
     );

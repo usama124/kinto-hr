@@ -53,6 +53,7 @@ import {
   completeTenantEmployeeChecklistTask,
   createTenantEmployeeImportPreview,
   readTenantEmployeeImportPreview,
+  confirmTenantEmployeeImport,
 } from '@kinto/database';
 import {
   type AuthenticatedIdentity,
@@ -84,6 +85,7 @@ import {
   type EmployeeChecklistTaskCreate,
   type EmployeeChecklistTaskCompletion,
   type EmployeeImportUpload,
+  type EmployeeImportConfirmation,
 } from '@kinto/contracts';
 import { readConfig } from './config';
 @Injectable()
@@ -369,6 +371,22 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     batchId: string,
   ) {
     return readTenantEmployeeImportPreview(this.db, actor, tenantId, batchId);
+  }
+  confirmEmployeeImport(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    batchId: string,
+    requestKey: string,
+    input: EmployeeImportConfirmation,
+  ) {
+    return confirmTenantEmployeeImport(
+      this.db,
+      actor,
+      tenantId,
+      batchId,
+      requestKey,
+      input,
+    );
   }
   readEmployees(
     actor: { identityId: string; mfaVerified: boolean },

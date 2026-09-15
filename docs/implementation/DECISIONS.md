@@ -50,6 +50,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 15 September 2026 — atomic employee import confirmation
+
+Engineering completed the create-only employee import boundary. Confirmation requires the exact preview digest/revision, a separate idempotency key, recent MFA and an explicit reason. Under the shared tenant creation and capacity locks, PostgreSQL revalidates duplicate employee numbers, active organization references, active existing managers and the effective employee limit before creating any record. A successful batch atomically creates active monthly-salaried employees, active first employment periods and initial assignments with the same lifecycle audit/outbox facts as individual activation; a changed reference invalidates the preview with row errors, while insufficient capacity changes no employee records. Successful and validation-failed retries return the original persisted result. Same-file manager dependencies remain unsupported. See [evidence](../evidence/phase-01/employee-import-preview.md).
+
 ### 14 September 2026 — employee import upload and validation preview
 
 Engineering started P01-05 with a fixed create-only CSV template and a separate preview boundary. Owner/HR users with recent MFA can submit a bounded CSV and reason; parsing rejects malformed quoting, unexpected columns, invalid required values, duplicate employee numbers and spreadsheet-formula-leading text. PostgreSQL adds current tenant duplicate and active organization/manager validation, then retains only normalized rows, safe error codes, the exact SHA-256 digest and preview revision under forced RLS. Raw CSV content and employees are not stored by preview. Confirmation must later match the digest/revision, revalidate authorization/references/capacity, commit atomically and return the prior result on retry. See [evidence](../evidence/phase-01/employee-import-preview.md).
