@@ -127,6 +127,8 @@ try {
     'CREATE POLICY platform_control ON employee_import_batches FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON employee_import_rows',
     'CREATE POLICY platform_control ON employee_import_rows FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
+    'DROP POLICY IF EXISTS platform_control ON employee_documents',
+    'CREATE POLICY platform_control ON employee_documents FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON company_policy_versions',
     'CREATE POLICY platform_control ON company_policy_versions FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON plan_versions',
@@ -193,6 +195,9 @@ try {
   );
   await database.$executeRawUnsafe(
     'GRANT SELECT, INSERT, UPDATE ON employee_import_batches, employee_import_rows TO kinto_control_owner',
+  );
+  await database.$executeRawUnsafe(
+    'GRANT SELECT, INSERT, UPDATE ON employee_documents TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
     'GRANT SELECT ON plan_versions TO kinto_control_owner',
@@ -266,6 +271,8 @@ try {
     'public.complete_tenant_employee_checklist_task(uuid, boolean, uuid, uuid, uuid, integer, varchar, uuid, uuid)',
     'public.create_tenant_employee_import_preview_idempotent(uuid, boolean, uuid, uuid, varchar, uuid, varchar, varchar, jsonb, jsonb, varchar, uuid, uuid)',
     'public.confirm_tenant_employee_import(uuid, boolean, uuid, uuid, uuid, varchar, integer, varchar, varchar, uuid, uuid)',
+    'public.register_tenant_employee_document(uuid, boolean, uuid, uuid, uuid, uuid, varchar, varchar, varchar, varchar, varchar, varchar, integer, varchar, date, uuid, varchar, uuid, uuid)',
+    'public.read_tenant_employee_documents(uuid, boolean, uuid, uuid)',
   ]) {
     await database.$executeRawUnsafe(
       `ALTER FUNCTION ${signature} OWNER TO kinto_control_owner`,
@@ -288,6 +295,8 @@ try {
     'public.reject_compensation_version_overlap()',
     'public.tenant_checklist_authorized(uuid, boolean, uuid)',
     'public.create_final_settlement_checklist()',
+    'public.tenant_employee_document_authorized(uuid, boolean, uuid, boolean)',
+    'public.employee_document_json(public.employee_documents)',
     'public.tenant_employee_import_authorized(uuid, boolean, uuid)',
     'public.employee_import_preview_json(uuid, uuid)',
     'public.create_tenant_employee_import_preview(uuid, boolean, uuid, uuid, varchar, varchar, jsonb, jsonb, varchar, uuid, uuid)',

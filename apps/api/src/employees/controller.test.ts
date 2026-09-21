@@ -44,6 +44,8 @@ const methods = {
   readEmployeeChecklist: vi.fn(),
   createEmployeeChecklistTask: vi.fn(),
   completeEmployeeChecklistTask: vi.fn(),
+  readEmployeeDocuments: vi.fn(),
+  registerEmployeeDocument: vi.fn(),
   createEmployeeAssignment: vi.fn(),
   activateEmployee: vi.fn(),
   scheduleEmployeeTermination: vi.fn(),
@@ -100,6 +102,53 @@ it('lists and reads employee records using only selected-tenant context', async 
     tenantId,
     employeeId,
   );
+});
+
+it('lists and registers only strict private document metadata', async () => {
+  methods.readEmployeeDocuments.mockResolvedValueOnce({ documents: [] });
+  await authenticated('get', `${base}/${employeeId}/documents`).expect(200, {
+    documents: [],
+  });
+  expect(methods.readEmployeeDocuments).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+    employeeId,
+  );
+  const key = randomUUID();
+  const input = {
+    category: 'employment',
+    visibility: 'hr_only',
+    fileName: 'contract.pdf',
+    contentType: 'application/pdf',
+    sizeBytes: 2048,
+    fileDigest: 'a'.repeat(64),
+    expiresOn: null,
+    replacementDocumentId: null,
+    reason: 'Approved document registration',
+  };
+  methods.registerEmployeeDocument.mockResolvedValueOnce({
+    id: randomUUID(),
+    ...input,
+    status: 'awaiting_upload',
+  });
+  await mutation('post', `${base}/${employeeId}/documents`)
+    .set('Idempotency-Key', key)
+    .send(input)
+    .expect(201);
+  expect(methods.registerEmployeeDocument).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+    employeeId,
+    key,
+    input,
+  );
+  await mutation('post', `${base}/${employeeId}/documents`)
+    .set('Idempotency-Key', key)
+    .send({ ...input, downloadUrl: 'https://evil.example/file' })
+    .expect(400);
+  await mutation('post', `${base}/${employeeId}/documents`)
+    .send(input)
+    .expect(400);
 });
 
 it('creates a strict complete draft and rejects salary or unsupported workers', async () => {

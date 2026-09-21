@@ -37,6 +37,7 @@ import {
   reviseTenantEmployeeCompensation,
   createTenantEmployeeImportPreview,
   confirmTenantEmployeeImport,
+  registerTenantEmployeeDocument,
   type PrismaClient,
 } from '@kinto/database';
 import { processEvent } from '../apps/worker/src/processor';
@@ -70,6 +71,7 @@ async function snapshot(db: PrismaClient) {
       'designations',
       'employee_account_requests',
       'employee_assignments',
+      'employee_documents',
       'employee_identity_links',
       'employee_import_batches',
       'employee_import_rows',
@@ -124,6 +126,9 @@ async function snapshot(db: PrismaClient) {
       orderBy: { id: 'asc' },
     }),
     employeeImportRows: await db.employeeImportRow.findMany({
+      orderBy: { id: 'asc' },
+    }),
+    employeeDocuments: await db.employeeDocument.findMany({
       orderBy: { id: 'asc' },
     }),
     employeeAssignments: await db.employeeAssignment.findMany({
@@ -406,7 +411,7 @@ async function main() {
           reason: 'Recovery fixture employee import preview',
         },
       );
-      await confirmTenantEmployeeImport(
+      const imported = await confirmTenantEmployeeImport(
         sourceApp,
         principal,
         tenantId,
@@ -416,6 +421,24 @@ async function main() {
           previewRevision: importPreview.previewRevision,
           fileDigest: importPreview.fileDigest,
           reason: 'Recovery fixture employee import confirmation',
+        },
+      );
+      await registerTenantEmployeeDocument(
+        sourceApp,
+        principal,
+        tenantId,
+        imported.employees[0].employeeId,
+        randomUUID(),
+        {
+          category: 'employment',
+          visibility: 'hr_only',
+          fileName: 'synthetic-recovery-contract.pdf',
+          contentType: 'application/pdf',
+          sizeBytes: 1024,
+          fileDigest: 'a'.repeat(64),
+          expiresOn: null,
+          replacementDocumentId: null,
+          reason: 'Recovery fixture document registration',
         },
       );
       const policy = await createOrganizationPolicyDraft(
@@ -788,7 +811,7 @@ async function main() {
     const policies = await restored.$queryRaw<
       { enabled: boolean; forced: boolean }[]
     >`SELECT relrowsecurity AS enabled, relforcerowsecurity AS forced FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND relkind='r' AND relname <> '_prisma_migrations'`;
-    assert.equal(policies.length, 36);
+    assert.equal(policies.length, 37);
     assert.ok(policies.every((row) => row.enabled && row.forced));
     assert.deepEqual(await restoredApp.employee.findMany(), []);
     stage = 'restored tenant lifecycle visibility';
@@ -852,6 +875,10 @@ async function main() {
         await restored.employeeImportBatch.count({ where: { tenantId } }),
         1,
       );
+      assert.equal(
+        await restored.employeeDocument.count({ where: { tenantId } }),
+        1,
+      );
     }
     stage = 'restored tenant write isolation';
     await assert.rejects(
@@ -911,6 +938,7 @@ async function main() {
       employeePrivateDetailsPreserved: true,
       employeeChecklistsPreserved: true,
       committedEmployeeImportsPreserved: true,
+      documentQuarantineMetadataPreserved: true,
       employeeCompensationHistoryPreserved: true,
       completeEmployeeActivationPreserved: true,
       scheduledTerminationPreserved: true,
