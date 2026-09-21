@@ -37,6 +37,10 @@ import {
 import { AuthService } from '../auth/service';
 import { DatabaseService } from '../database.service';
 import { DocumentUploadService } from '../documents/upload';
+import {
+  sendDocumentAttachment,
+  type DocumentAttachmentResponse,
+} from '../documents/attachment';
 
 @Controller('tenants/:tenantId/employees')
 export class EmployeesController {
@@ -154,10 +158,7 @@ export class EmployeesController {
   async downloadDocument(
     @Req() req: AuthRequest,
     @Res()
-    response: {
-      setHeader(name: string, value: string | number): void;
-      end(bytes: Buffer): void;
-    },
+    response: DocumentAttachmentResponse,
     @Param('tenantId') tenantId: unknown,
     @Param('employeeId') employeeId: unknown,
     @Param('documentId') documentId: unknown,
@@ -172,19 +173,7 @@ export class EmployeesController {
       employee.data,
       document.data,
     );
-    const extension =
-      file.contentType === 'application/pdf'
-        ? 'pdf'
-        : file.contentType === 'image/jpeg'
-          ? 'jpg'
-          : 'png';
-    response.setHeader('Content-Type', file.contentType);
-    response.setHeader('Content-Length', file.bytes.length);
-    response.setHeader(
-      'Content-Disposition',
-      `attachment; filename="document-${document.data}.${extension}"`,
-    );
-    response.end(file.bytes);
+    sendDocumentAttachment(response, document.data, file);
   }
 
   @Post()

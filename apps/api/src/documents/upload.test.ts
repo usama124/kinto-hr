@@ -117,6 +117,12 @@ it('stores quarantine bytes and marks clean only after a scanner verdict', async
       sizeBytes: target.sizeBytes,
       fileDigest: target.fileDigest,
     }),
+    authorizeSelfEmployeeDocumentDownload: vi.fn().mockResolvedValue({
+      storageObjectKey: key,
+      contentType: target.contentType,
+      sizeBytes: target.sizeBytes,
+      fileDigest: target.fileDigest,
+    }),
     transitionEmployeeDocumentScan: vi
       .fn()
       .mockImplementation(
@@ -137,6 +143,10 @@ it('stores quarantine bytes and marks clean only after a scanner verdict', async
   expect(
     await service.download(actor, tenantId, employeeId, documentId),
   ).toEqual({
+    bytes: pdf,
+    contentType: 'application/pdf',
+  });
+  expect(await service.downloadSelf(actor, tenantId, documentId)).toEqual({
     bytes: pdf,
     contentType: 'application/pdf',
   });

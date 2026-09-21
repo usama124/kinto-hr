@@ -1484,6 +1484,40 @@ export async function authorizeTenantEmployeeDocumentDownload(
   if (row.outcome === 'not_found') throw new DomainError('NOT_FOUND');
   return employeeDocumentDownloadTargetSchema.parse(row.download);
 }
+export async function readTenantSelfEmployeeDocuments(
+  db: PrismaClient,
+  actor: PeopleActor,
+  tenantId: string,
+) {
+  validatePeopleActor(actor, tenantId);
+  const rows = await db.$queryRaw<
+    { outcome: 'ok' | 'forbidden'; snapshot: unknown }[]
+  >`SELECT * FROM public.read_tenant_self_employee_documents(
+    ${actor.identityId}::uuid,${actor.mfaVerified},${tenantId}::uuid
+  )`;
+  if (!rows[0] || rows[0].outcome === 'forbidden')
+    throw new DomainError('FORBIDDEN');
+  return employeeDocumentListSchema.parse(rows[0].snapshot);
+}
+export async function authorizeTenantSelfEmployeeDocumentDownload(
+  db: PrismaClient,
+  actor: PeopleActor,
+  tenantId: string,
+  documentId: string,
+) {
+  validatePeopleActor(actor, tenantId);
+  tenantIdSchema.parse(documentId);
+  const rows = await db.$queryRaw<
+    { outcome: 'authorized' | 'forbidden' | 'not_found'; download: unknown }[]
+  >`SELECT * FROM public.authorize_tenant_self_employee_document_download(
+    ${actor.identityId}::uuid,${actor.mfaVerified},${tenantId}::uuid,
+    ${documentId}::uuid,${randomUUID()}::uuid
+  )`;
+  const row = rows[0];
+  if (!row || row.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (row.outcome === 'not_found') throw new DomainError('NOT_FOUND');
+  return employeeDocumentDownloadTargetSchema.parse(row.download);
+}
 export async function readTenantEmployees(
   db: PrismaClient,
   actor: PeopleActor,

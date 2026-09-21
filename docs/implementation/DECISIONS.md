@@ -50,6 +50,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 22 September 2026 — employee-visible local document self-service
+
+Engineering added a separate self-service document list and local-test download path. The database derives employee identity only from the active tenant membership and durable employee link with trusted recent MFA; neither caller-supplied employee IDs nor document visibility claims grant access. Only clean, unexpired `employee_visible` records appear or download, with each successful download authorization audited. HR-only, unscanned, expired and other employees' files remain hidden. Production storage, scanner operations, file recovery, retention and general profile-change self-service remain open. See [evidence](../evidence/phase-01/employee-documents.md).
+
 ### 22 September 2026 — local-test clean-document download authorization
 
 Engineering added a bounded read path for synthetic local document files. The database requires active owner/HR authority, recent MFA, the selected tenant and exact employee/document binding, plus clean and unexpired status; every successful authorization is audited. The API checks file size and digest before sending a no-store attachment without exposing the storage key or original filename. There is no signed URL, and production local storage remains prohibited. Employee-visible self-service, production object storage, backup/recovery and retention controls are still open. See [evidence](../evidence/phase-01/employee-documents.md).
