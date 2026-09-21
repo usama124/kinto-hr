@@ -23,6 +23,7 @@ model Tenant {
   checklistTasks               ChecklistTask[]
   employeeImportBatches        EmployeeImportBatch[]
   employeeImportRows           EmployeeImportRow[]
+  employeeDocuments            EmployeeDocument[]
   employmentPeriods            EmploymentPeriod[]
   employeeAssignments          EmployeeAssignment[]
   auditEvents                  AuditEvent[]
@@ -77,6 +78,7 @@ model Identity {
   createdChecklistTasks         ChecklistTask[]                   @relation("ChecklistCreatedBy")
   createdEmployeeImportBatches  EmployeeImportBatch[]              @relation("EmployeeImportCreatedBy")
   committedEmployeeImportBatches EmployeeImportBatch[]              @relation("EmployeeImportCommittedBy")
+  createdEmployeeDocuments       EmployeeDocument[]                  @relation("EmployeeDocumentCreatedBy")
 
   @@unique([issuer, subject])
   @@map("identities")
@@ -416,6 +418,7 @@ model Employee {
   compensationAgreement CompensationAgreement?
   checklistTasks         ChecklistTask[]
   importedByRows         EmployeeImportRow[]     @relation("ImportedEmployee")
+  documents              EmployeeDocument[]      @relation("EmployeeDocuments")
 
   @@unique([tenantId, id])
   @@unique([tenantId, employeeNumber])
@@ -607,6 +610,38 @@ model EmployeeImportRow {
   @@unique([tenantId, id])
   @@unique([tenantId, batchId, rowNumber])
   @@map("employee_import_rows")
+}
+
+model EmployeeDocument {
+  id                    String             @id @db.Uuid
+  tenantId              String             @map("tenant_id") @db.Uuid
+  employeeId            String             @map("employee_id") @db.Uuid
+  category              String             @db.VarChar(20)
+  visibility            String             @db.VarChar(20)
+  originalFileName      String             @map("original_file_name") @db.VarChar(180)
+  contentType           String             @map("content_type") @db.VarChar(40)
+  sizeBytes             Int                @map("size_bytes")
+  contentDigest         String             @map("content_digest") @db.Char(64)
+  storageObjectKey      String             @map("storage_object_key") @db.VarChar(255)
+  status                String             @default("awaiting_upload") @db.VarChar(20)
+  expiresOn             DateTime?          @map("expires_on") @db.Date
+  replacementDocumentId String?            @map("replacement_document_id") @db.Uuid
+  requestKey            String             @map("request_key") @db.Uuid
+  requestDigest         String             @map("request_digest") @db.Char(64)
+  createdByIdentityId   String             @map("created_by_identity_id") @db.Uuid
+  createdAt             DateTime           @default(now()) @map("created_at") @db.Timestamptz()
+  scannedAt             DateTime?          @map("scanned_at") @db.Timestamptz()
+  tenant                Tenant             @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  employee              Employee           @relation("EmployeeDocuments", fields: [tenantId, employeeId], references: [tenantId, id], onDelete: Restrict)
+  createdBy             Identity           @relation("EmployeeDocumentCreatedBy", fields: [createdByIdentityId], references: [id], onDelete: Restrict)
+  replacementDocument   EmployeeDocument?  @relation("DocumentReplacement", fields: [tenantId, replacementDocumentId], references: [tenantId, id], onDelete: Restrict)
+  replacements          EmployeeDocument[] @relation("DocumentReplacement")
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, requestKey])
+  @@unique([tenantId, storageObjectKey])
+  @@index([tenantId, employeeId, createdAt])
+  @@map("employee_documents")
 }
 
 model EmployeeAssignment {

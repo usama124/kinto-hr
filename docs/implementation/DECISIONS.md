@@ -50,6 +50,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 21 September 2026 — employee document quarantine control plane
+
+Engineering started the private file pipeline with typed, retry-safe metadata registration. The server assigns opaque random quarantine keys; public projections exclude storage keys and content digests. Tenant-composite references, recent MFA, owner/HR authorization and forced RLS protect each employee document. Records remain `awaiting_upload`, and no upload/download URL or client-controlled scan status exists until the object-store and malware-scanner increment is implemented. See [evidence](../evidence/phase-01/employee-documents.md).
+
 ### 15 September 2026 — atomic employee import confirmation
 
 Engineering completed the create-only employee import boundary. Confirmation requires the exact preview digest/revision, a separate idempotency key, recent MFA and an explicit reason. Under the shared tenant creation and capacity locks, PostgreSQL revalidates duplicate employee numbers, active organization references, active existing managers and the effective employee limit before creating any record. A successful batch atomically creates active monthly-salaried employees, active first employment periods and initial assignments with the same lifecycle audit/outbox facts as individual activation; a changed reference invalidates the preview with row errors, while insufficient capacity changes no employee records. Successful and validation-failed retries return the original persisted result. Same-file manager dependencies remain unsupported. See [evidence](../evidence/phase-01/employee-import-preview.md).

@@ -59,6 +59,9 @@ import {
   employeeImportUploadSchema,
   employeeImportConfirmationSchema,
   employeeImportPreviewSchema,
+  employeeDocumentRegistrationSchema,
+  employeeDocumentSchema,
+  employeeDocumentListSchema,
   parseEmployeeImportCsv,
   employeeAssignmentCreateSchema,
   employeeRecordViewSchema,
@@ -75,6 +78,7 @@ import {
   type EmployeeChecklistTaskCompletion,
   type EmployeeImportUpload,
   type EmployeeImportConfirmation,
+  type EmployeeDocumentRegistration,
   type EmployeeAssignmentCreate,
 } from '@kinto/contracts';
 import {
@@ -1346,6 +1350,63 @@ export async function confirmTenantEmployeeImport(
     throw new DomainError('TENANT_UNAVAILABLE');
   if (row.outcome === 'conflict') throw new DomainError('CONFLICT');
   return employeeImportPreviewSchema.parse(row.snapshot);
+}
+export async function registerTenantEmployeeDocument(
+  db: PrismaClient,
+  actor: PeopleActor,
+  tenantId: string,
+  employeeId: string,
+  requestKey: string,
+  input: EmployeeDocumentRegistration,
+) {
+  validatePeopleActor(actor, tenantId);
+  tenantIdSchema.parse(employeeId);
+  tenantIdSchema.parse(requestKey);
+  const value = employeeDocumentRegistrationSchema.parse(input);
+  const requestDigest = createHash('sha256')
+    .update(JSON.stringify({ employeeId, ...value }), 'utf8')
+    .digest('hex');
+  const documentId = randomUUID();
+  const storageObjectKey = `${documentId.slice(0, 2)}/${documentId}`;
+  const rows = await db.$queryRaw<
+    {
+      outcome:
+        'registered' | 'forbidden' | 'not_found' | 'invalid_state' | 'conflict';
+      snapshot: unknown;
+    }[]
+  >`SELECT * FROM public.register_tenant_employee_document(
+    ${actor.identityId}::uuid,${actor.mfaVerified},${tenantId}::uuid,${employeeId}::uuid,
+    ${documentId}::uuid,${requestKey}::uuid,${requestDigest}::varchar,
+    ${storageObjectKey}::varchar,${value.category}::varchar,${value.visibility}::varchar,
+    ${value.fileName}::varchar,${value.contentType}::varchar,${value.sizeBytes}::integer,
+    ${value.fileDigest}::varchar,${value.expiresOn}::date,
+    ${value.replacementDocumentId}::uuid,${value.reason}::varchar,
+    ${randomUUID()}::uuid,${randomUUID()}::uuid
+  )`;
+  const row = rows[0];
+  if (!row || row.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (row.outcome === 'not_found') throw new DomainError('NOT_FOUND');
+  if (row.outcome === 'invalid_state') throw new DomainError('INVALID_STATE');
+  if (row.outcome === 'conflict') throw new DomainError('CONFLICT');
+  return employeeDocumentSchema.parse(row.snapshot);
+}
+export async function readTenantEmployeeDocuments(
+  db: PrismaClient,
+  actor: PeopleActor,
+  tenantId: string,
+  employeeId: string,
+) {
+  validatePeopleActor(actor, tenantId);
+  tenantIdSchema.parse(employeeId);
+  const rows = await db.$queryRaw<
+    { outcome: 'ok' | 'forbidden' | 'not_found'; snapshot: unknown }[]
+  >`SELECT * FROM public.read_tenant_employee_documents(
+    ${actor.identityId}::uuid,${actor.mfaVerified},${tenantId}::uuid,${employeeId}::uuid
+  )`;
+  if (!rows[0] || rows[0].outcome === 'forbidden')
+    throw new DomainError('FORBIDDEN');
+  if (rows[0].outcome === 'not_found') throw new DomainError('NOT_FOUND');
+  return employeeDocumentListSchema.parse(rows[0].snapshot);
 }
 export async function readTenantEmployees(
   db: PrismaClient,

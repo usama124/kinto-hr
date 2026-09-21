@@ -35,6 +35,7 @@ import {
   employeeChecklistTaskCompletionSchema,
   employeeImportUploadSchema,
   employeeImportConfirmationSchema,
+  employeeDocumentRegistrationSchema,
   parseEmployeeImportCsv,
   employeeAssignmentCreateSchema,
 } from './index';
@@ -42,6 +43,47 @@ it('trims names while preserving employee identifiers as strings', () => {
   expect(
     employeeDraftSchema.parse({ employeeNumber: '0012', name: ' Sana Khan ' }),
   ).toEqual({ employeeNumber: '0012', name: 'Sana Khan' });
+});
+
+it('accepts bounded private document metadata and rejects unsafe file contracts', () => {
+  const input = {
+    category: 'employment' as const,
+    visibility: 'hr_only' as const,
+    fileName: ' Signed contract.pdf ',
+    contentType: 'application/pdf' as const,
+    sizeBytes: 1024,
+    fileDigest: 'a'.repeat(64),
+    expiresOn: null,
+    replacementDocumentId: null,
+    reason: 'Approved employment document',
+  };
+  expect(employeeDocumentRegistrationSchema.parse(input).fileName).toBe(
+    'Signed contract.pdf',
+  );
+  expect(
+    employeeDocumentRegistrationSchema.safeParse({
+      ...input,
+      contentType: 'text/html',
+    }).success,
+  ).toBe(false);
+  expect(
+    employeeDocumentRegistrationSchema.safeParse({
+      ...input,
+      sizeBytes: 10 * 1024 * 1024 + 1,
+    }).success,
+  ).toBe(false);
+  expect(
+    employeeDocumentRegistrationSchema.safeParse({
+      ...input,
+      storageObjectKey: 'forged/key',
+    }).success,
+  ).toBe(false);
+  expect(
+    employeeDocumentRegistrationSchema.safeParse({
+      ...input,
+      fileName: '../identity.pdf',
+    }).success,
+  ).toBe(false);
 });
 
 it('normalizes private employee details and rejects incomplete emergency or payroll data', () => {

@@ -18,6 +18,8 @@ import {
   createTenantEmployeeChecklistTask,
   completeTenantEmployeeChecklistTask,
   updateTenantEmployeeProfile,
+  registerTenantEmployeeDocument,
+  readTenantEmployeeDocuments,
 } from '@kinto/database';
 
 if (existsSync('.env')) process.loadEnvFile('.env');
@@ -174,6 +176,9 @@ describe('tenant employee records and effective assignments', () => {
       where: { tenantId: { in: tenants } },
     });
     await admin.checklistTask.deleteMany({
+      where: { tenantId: { in: tenants } },
+    });
+    await admin.employeeDocument.deleteMany({
       where: { tenantId: { in: tenants } },
     });
     await admin.employeeAssignment.deleteMany({
@@ -415,6 +420,151 @@ describe('tenant employee records and effective assignments', () => {
     expect(JSON.stringify({ audit, outbox })).not.toContain(
       input.personalEmail,
     );
+  });
+
+  it('registers isolated retry-safe document metadata without exposing storage secrets', async () => {
+    const refs = await setupOrganization(tenantId, identities.owner, 'DOC');
+    const employee = await createTenantEmployee(
+      runtime,
+      actor(identities.hr),
+      tenantId,
+      {
+        employeeNumber: 'DOC-001',
+        name: 'Document Fixture',
+        joiningDate: date(-1),
+        employmentType: 'monthly_salaried',
+        ...refs,
+        managerEmployeeId: null,
+        topLevelReason: 'Approved top-level fixture',
+        reason: 'Create document fixture',
+      },
+    );
+    const requestKey = randomUUID();
+    const input = {
+      category: 'employment' as const,
+      visibility: 'hr_only' as const,
+      fileName: 'Synthetic contract.pdf',
+      contentType: 'application/pdf' as const,
+      sizeBytes: 2048,
+      fileDigest: 'a'.repeat(64),
+      expiresOn: null,
+      replacementDocumentId: null,
+      reason: 'Register approved synthetic document',
+    };
+    const registered = await registerTenantEmployeeDocument(
+      runtime,
+      actor(identities.hr),
+      tenantId,
+      employee.id,
+      requestKey,
+      input,
+    );
+    expect(registered).toMatchObject({
+      employeeId: employee.id,
+      status: 'awaiting_upload',
+      fileName: input.fileName,
+    });
+    expect(JSON.stringify(registered)).not.toMatch(/digest|storage|objectKey/i);
+    expect(
+      await registerTenantEmployeeDocument(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        employee.id,
+        requestKey,
+        input,
+      ),
+    ).toEqual(registered);
+    const concurrentKey = randomUUID();
+    const concurrent = await Promise.all([
+      registerTenantEmployeeDocument(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        employee.id,
+        concurrentKey,
+        input,
+      ),
+      registerTenantEmployeeDocument(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        employee.id,
+        concurrentKey,
+        input,
+      ),
+    ]);
+    expect(concurrent[0]).toEqual(concurrent[1]);
+    await expect(
+      registerTenantEmployeeDocument(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        employee.id,
+        requestKey,
+        { ...input, fileDigest: 'b'.repeat(64) },
+      ),
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+    const otherEmployee = await createTenantEmployee(
+      runtime,
+      actor(identities.hr),
+      tenantId,
+      {
+        employeeNumber: 'DOC-002',
+        name: 'Other Document Fixture',
+        joiningDate: date(-1),
+        employmentType: 'monthly_salaried',
+        ...refs,
+        managerEmployeeId: null,
+        topLevelReason: 'Approved top-level fixture',
+        reason: 'Create another document fixture',
+      },
+    );
+    await expect(
+      registerTenantEmployeeDocument(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        otherEmployee.id,
+        randomUUID(),
+        { ...input, replacementDocumentId: registered.id },
+      ),
+    ).rejects.toMatchObject({ code: 'INVALID_STATE' });
+    expect(
+      await readTenantEmployeeDocuments(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        employee.id,
+      ),
+    ).toEqual({
+      documents: expect.arrayContaining([registered, concurrent[0]]),
+    });
+    for (const denied of [
+      actor(identities.hr, false),
+      actor(identities.employee),
+      actor(identities.payroll),
+      actor(identities.otherOwner),
+    ])
+      await expect(
+        readTenantEmployeeDocuments(runtime, denied, tenantId, employee.id),
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(runtime.employeeDocument.findMany()).rejects.toThrow();
+    const stored = await admin.employeeDocument.findUniqueOrThrow({
+      where: { id: registered.id },
+    });
+    expect(stored.storageObjectKey).toMatch(/^[a-f0-9]{2}\/[a-f0-9-]{36}$/);
+    expect(stored.contentDigest).toBe(input.fileDigest);
+    expect(
+      await admin.auditEvent.count({
+        where: { tenantId, action: 'employee.document_registered' },
+      }),
+    ).toBe(2);
+    expect(
+      await admin.outboxEvent.count({
+        where: { tenantId, type: 'employee.document_registered.v1' },
+      }),
+    ).toBe(2);
   });
 
   it('retains effective compensation revisions behind explicit payroll roles', async () => {

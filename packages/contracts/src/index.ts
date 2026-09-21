@@ -391,6 +391,83 @@ export type EmployeeImportConfirmation = z.infer<
   typeof employeeImportConfirmationSchema
 >;
 
+export const employeeDocumentCategorySchema = z.enum([
+  'identity',
+  'employment',
+  'education',
+  'medical',
+  'tax',
+  'bank',
+  'other',
+]);
+export const employeeDocumentVisibilitySchema = z.enum([
+  'hr_only',
+  'employee_visible',
+]);
+export const employeeDocumentContentTypeSchema = z.enum([
+  'application/pdf',
+  'image/jpeg',
+  'image/png',
+]);
+export const employeeDocumentRegistrationSchema = z.strictObject({
+  category: employeeDocumentCategorySchema,
+  visibility: employeeDocumentVisibilitySchema,
+  fileName: z
+    .string()
+    .trim()
+    .min(1)
+    .max(180)
+    .refine(
+      (name) =>
+        !/[\\/]/.test(name) &&
+        ![...name].some((character) => {
+          const code = character.charCodeAt(0);
+          return code < 32 || code === 127;
+        }),
+    ),
+  contentType: employeeDocumentContentTypeSchema,
+  sizeBytes: z
+    .number()
+    .int()
+    .min(1)
+    .max(10 * 1024 * 1024),
+  fileDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  expiresOn: z.iso.date().nullable(),
+  replacementDocumentId: tenantIdSchema.nullable(),
+  reason: employeeReasonSchema,
+});
+export type EmployeeDocumentRegistration = z.infer<
+  typeof employeeDocumentRegistrationSchema
+>;
+export const employeeDocumentSchema = z.strictObject({
+  id: tenantIdSchema,
+  employeeId: tenantIdSchema,
+  category: employeeDocumentCategorySchema,
+  visibility: employeeDocumentVisibilitySchema,
+  fileName: z.string().min(1).max(180),
+  contentType: employeeDocumentContentTypeSchema,
+  sizeBytes: z
+    .number()
+    .int()
+    .min(1)
+    .max(10 * 1024 * 1024),
+  status: z.enum([
+    'awaiting_upload',
+    'quarantined',
+    'clean',
+    'rejected',
+    'removed',
+  ]),
+  expiresOn: z.iso.date().nullable(),
+  replacementDocumentId: tenantIdSchema.nullable(),
+  createdAt: z.iso.datetime({ offset: true }),
+  scannedAt: z.iso.datetime({ offset: true }).nullable(),
+});
+export const employeeDocumentListSchema = z.strictObject({
+  documents: employeeDocumentSchema.array().max(500),
+});
+export type EmployeeDocument = z.infer<typeof employeeDocumentSchema>;
+
 const safeSpreadsheetValue = (value: string) => !/^[=+\-@\t\r]/.test(value);
 function csvCells(
   content: string,

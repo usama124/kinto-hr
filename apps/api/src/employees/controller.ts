@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   Inject,
   Param,
   Post,
@@ -22,6 +23,7 @@ import {
   employeeChecklistTaskCreateSchema,
   employeeChecklistTaskCompletionSchema,
   employeeRecordCreateSchema,
+  employeeDocumentRegistrationSchema,
   tenantIdSchema,
 } from '@kinto/contracts';
 import {
@@ -82,6 +84,45 @@ export class EmployeesController {
       context.actor,
       context.tenantId,
       employee.data,
+    );
+  }
+
+  @Get(':employeeId/documents')
+  async readDocuments(
+    @Req() req: AuthRequest,
+    @Param('tenantId') tenantId: unknown,
+    @Param('employeeId') employeeId: unknown,
+  ) {
+    const employee = tenantIdSchema.safeParse(employeeId);
+    if (!employee.success) throw new BadRequestException();
+    const context = await this.context(req, tenantId);
+    return this.database.readEmployeeDocuments(
+      context.actor,
+      context.tenantId,
+      employee.data,
+    );
+  }
+
+  @Post(':employeeId/documents')
+  async registerDocument(
+    @Req() req: AuthRequest,
+    @Param('tenantId') tenantId: unknown,
+    @Param('employeeId') employeeId: unknown,
+    @Headers('idempotency-key') idempotencyKey: unknown,
+    @Body() body: unknown,
+  ) {
+    const employee = tenantIdSchema.safeParse(employeeId);
+    const key = tenantIdSchema.safeParse(idempotencyKey);
+    const input = employeeDocumentRegistrationSchema.safeParse(body);
+    if (!employee.success || !key.success || !input.success)
+      throw new BadRequestException();
+    const context = await this.context(req, tenantId, true);
+    return this.database.registerEmployeeDocument(
+      context.actor,
+      context.tenantId,
+      employee.data,
+      key.data,
+      input.data,
     );
   }
 
