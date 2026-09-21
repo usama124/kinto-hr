@@ -9,6 +9,7 @@ import {
   Post,
   Put,
   Req,
+  Res,
   UnauthorizedException,
 } from '@nestjs/common';
 import {
@@ -147,6 +148,43 @@ export class EmployeesController {
       document.data,
       req as AuthRequest & AsyncIterable<Uint8Array>,
     );
+  }
+
+  @Get(':employeeId/documents/:documentId/content')
+  async downloadDocument(
+    @Req() req: AuthRequest,
+    @Res()
+    response: {
+      setHeader(name: string, value: string | number): void;
+      end(bytes: Buffer): void;
+    },
+    @Param('tenantId') tenantId: unknown,
+    @Param('employeeId') employeeId: unknown,
+    @Param('documentId') documentId: unknown,
+  ) {
+    const employee = tenantIdSchema.safeParse(employeeId);
+    const document = tenantIdSchema.safeParse(documentId);
+    if (!employee.success || !document.success) throw new BadRequestException();
+    const context = await this.context(req, tenantId);
+    const file = await this.documents.download(
+      context.actor,
+      context.tenantId,
+      employee.data,
+      document.data,
+    );
+    const extension =
+      file.contentType === 'application/pdf'
+        ? 'pdf'
+        : file.contentType === 'image/jpeg'
+          ? 'jpg'
+          : 'png';
+    response.setHeader('Content-Type', file.contentType);
+    response.setHeader('Content-Length', file.bytes.length);
+    response.setHeader(
+      'Content-Disposition',
+      `attachment; filename="document-${document.data}.${extension}"`,
+    );
+    response.end(file.bytes);
   }
 
   @Post()

@@ -55,6 +55,7 @@ const methods = {
   rehireEmployee: vi.fn(),
 };
 const uploadDocument = vi.fn();
+const downloadDocument = vi.fn();
 const limit = vi.fn().mockResolvedValue(undefined);
 const getSession = vi.fn().mockResolvedValue(session);
 let app: INestApplication;
@@ -68,7 +69,10 @@ beforeAll(async () => {
         useValue: { limit, session: getSession, origin: () => origin },
       },
       { provide: DatabaseService, useValue: methods },
-      { provide: DocumentUploadService, useValue: { upload: uploadDocument } },
+      {
+        provide: DocumentUploadService,
+        useValue: { upload: uploadDocument, download: downloadDocument },
+      },
     ],
   }).compile();
   app = module.createNestApplication();
@@ -186,6 +190,34 @@ it('requires selected tenant and CSRF before accepting document bytes', async ()
     .set('Content-Type', 'application/octet-stream')
     .send(Buffer.from('content'))
     .expect(400);
+});
+
+it('serves authorized document bytes as a no-store attachment', async () => {
+  const documentId = randomUUID();
+  const bytes = Buffer.from('%PDF-1.7\n%%EOF');
+  downloadDocument.mockResolvedValueOnce({
+    bytes,
+    contentType: 'application/pdf',
+  });
+  const response = await authenticated(
+    'get',
+    `${base}/${employeeId}/documents/${documentId}/content`,
+  ).expect(200);
+  expect(response.body).toEqual(bytes);
+  expect(response.headers['cache-control']).toBe('no-store');
+  expect(response.headers['content-disposition']).toBe(
+    `attachment; filename="document-${documentId}.pdf"`,
+  );
+  expect(downloadDocument).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+    employeeId,
+    documentId,
+  );
+  await authenticated(
+    'get',
+    `${base}/${employeeId}/documents/invalid/content`,
+  ).expect(400);
 });
 
 it('creates a strict complete draft and rejects salary or unsupported workers', async () => {

@@ -58,6 +58,7 @@ import {
   readTenantEmployeeDocuments,
   authorizeTenantEmployeeDocumentUpload,
   transitionTenantEmployeeDocumentScan,
+  authorizeTenantEmployeeDocumentDownload,
 } from '@kinto/database';
 import {
   type AuthenticatedIdentity,
@@ -446,6 +447,20 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       documentId,
       expectedStatus,
       nextStatus,
+    );
+  }
+  authorizeEmployeeDocumentDownload(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    employeeId: string,
+    documentId: string,
+  ) {
+    return authorizeTenantEmployeeDocumentDownload(
+      this.db,
+      actor,
+      tenantId,
+      employeeId,
+      documentId,
     );
   }
   readEmployees(

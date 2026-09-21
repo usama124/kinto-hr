@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:net';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -111,6 +111,12 @@ it('stores quarantine bytes and marks clean only after a scanner verdict', async
   const transitions: string[] = [];
   const database = {
     authorizeEmployeeDocumentUpload: vi.fn().mockResolvedValue(target),
+    authorizeEmployeeDocumentDownload: vi.fn().mockResolvedValue({
+      storageObjectKey: key,
+      contentType: target.contentType,
+      sizeBytes: target.sizeBytes,
+      fileDigest: target.fileDigest,
+    }),
     transitionEmployeeDocumentScan: vi
       .fn()
       .mockImplementation(
@@ -128,6 +134,16 @@ it('stores quarantine bytes and marks clean only after a scanner verdict', async
   ).toEqual({ id: documentId, status: 'clean' });
   expect(transitions).toEqual(['quarantined', 'clean']);
   expect(await readFile(join(directory, tenantId, key))).toEqual(pdf);
+  expect(
+    await service.download(actor, tenantId, employeeId, documentId),
+  ).toEqual({
+    bytes: pdf,
+    contentType: 'application/pdf',
+  });
+  await writeFile(join(directory, tenantId, key), Buffer.alloc(pdf.length));
+  await expect(
+    service.download(actor, tenantId, employeeId, documentId),
+  ).rejects.toThrow('Private document unavailable');
 });
 
 it('keeps scanner outages quarantined and rejects infected bytes', async () => {
