@@ -63,6 +63,7 @@ import {
   employeeDocumentSchema,
   employeeDocumentListSchema,
   employeeDocumentUploadTargetSchema,
+  employeeDocumentDownloadTargetSchema,
   parseEmployeeImportCsv,
   employeeAssignmentCreateSchema,
   employeeRecordViewSchema,
@@ -1461,6 +1462,27 @@ export async function transitionTenantEmployeeDocumentScan(
   if (row.outcome === 'not_found') throw new DomainError('NOT_FOUND');
   if (row.outcome === 'invalid_state') throw new DomainError('INVALID_STATE');
   return employeeDocumentSchema.parse(row.snapshot);
+}
+export async function authorizeTenantEmployeeDocumentDownload(
+  db: PrismaClient,
+  actor: PeopleActor,
+  tenantId: string,
+  employeeId: string,
+  documentId: string,
+) {
+  validatePeopleActor(actor, tenantId);
+  tenantIdSchema.parse(employeeId);
+  tenantIdSchema.parse(documentId);
+  const rows = await db.$queryRaw<
+    { outcome: 'authorized' | 'forbidden' | 'not_found'; download: unknown }[]
+  >`SELECT * FROM public.authorize_tenant_employee_document_download(
+    ${actor.identityId}::uuid,${actor.mfaVerified},${tenantId}::uuid,
+    ${employeeId}::uuid,${documentId}::uuid,${randomUUID()}::uuid
+  )`;
+  const row = rows[0];
+  if (!row || row.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (row.outcome === 'not_found') throw new DomainError('NOT_FOUND');
+  return employeeDocumentDownloadTargetSchema.parse(row.download);
 }
 export async function readTenantEmployees(
   db: PrismaClient,

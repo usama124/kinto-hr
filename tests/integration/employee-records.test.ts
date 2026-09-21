@@ -22,6 +22,7 @@ import {
   readTenantEmployeeDocuments,
   authorizeTenantEmployeeDocumentUpload,
   transitionTenantEmployeeDocumentScan,
+  authorizeTenantEmployeeDocumentDownload,
 } from '@kinto/database';
 
 if (existsSync('.env')) process.loadEnvFile('.env');
@@ -579,6 +580,15 @@ describe('tenant employee records and effective assignments', () => {
       fileDigest: input.fileDigest,
       sizeBytes: input.sizeBytes,
     });
+    await expect(
+      authorizeTenantEmployeeDocumentDownload(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        employee.id,
+        registered.id,
+      ),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
     for (const denied of [
       actor(identities.hr, false),
       actor(identities.employee),
@@ -626,6 +636,65 @@ describe('tenant employee records and effective assignments', () => {
     );
     expect(clean).toMatchObject({ status: 'clean' });
     expect(clean.scannedAt).not.toBeNull();
+    expect(
+      await authorizeTenantEmployeeDocumentDownload(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        employee.id,
+        registered.id,
+      ),
+    ).toEqual({
+      storageObjectKey: stored.storageObjectKey,
+      contentType: input.contentType,
+      sizeBytes: input.sizeBytes,
+      fileDigest: input.fileDigest,
+    });
+    for (const denied of [
+      actor(identities.hr, false),
+      actor(identities.employee),
+      actor(identities.otherOwner),
+    ])
+      await expect(
+        authorizeTenantEmployeeDocumentDownload(
+          runtime,
+          denied,
+          tenantId,
+          employee.id,
+          registered.id,
+        ),
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(
+      authorizeTenantEmployeeDocumentDownload(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        otherEmployee.id,
+        registered.id,
+      ),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(
+      await admin.auditEvent.count({
+        where: { tenantId, action: 'employee.document_download_authorized' },
+      }),
+    ).toBe(1);
+    await admin.employeeDocument.update({
+      where: { id: registered.id },
+      data: { expiresOn: new Date(`${date(-1)}T00:00:00.000Z`) },
+    });
+    await expect(
+      authorizeTenantEmployeeDocumentDownload(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        employee.id,
+        registered.id,
+      ),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await admin.employeeDocument.update({
+      where: { id: registered.id },
+      data: { expiresOn: null },
+    });
     await expect(
       authorizeTenantEmployeeDocumentUpload(
         runtime,
@@ -635,6 +704,19 @@ describe('tenant employee records and effective assignments', () => {
         registered.id,
       ),
     ).rejects.toMatchObject({ code: 'INVALID_STATE' });
+    await admin.membership.updateMany({
+      where: { tenantId, identityId: identities.hr },
+      data: { status: 'revoked' },
+    });
+    await expect(
+      authorizeTenantEmployeeDocumentDownload(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        employee.id,
+        registered.id,
+      ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 
   it('retains effective compensation revisions behind explicit payroll roles', async () => {

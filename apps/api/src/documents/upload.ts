@@ -231,4 +231,43 @@ export class DocumentUploadService {
     if (verdict === 'infected') await unlink(location);
     return document;
   }
+
+  async download(
+    actor: Actor,
+    tenantId: string,
+    employeeId: string,
+    documentId: string,
+  ) {
+    if (!this.config)
+      throw new ServiceUnavailableException('Document download unavailable');
+    const target = await this.database.authorizeEmployeeDocumentDownload(
+      actor,
+      tenantId,
+      employeeId,
+      documentId,
+    );
+    try {
+      const handle = await open(
+        join(this.config.root, tenantId, target.storageObjectKey),
+        constants.O_RDONLY | constants.O_NOFOLLOW,
+      );
+      let bytes: Buffer;
+      try {
+        const metadata = await handle.stat();
+        if (!metadata.isFile() || metadata.size !== target.sizeBytes)
+          throw new Error('Private document size mismatch');
+        bytes = await handle.readFile();
+      } finally {
+        await handle.close();
+      }
+      if (
+        bytes.length !== target.sizeBytes ||
+        createHash('sha256').update(bytes).digest('hex') !== target.fileDigest
+      )
+        throw new Error('Private document digest mismatch');
+      return { bytes, contentType: target.contentType };
+    } catch {
+      throw new ServiceUnavailableException('Private document unavailable');
+    }
+  }
 }

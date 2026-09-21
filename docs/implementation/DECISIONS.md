@@ -50,6 +50,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 22 September 2026 — local-test clean-document download authorization
+
+Engineering added a bounded read path for synthetic local document files. The database requires active owner/HR authority, recent MFA, the selected tenant and exact employee/document binding, plus clean and unexpired status; every successful authorization is audited. The API checks file size and digest before sending a no-store attachment without exposing the storage key or original filename. There is no signed URL, and production local storage remains prohibited. Employee-visible self-service, production object storage, backup/recovery and retention controls are still open. See [evidence](../evidence/phase-01/employee-documents.md).
+
 ### 21 September 2026 — local-test employee document upload and scan
 
 Engineering added an off-by-default private local-test content path for registered documents. It checks exact byte count, SHA-256 and basic PDF/JPEG/PNG signatures, uses a private quarantine file, and requires a loopback ClamAV INSTREAM verdict before the metadata can become clean or rejected. Scanner outage leaves the record quarantined for exact-byte retry. Production refuses the local mode, and no download route exists. This is synthetic test infrastructure, not approval to store customer documents: object storage, real scanner operations, file recovery, retention and authorized download remain open. See [evidence](../evidence/phase-01/employee-documents.md).

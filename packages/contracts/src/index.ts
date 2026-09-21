@@ -481,6 +481,11 @@ export const employeeDocumentUploadTargetSchema = z.strictObject({
 export type EmployeeDocumentUploadTarget = z.infer<
   typeof employeeDocumentUploadTargetSchema
 >;
+export const employeeDocumentDownloadTargetSchema =
+  employeeDocumentUploadTargetSchema.omit({ status: true });
+export type EmployeeDocumentDownloadTarget = z.infer<
+  typeof employeeDocumentDownloadTargetSchema
+>;
 
 const safeSpreadsheetValue = (value: string) => !/^[=+\-@\t\r]/.test(value);
 function csvCells(
