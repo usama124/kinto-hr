@@ -56,6 +56,8 @@ import {
   confirmTenantEmployeeImport,
   registerTenantEmployeeDocument,
   readTenantEmployeeDocuments,
+  authorizeTenantEmployeeDocumentUpload,
+  transitionTenantEmployeeDocumentScan,
 } from '@kinto/database';
 import {
   type AuthenticatedIdentity,
@@ -413,6 +415,38 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     employeeId: string,
   ) {
     return readTenantEmployeeDocuments(this.db, actor, tenantId, employeeId);
+  }
+  authorizeEmployeeDocumentUpload(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    employeeId: string,
+    documentId: string,
+  ) {
+    return authorizeTenantEmployeeDocumentUpload(
+      this.db,
+      actor,
+      tenantId,
+      employeeId,
+      documentId,
+    );
+  }
+  transitionEmployeeDocumentScan(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    employeeId: string,
+    documentId: string,
+    expectedStatus: 'awaiting_upload' | 'quarantined',
+    nextStatus: 'quarantined' | 'clean' | 'rejected',
+  ) {
+    return transitionTenantEmployeeDocumentScan(
+      this.db,
+      actor,
+      tenantId,
+      employeeId,
+      documentId,
+      expectedStatus,
+      nextStatus,
+    );
   }
   readEmployees(
     actor: { identityId: string; mfaVerified: boolean },

@@ -20,6 +20,8 @@ import {
   updateTenantEmployeeProfile,
   registerTenantEmployeeDocument,
   readTenantEmployeeDocuments,
+  authorizeTenantEmployeeDocumentUpload,
+  transitionTenantEmployeeDocumentScan,
 } from '@kinto/database';
 
 if (existsSync('.env')) process.loadEnvFile('.env');
@@ -565,6 +567,74 @@ describe('tenant employee records and effective assignments', () => {
         where: { tenantId, type: 'employee.document_registered.v1' },
       }),
     ).toBe(2);
+    const upload = await authorizeTenantEmployeeDocumentUpload(
+      runtime,
+      actor(identities.hr),
+      tenantId,
+      employee.id,
+      registered.id,
+    );
+    expect(upload).toMatchObject({
+      status: 'awaiting_upload',
+      fileDigest: input.fileDigest,
+      sizeBytes: input.sizeBytes,
+    });
+    for (const denied of [
+      actor(identities.hr, false),
+      actor(identities.employee),
+      actor(identities.otherOwner),
+    ])
+      await expect(
+        authorizeTenantEmployeeDocumentUpload(
+          runtime,
+          denied,
+          tenantId,
+          employee.id,
+          registered.id,
+        ),
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(
+      transitionTenantEmployeeDocumentScan(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        employee.id,
+        registered.id,
+        'quarantined',
+        'clean',
+      ),
+    ).rejects.toMatchObject({ code: 'INVALID_STATE' });
+    expect(
+      await transitionTenantEmployeeDocumentScan(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        employee.id,
+        registered.id,
+        'awaiting_upload',
+        'quarantined',
+      ),
+    ).toMatchObject({ status: 'quarantined', scannedAt: null });
+    const clean = await transitionTenantEmployeeDocumentScan(
+      runtime,
+      actor(identities.hr),
+      tenantId,
+      employee.id,
+      registered.id,
+      'quarantined',
+      'clean',
+    );
+    expect(clean).toMatchObject({ status: 'clean' });
+    expect(clean.scannedAt).not.toBeNull();
+    await expect(
+      authorizeTenantEmployeeDocumentUpload(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        employee.id,
+        registered.id,
+      ),
+    ).rejects.toMatchObject({ code: 'INVALID_STATE' });
   });
 
   it('retains effective compensation revisions behind explicit payroll roles', async () => {

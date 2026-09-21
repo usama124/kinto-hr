@@ -50,6 +50,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 21 September 2026 — local-test employee document upload and scan
+
+Engineering added an off-by-default private local-test content path for registered documents. It checks exact byte count, SHA-256 and basic PDF/JPEG/PNG signatures, uses a private quarantine file, and requires a loopback ClamAV INSTREAM verdict before the metadata can become clean or rejected. Scanner outage leaves the record quarantined for exact-byte retry. Production refuses the local mode, and no download route exists. This is synthetic test infrastructure, not approval to store customer documents: object storage, real scanner operations, file recovery, retention and authorized download remain open. See [evidence](../evidence/phase-01/employee-documents.md).
+
 ### 21 September 2026 — employee document quarantine control plane
 
 Engineering started the private file pipeline with typed, retry-safe metadata registration. The server assigns opaque random quarantine keys; public projections exclude storage keys and content digests. Tenant-composite references, recent MFA, owner/HR authorization and forced RLS protect each employee document. Records remain `awaiting_upload`, and no upload/download URL or client-controlled scan status exists until the object-store and malware-scanner increment is implemented. See [evidence](../evidence/phase-01/employee-documents.md).

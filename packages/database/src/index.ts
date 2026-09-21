@@ -62,6 +62,7 @@ import {
   employeeDocumentRegistrationSchema,
   employeeDocumentSchema,
   employeeDocumentListSchema,
+  employeeDocumentUploadTargetSchema,
   parseEmployeeImportCsv,
   employeeAssignmentCreateSchema,
   employeeRecordViewSchema,
@@ -1407,6 +1408,59 @@ export async function readTenantEmployeeDocuments(
     throw new DomainError('FORBIDDEN');
   if (rows[0].outcome === 'not_found') throw new DomainError('NOT_FOUND');
   return employeeDocumentListSchema.parse(rows[0].snapshot);
+}
+export async function authorizeTenantEmployeeDocumentUpload(
+  db: PrismaClient,
+  actor: PeopleActor,
+  tenantId: string,
+  employeeId: string,
+  documentId: string,
+) {
+  validatePeopleActor(actor, tenantId);
+  tenantIdSchema.parse(employeeId);
+  tenantIdSchema.parse(documentId);
+  const rows = await db.$queryRaw<
+    {
+      outcome: 'authorized' | 'forbidden' | 'not_found' | 'invalid_state';
+      upload: unknown;
+    }[]
+  >`SELECT * FROM public.authorize_tenant_employee_document_upload(
+    ${actor.identityId}::uuid,${actor.mfaVerified},${tenantId}::uuid,
+    ${employeeId}::uuid,${documentId}::uuid
+  )`;
+  const row = rows[0];
+  if (!row || row.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (row.outcome === 'not_found') throw new DomainError('NOT_FOUND');
+  if (row.outcome === 'invalid_state') throw new DomainError('INVALID_STATE');
+  return employeeDocumentUploadTargetSchema.parse(row.upload);
+}
+export async function transitionTenantEmployeeDocumentScan(
+  db: PrismaClient,
+  actor: PeopleActor,
+  tenantId: string,
+  employeeId: string,
+  documentId: string,
+  expectedStatus: 'awaiting_upload' | 'quarantined',
+  nextStatus: 'quarantined' | 'clean' | 'rejected',
+) {
+  validatePeopleActor(actor, tenantId);
+  tenantIdSchema.parse(employeeId);
+  tenantIdSchema.parse(documentId);
+  const rows = await db.$queryRaw<
+    {
+      outcome: 'updated' | 'forbidden' | 'not_found' | 'invalid_state';
+      snapshot: unknown;
+    }[]
+  >`SELECT * FROM public.transition_tenant_employee_document_scan(
+    ${actor.identityId}::uuid,${actor.mfaVerified},${tenantId}::uuid,
+    ${employeeId}::uuid,${documentId}::uuid,${expectedStatus}::varchar,
+    ${nextStatus}::varchar,${randomUUID()}::uuid,${randomUUID()}::uuid
+  )`;
+  const row = rows[0];
+  if (!row || row.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (row.outcome === 'not_found') throw new DomainError('NOT_FOUND');
+  if (row.outcome === 'invalid_state') throw new DomainError('INVALID_STATE');
+  return employeeDocumentSchema.parse(row.snapshot);
 }
 export async function readTenantEmployees(
   db: PrismaClient,

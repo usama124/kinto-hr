@@ -35,12 +35,15 @@ import {
 } from '../auth/controller';
 import { AuthService } from '../auth/service';
 import { DatabaseService } from '../database.service';
+import { DocumentUploadService } from '../documents/upload';
 
 @Controller('tenants/:tenantId/employees')
 export class EmployeesController {
   constructor(
     @Inject(AuthService) private readonly auth: AuthService,
     @Inject(DatabaseService) private readonly database: DatabaseService,
+    @Inject(DocumentUploadService)
+    private readonly documents: DocumentUploadService,
   ) {}
 
   private async context(req: AuthRequest, tenantId: unknown, mutation = false) {
@@ -123,6 +126,26 @@ export class EmployeesController {
       employee.data,
       key.data,
       input.data,
+    );
+  }
+
+  @Put(':employeeId/documents/:documentId/content')
+  async uploadDocument(
+    @Req() req: AuthRequest,
+    @Param('tenantId') tenantId: unknown,
+    @Param('employeeId') employeeId: unknown,
+    @Param('documentId') documentId: unknown,
+  ) {
+    const employee = tenantIdSchema.safeParse(employeeId);
+    const document = tenantIdSchema.safeParse(documentId);
+    if (!employee.success || !document.success) throw new BadRequestException();
+    const context = await this.context(req, tenantId, true);
+    return this.documents.upload(
+      context.actor,
+      context.tenantId,
+      employee.data,
+      document.data,
+      req as AuthRequest & AsyncIterable<Uint8Array>,
     );
   }
 

@@ -8,6 +8,8 @@ import { AuthService } from '../auth/service';
 import { DatabaseService } from '../database.service';
 import { configureHttp } from '../http';
 import { EmployeesController } from './controller';
+import { DocumentUploadService } from '../documents/upload';
+import { readDocumentBytes } from '../documents/upload';
 
 const origin = 'https://kinto.example';
 const token = 'a'.repeat(43);
@@ -52,6 +54,7 @@ const methods = {
   archiveEmployee: vi.fn(),
   rehireEmployee: vi.fn(),
 };
+const uploadDocument = vi.fn();
 const limit = vi.fn().mockResolvedValue(undefined);
 const getSession = vi.fn().mockResolvedValue(session);
 let app: INestApplication;
@@ -65,6 +68,7 @@ beforeAll(async () => {
         useValue: { limit, session: getSession, origin: () => origin },
       },
       { provide: DatabaseService, useValue: methods },
+      { provide: DocumentUploadService, useValue: { upload: uploadDocument } },
     ],
   }).compile();
   app = module.createNestApplication();
@@ -148,6 +152,39 @@ it('lists and registers only strict private document metadata', async () => {
     .expect(400);
   await mutation('post', `${base}/${employeeId}/documents`)
     .send(input)
+    .expect(400);
+});
+
+it('requires selected tenant and CSRF before accepting document bytes', async () => {
+  const documentId = randomUUID();
+  const bytes = Buffer.from('%PDF-1.7\n%%EOF');
+  uploadDocument.mockImplementationOnce(
+    async (_actor, _tenant, _employee, _document, raw) => {
+      expect(await readDocumentBytes(raw, bytes.length)).toEqual(bytes);
+      return { id: documentId, status: 'clean' };
+    },
+  );
+  await mutation('put', `${base}/${employeeId}/documents/${documentId}/content`)
+    .set('Content-Type', 'application/octet-stream')
+    .send(bytes)
+    .expect(200, { id: documentId, status: 'clean' });
+  expect(uploadDocument).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+    employeeId,
+    documentId,
+    expect.anything(),
+  );
+  await authenticated(
+    'put',
+    `${base}/${employeeId}/documents/${documentId}/content`,
+  )
+    .set('Content-Type', 'application/octet-stream')
+    .send(Buffer.from('content'))
+    .expect(403);
+  await mutation('put', `${base}/${employeeId}/documents/invalid/content`)
+    .set('Content-Type', 'application/octet-stream')
+    .send(Buffer.from('content'))
     .expect(400);
 });
 

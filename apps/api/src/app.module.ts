@@ -19,6 +19,7 @@ import { OrganizationController } from './organization/controller';
 import { EntitlementsController } from './entitlements/controller';
 import { EmployeesController } from './employees/controller';
 import { EmployeeImportsController } from './employee-imports/controller';
+import { DocumentUploadService } from './documents/upload';
 @Controller('health')
 export class HealthController {
   constructor(
@@ -52,6 +53,11 @@ export class HealthController {
     EmployeesController,
     EmployeeImportsController,
   ],
-  providers: [DatabaseService, AuthService, OwnerProvisioningService],
+  providers: [
+    DatabaseService,
+    AuthService,
+    OwnerProvisioningService,
+    DocumentUploadService,
+  ],
 })
 export class AppModule {}
