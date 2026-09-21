@@ -9,7 +9,10 @@ import {
   Inject,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { type EmployeeDocumentUploadTarget } from '@kinto/contracts';
+import {
+  type EmployeeDocumentUploadTarget,
+  type EmployeeDocumentDownloadTarget,
+} from '@kinto/contracts';
 import { DatabaseService } from '../database.service';
 
 const MAX_BYTES = 10 * 1024 * 1024;
@@ -246,6 +249,26 @@ export class DocumentUploadService {
       employeeId,
       documentId,
     );
+    return this.readVerified(tenantId, target);
+  }
+
+  async downloadSelf(actor: Actor, tenantId: string, documentId: string) {
+    if (!this.config)
+      throw new ServiceUnavailableException('Document download unavailable');
+    const target = await this.database.authorizeSelfEmployeeDocumentDownload(
+      actor,
+      tenantId,
+      documentId,
+    );
+    return this.readVerified(tenantId, target);
+  }
+
+  private async readVerified(
+    tenantId: string,
+    target: EmployeeDocumentDownloadTarget,
+  ) {
+    if (!this.config)
+      throw new ServiceUnavailableException('Document download unavailable');
     try {
       const handle = await open(
         join(this.config.root, tenantId, target.storageObjectKey),

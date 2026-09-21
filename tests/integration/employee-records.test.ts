@@ -23,6 +23,8 @@ import {
   authorizeTenantEmployeeDocumentUpload,
   transitionTenantEmployeeDocumentScan,
   authorizeTenantEmployeeDocumentDownload,
+  readTenantSelfEmployeeDocuments,
+  authorizeTenantSelfEmployeeDocumentDownload,
 } from '@kinto/database';
 
 if (existsSync('.env')) process.loadEnvFile('.env');
@@ -717,6 +719,197 @@ describe('tenant employee records and effective assignments', () => {
         registered.id,
       ),
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
+  it('shows only own clean employee-visible documents through an active identity link', async () => {
+    const refs = await setupOrganization(tenantId, identities.owner, 'SELF');
+    const employee = await createTenantEmployee(
+      runtime,
+      actor(identities.hr),
+      tenantId,
+      {
+        employeeNumber: 'SELF-001',
+        name: 'Linked Employee',
+        joiningDate: date(-1),
+        employmentType: 'monthly_salaried',
+        ...refs,
+        managerEmployeeId: null,
+        topLevelReason: 'Approved top-level fixture',
+        reason: 'Create self-document fixture',
+      },
+    );
+    const otherEmployee = await createTenantEmployee(
+      runtime,
+      actor(identities.hr),
+      tenantId,
+      {
+        employeeNumber: 'SELF-002',
+        name: 'Other Employee',
+        joiningDate: date(-1),
+        employmentType: 'monthly_salaried',
+        ...refs,
+        managerEmployeeId: null,
+        topLevelReason: 'Approved top-level fixture',
+        reason: 'Create other self-document fixture',
+      },
+    );
+    const member = await admin.membership.findFirstOrThrow({
+      where: { tenantId, identityId: identities.employee },
+    });
+    const requestId = randomUUID();
+    const invitationId = randomUUID();
+    await admin.employeeAccountRequest.create({
+      data: {
+        id: requestId,
+        requestKey: randomUUID(),
+        tenantId,
+        employeeId: employee.id,
+        requestedByIdentityId: identities.owner,
+        email: 'linked-synthetic@example.com',
+        status: 'active',
+      },
+    });
+    await admin.employeeInvitation.create({
+      data: {
+        id: invitationId,
+        requestId,
+        tenantId,
+        employeeId: employee.id,
+        identityId: identities.employee,
+        status: 'accepted',
+        expiresAt: new Date(Date.now() + 60_000),
+      },
+    });
+    await admin.employeeIdentityLink.create({
+      data: {
+        id: randomUUID(),
+        tenantId,
+        employeeId: employee.id,
+        identityId: identities.employee,
+        membershipId: member.id,
+        invitationId,
+      },
+    });
+    const input = {
+      category: 'employment' as const,
+      visibility: 'employee_visible' as const,
+      fileName: 'Visible.pdf',
+      contentType: 'application/pdf' as const,
+      sizeBytes: 2048,
+      fileDigest: 'a'.repeat(64),
+      expiresOn: null,
+      replacementDocumentId: null,
+      reason: 'Register synthetic visible file',
+    };
+    const register = async (
+      ownerEmployeeId: string,
+      override: {
+        visibility?: 'hr_only' | 'employee_visible';
+        expiresOn?: string | null;
+      } = {},
+    ) =>
+      registerTenantEmployeeDocument(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        ownerEmployeeId,
+        randomUUID(),
+        { ...input, ...override },
+      );
+    const clean = async (ownerEmployeeId: string, documentId: string) => {
+      await transitionTenantEmployeeDocumentScan(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        ownerEmployeeId,
+        documentId,
+        'awaiting_upload',
+        'quarantined',
+      );
+      await transitionTenantEmployeeDocumentScan(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        ownerEmployeeId,
+        documentId,
+        'quarantined',
+        'clean',
+      );
+    };
+    const visible = await register(employee.id);
+    await clean(employee.id, visible.id);
+    const hrOnly = await register(employee.id, { visibility: 'hr_only' });
+    await clean(employee.id, hrOnly.id);
+    const pending = await register(employee.id);
+    const expired = await register(employee.id, { expiresOn: date(-1) });
+    await clean(employee.id, expired.id);
+    const another = await register(otherEmployee.id);
+    await clean(otherEmployee.id, another.id);
+    const selfDocuments = await readTenantSelfEmployeeDocuments(
+      runtime,
+      actor(identities.employee),
+      tenantId,
+    );
+    expect(selfDocuments.documents).toEqual([
+      expect.objectContaining({ id: visible.id, status: 'clean' }),
+    ]);
+    const target = await authorizeTenantSelfEmployeeDocumentDownload(
+      runtime,
+      actor(identities.employee),
+      tenantId,
+      visible.id,
+    );
+    expect(target).toMatchObject({
+      contentType: input.contentType,
+      fileDigest: input.fileDigest,
+    });
+    expect(JSON.stringify(selfDocuments)).not.toContain(
+      target.storageObjectKey,
+    );
+    for (const hidden of [hrOnly, pending, expired, another])
+      await expect(
+        authorizeTenantSelfEmployeeDocumentDownload(
+          runtime,
+          actor(identities.employee),
+          tenantId,
+          hidden.id,
+        ),
+      ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    for (const denied of [
+      actor(identities.employee, false),
+      actor(identities.hr),
+      actor(identities.otherOwner),
+    ])
+      await expect(
+        readTenantSelfEmployeeDocuments(runtime, denied, tenantId),
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(
+      readTenantSelfEmployeeDocuments(
+        runtime,
+        actor(identities.employee),
+        otherTenantId,
+      ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await admin.membership.update({
+      where: { id: member.id },
+      data: { status: 'revoked' },
+    });
+    await expect(
+      authorizeTenantSelfEmployeeDocumentDownload(
+        runtime,
+        actor(identities.employee),
+        tenantId,
+        visible.id,
+      ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(
+      await admin.auditEvent.count({
+        where: {
+          tenantId,
+          action: 'employee.document_self_download_authorized',
+        },
+      }),
+    ).toBe(1);
   });
 
   it('retains effective compensation revisions behind explicit payroll roles', async () => {
