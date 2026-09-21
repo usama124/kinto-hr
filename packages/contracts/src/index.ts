@@ -467,6 +467,20 @@ export const employeeDocumentListSchema = z.strictObject({
   documents: employeeDocumentSchema.array().max(500),
 });
 export type EmployeeDocument = z.infer<typeof employeeDocumentSchema>;
+export const employeeDocumentUploadTargetSchema = z.strictObject({
+  storageObjectKey: z.string().regex(/^[a-f0-9]{2}\/[a-f0-9-]{36}$/),
+  contentType: employeeDocumentContentTypeSchema,
+  sizeBytes: z
+    .number()
+    .int()
+    .min(1)
+    .max(10 * 1024 * 1024),
+  fileDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  status: z.enum(['awaiting_upload', 'quarantined']),
+});
+export type EmployeeDocumentUploadTarget = z.infer<
+  typeof employeeDocumentUploadTargetSchema
+>;
 
 const safeSpreadsheetValue = (value: string) => !/^[=+\-@\t\r]/.test(value);
 function csvCells(

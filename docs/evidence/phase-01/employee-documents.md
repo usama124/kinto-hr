@@ -1,17 +1,23 @@
 # Employee document quarantine control-plane evidence
 
 Date: 21 September 2026
-Scope: first P01-05 private-document increment, secure metadata registration and quarantine state.
+Scope: P01-05 private-document metadata registration and local-test upload/scan increment.
 
 ## Implemented boundary
 
 - Owner and HR users with recent MFA can register PDF, JPEG or PNG metadata up to 10 MB for an existing tenant employee. The strict contract includes category, HR-only or future employee visibility, safe display name, declared media type/size, SHA-256 digest, optional expiry/replacement and an audit reason.
 - The API accepts no storage location from clients. The server supplies an opaque random quarantine object key, while API responses exclude that key, the digest, creator identity and audit reason. Tenant-composite employee/replacement references, forced RLS and restricted security-definer functions protect the metadata.
 - A separate tenant-scoped idempotency key and canonical request digest return the original record for identical retries and reject changed reuse. Replacement targets must be a non-removed document for the same employee.
-- New records remain `awaiting_upload`. No upload or download URL is exposed, and no metadata can mark a file quarantined, clean, rejected or removed. The initial HR list is bounded to the newest 500 metadata records per employee; pagination remains future work. Registration emits payload-free audit/outbox facts acknowledged by the worker.
+- New records begin `awaiting_upload`. The initial HR list is bounded to the newest 500 metadata records per employee; pagination remains future work. Registration emits payload-free audit/outbox facts acknowledged by the worker.
+
+## Local-test content path
+
+- Upload mode is disabled by default. `local_test` is accepted only outside production with an absolute private directory and loopback ClamAV endpoint. The owner/HR upload request requires a selected tenant, same-origin CSRF, recent trusted MFA and a matching employee/document record. The request body is raw `application/octet-stream` at `PUT /api/v1/tenants/{tenantId}/employees/{employeeId}/documents/{documentId}/content`.
+- The server compares exact declared and received byte lengths, the registered SHA-256 digest and basic PDF/JPEG/PNG leading and terminal signatures, then writes the bytes to a private `0600` quarantine file. Repeated uploads must contain identical bytes. PostgreSQL records `awaiting_upload → quarantined → clean/rejected` transitions, audit facts and outbox events. Only a valid ClamAV INSTREAM clean verdict makes the metadata `clean`; an infected verdict rejects the record and removes the local file. Scanner errors leave it quarantined for an authorized exact-byte retry.
+- There is no file download endpoint, object-store adapter or production upload mode. A `clean` metadata status does not grant file access. Signature checks do not fully parse file formats; malware detection depends on a properly maintained scanner. Local-file retention, backups and recovery are not implemented, so this path must not receive customer files.
 
 ## Verification
 
-Contract/API tests cover supported formats, the 10 MB bound, strict fields, CSRF and required idempotency keys. Real PostgreSQL tests cover replay/conflict behavior, tenant and employee isolation, recent MFA, owner/HR authorization, direct-table denial, opaque public projections and payload-free audit/outbox records. Migration replay and synthetic database recovery classify and preserve the new table.
+Contract/API tests cover supported formats, the 10 MB bound, strict fields, CSRF, raw HTTP bytes and required idempotency keys. Real PostgreSQL tests cover replay/conflict behavior, tenant and employee isolation, recent MFA, owner/HR authorization, direct-table denial, allowed scan transitions, opaque public projections and payload-free audit/outbox records. Unit tests use a synthetic ClamAV protocol server to cover clean, infected and outage results. Migration replay and synthetic database recovery classify and preserve the metadata table. A real ClamAV process and a combined database/file recovery drill have not been exercised.
 
-All fixtures are synthetic. Object-store upload completion, actual content/digest/type verification, malware scanner integration, clean-file download authorization, replacement activation and retention-controlled removal remain required before this pipeline can handle customer files. An `awaiting_upload` record is metadata only and is never downloadable.
+All fixtures are synthetic. A production object-store adapter, real scanner operations, file recovery, clean-file download authorization, replacement activation and retention-controlled removal remain required before this pipeline can handle customer files. An `awaiting_upload` or `quarantined` record is never downloadable.

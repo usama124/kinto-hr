@@ -316,6 +316,9 @@ describe('durable outbox worker with real PostgreSQL and Redis', () => {
       'employee.import_previewed.v1',
       'employee.import_committed.v1',
       'employee.document_registered.v1',
+      'employee.document_quarantined.v1',
+      'employee.document_clean.v1',
+      'employee.document_rejected.v1',
     ]) {
       const event = await admin.outboxEvent.create({
         data: {

@@ -273,6 +273,8 @@ try {
     'public.confirm_tenant_employee_import(uuid, boolean, uuid, uuid, uuid, varchar, integer, varchar, varchar, uuid, uuid)',
     'public.register_tenant_employee_document(uuid, boolean, uuid, uuid, uuid, uuid, varchar, varchar, varchar, varchar, varchar, varchar, integer, varchar, date, uuid, varchar, uuid, uuid)',
     'public.read_tenant_employee_documents(uuid, boolean, uuid, uuid)',
+    'public.authorize_tenant_employee_document_upload(uuid, boolean, uuid, uuid, uuid)',
+    'public.transition_tenant_employee_document_scan(uuid, boolean, uuid, uuid, uuid, varchar, varchar, uuid, uuid)',
   ]) {
     await database.$executeRawUnsafe(
       `ALTER FUNCTION ${signature} OWNER TO kinto_control_owner`,
