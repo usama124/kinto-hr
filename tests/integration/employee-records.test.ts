@@ -25,6 +25,7 @@ import {
   authorizeTenantEmployeeDocumentDownload,
   readTenantSelfEmployeeDocuments,
   authorizeTenantSelfEmployeeDocumentDownload,
+  readTenantSelfEmployeeProfile,
 } from '@kinto/database';
 
 if (existsSync('.env')) process.loadEnvFile('.env');
@@ -790,6 +791,81 @@ describe('tenant employee records and effective assignments', () => {
         invitationId,
       },
     });
+    const emptyProfile = await readTenantSelfEmployeeProfile(
+      runtime,
+      actor(identities.employee),
+      tenantId,
+    );
+    expect(emptyProfile).toMatchObject({
+      employee: {
+        id: employee.id,
+        employeeNumber: 'SELF-001',
+        name: 'Linked Employee',
+        status: 'draft',
+      },
+      contact: null,
+    });
+    await updateTenantEmployeePrivateDetails(
+      runtime,
+      actor(identities.hr),
+      tenantId,
+      employee.id,
+      {
+        expectedVersion: 0,
+        personalEmail: 'linked@example.com',
+        mobilePhone: '03001234567',
+        residentialAddress: 'Private residential address',
+        emergencyContactName: 'Emergency Person',
+        emergencyContactPhone: '03007654321',
+        cnic: '3520212345678',
+        reason: 'Create synthetic private contact details',
+      },
+    );
+    const profile = await readTenantSelfEmployeeProfile(
+      runtime,
+      actor(identities.employee),
+      tenantId,
+    );
+    expect(profile.contact).toMatchObject({
+      version: 1,
+      personalEmail: 'linked@example.com',
+      mobilePhone: '03001234567',
+      emergencyContactName: 'Emergency Person',
+      emergencyContactPhone: '03007654321',
+    });
+    expect(JSON.stringify(profile)).not.toMatch(
+      /cnic|residential|salary|bank/i,
+    );
+    for (const denied of [
+      actor(identities.employee, false),
+      actor(identities.hr),
+      actor(identities.otherOwner),
+    ])
+      await expect(
+        readTenantSelfEmployeeProfile(runtime, denied, tenantId),
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(
+      readTenantSelfEmployeeProfile(
+        runtime,
+        actor(identities.employee),
+        otherTenantId,
+      ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await admin.employee.update({
+      where: { id: employee.id },
+      data: { status: 'terminated' },
+    });
+    await expect(
+      readTenantSelfEmployeeProfile(
+        runtime,
+        actor(identities.employee),
+        tenantId,
+      ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await admin.employee.update({
+      where: { id: employee.id },
+      data: { status: 'draft' },
+    });
     const input = {
       category: 'employment' as const,
       visibility: 'employee_visible' as const,
@@ -894,6 +970,13 @@ describe('tenant employee records and effective assignments', () => {
       where: { id: member.id },
       data: { status: 'revoked' },
     });
+    await expect(
+      readTenantSelfEmployeeProfile(
+        runtime,
+        actor(identities.employee),
+        tenantId,
+      ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
     await expect(
       authorizeTenantSelfEmployeeDocumentDownload(
         runtime,

@@ -278,6 +278,7 @@ try {
     'public.authorize_tenant_employee_document_download(uuid, boolean, uuid, uuid, uuid, uuid)',
     'public.read_tenant_self_employee_documents(uuid, boolean, uuid)',
     'public.authorize_tenant_self_employee_document_download(uuid, boolean, uuid, uuid, uuid)',
+    'public.read_tenant_self_employee_profile(uuid, boolean, uuid)',
   ]) {
     await database.$executeRawUnsafe(
       `ALTER FUNCTION ${signature} OWNER TO kinto_control_owner`,
