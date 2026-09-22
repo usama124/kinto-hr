@@ -9,6 +9,7 @@ import { DatabaseService } from '../database.service';
 import { configureHttp } from '../http';
 import { DocumentUploadService } from './upload';
 import { SelfDocumentsController } from './self-controller';
+import { SelfProfileController } from '../employees/self-profile-controller';
 
 const tenantId = randomUUID();
 const documentId = randomUUID();
@@ -24,13 +25,14 @@ const session = {
   principal: { mfaVerified: true },
 };
 const list = vi.fn();
+const readProfile = vi.fn();
 const downloadSelf = vi.fn();
 const getSession = vi.fn().mockResolvedValue(session);
 let app: INestApplication;
 
 beforeAll(async () => {
   const module = await Test.createTestingModule({
-    controllers: [SelfDocumentsController],
+    controllers: [SelfDocumentsController, SelfProfileController],
     providers: [
       {
         provide: AuthService,
@@ -41,7 +43,10 @@ beforeAll(async () => {
       },
       {
         provide: DatabaseService,
-        useValue: { readSelfEmployeeDocuments: list },
+        useValue: {
+          readSelfEmployeeDocuments: list,
+          readSelfEmployeeProfile: readProfile,
+        },
       },
       { provide: DocumentUploadService, useValue: { downloadSelf } },
     ],
@@ -70,6 +75,27 @@ it('lists only documents supplied by the self-service database boundary', async 
   );
   await request(app.getHttpServer()).get(base).expect(401);
   expect(list).toHaveBeenCalledTimes(1);
+});
+
+it('loads a selected-tenant read-only profile without an employee ID in the path', async () => {
+  const profile = {
+    employee: { id: randomUUID(), name: 'Linked Employee' },
+    contact: null,
+  };
+  readProfile.mockResolvedValueOnce(profile);
+  await authenticated(`/api/v1/tenants/${tenantId}/me/profile`).expect(
+    200,
+    profile,
+  );
+  expect(readProfile).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+  );
+  await authenticated(`/api/v1/tenants/${randomUUID()}/me/profile`).expect(403);
+  await request(app.getHttpServer())
+    .get(`/api/v1/tenants/${tenantId}/me/profile`)
+    .expect(401);
+  expect(readProfile).toHaveBeenCalledTimes(1);
 });
 
 it('serves an own document as a no-store attachment and rejects mismatched paths', async () => {

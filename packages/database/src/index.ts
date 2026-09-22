@@ -64,6 +64,7 @@ import {
   employeeDocumentListSchema,
   employeeDocumentUploadTargetSchema,
   employeeDocumentDownloadTargetSchema,
+  employeeSelfProfileSchema,
   parseEmployeeImportCsv,
   employeeAssignmentCreateSchema,
   employeeRecordViewSchema,
@@ -1517,6 +1518,21 @@ export async function authorizeTenantSelfEmployeeDocumentDownload(
   if (!row || row.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
   if (row.outcome === 'not_found') throw new DomainError('NOT_FOUND');
   return employeeDocumentDownloadTargetSchema.parse(row.download);
+}
+export async function readTenantSelfEmployeeProfile(
+  db: PrismaClient,
+  actor: PeopleActor,
+  tenantId: string,
+) {
+  validatePeopleActor(actor, tenantId);
+  const rows = await db.$queryRaw<
+    { outcome: 'ok' | 'forbidden'; snapshot: unknown }[]
+  >`SELECT * FROM public.read_tenant_self_employee_profile(
+    ${actor.identityId}::uuid,${actor.mfaVerified},${tenantId}::uuid
+  )`;
+  if (!rows[0] || rows[0].outcome === 'forbidden')
+    throw new DomainError('FORBIDDEN');
+  return employeeSelfProfileSchema.parse(rows[0].snapshot);
 }
 export async function readTenantEmployees(
   db: PrismaClient,

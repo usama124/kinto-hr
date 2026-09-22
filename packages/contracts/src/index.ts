@@ -809,6 +809,26 @@ export type EmployeePrivateDetailsUpdate = z.infer<
 export type EmployeePrivateDetailsResponse = z.infer<
   typeof employeePrivateDetailsResponseSchema
 >;
+export const employeeSelfProfileSchema = z.strictObject({
+  employee: z.strictObject({
+    id: tenantIdSchema,
+    employeeNumber: employeeNumberSchema,
+    name: employeeNameSchema,
+    legalName: employeeNameSchema.nullable(),
+    status: z.enum(['draft', 'active']),
+    joiningDate: z.iso.date(),
+  }),
+  contact: z
+    .strictObject({
+      version: z.number().int().positive(),
+      personalEmail: z.email().nullable(),
+      mobilePhone: z.string().nullable(),
+      emergencyContactName: z.string().max(160).nullable(),
+      emergencyContactPhone: z.string().nullable(),
+    })
+    .nullable(),
+});
+export type EmployeeSelfProfile = z.infer<typeof employeeSelfProfileSchema>;
 const compensationAmountSchema = z
   .string()
   .trim()

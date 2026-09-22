@@ -50,6 +50,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 22 September 2026 — read-only employee self profile
+
+Engineering added a narrow `/me/profile` read path backed by the active employee identity link, selected tenant and recent trusted MFA. It returns only the employee's core identity plus own contact/emergency fields when available; CNIC, address, compensation and bank data remain excluded. The database refuses stale terminated/archive access even if a membership was not yet revoked. This is read-only; employee change requests and HR decisions remain the next self-service work. See [evidence](../evidence/phase-01/employee-self-profile.md).
+
 ### 22 September 2026 — employee-visible local document self-service
 
 Engineering added a separate self-service document list and local-test download path. The database derives employee identity only from the active tenant membership and durable employee link with trusted recent MFA; neither caller-supplied employee IDs nor document visibility claims grant access. Only clean, unexpired `employee_visible` records appear or download, with each successful download authorization audited. HR-only, unscanned, expired and other employees' files remain hidden. Production storage, scanner operations, file recovery, retention and general profile-change self-service remain open. See [evidence](../evidence/phase-01/employee-documents.md).
