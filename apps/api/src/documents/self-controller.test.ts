@@ -10,6 +10,7 @@ import { configureHttp } from '../http';
 import { DocumentUploadService } from './upload';
 import { SelfDocumentsController } from './self-controller';
 import { SelfProfileController } from '../employees/self-profile-controller';
+import { ProfileChangeController } from '../employees/profile-change-controller';
 
 const tenantId = randomUUID();
 const documentId = randomUUID();
@@ -26,19 +27,26 @@ const session = {
 };
 const list = vi.fn();
 const readProfile = vi.fn();
+const submitChange = vi.fn();
+const listChanges = vi.fn();
 const downloadSelf = vi.fn();
 const getSession = vi.fn().mockResolvedValue(session);
 let app: INestApplication;
 
 beforeAll(async () => {
   const module = await Test.createTestingModule({
-    controllers: [SelfDocumentsController, SelfProfileController],
+    controllers: [
+      SelfDocumentsController,
+      SelfProfileController,
+      ProfileChangeController,
+    ],
     providers: [
       {
         provide: AuthService,
         useValue: {
           limit: vi.fn().mockResolvedValue(undefined),
           session: getSession,
+          origin: () => 'https://kinto.example',
         },
       },
       {
@@ -46,6 +54,8 @@ beforeAll(async () => {
         useValue: {
           readSelfEmployeeDocuments: list,
           readSelfEmployeeProfile: readProfile,
+          submitSelfProfileChangeRequest: submitChange,
+          readSelfProfileChangeRequests: listChanges,
         },
       },
       { provide: DocumentUploadService, useValue: { downloadSelf } },
@@ -96,6 +106,62 @@ it('loads a selected-tenant read-only profile without an employee ID in the path
     .get(`/api/v1/tenants/${tenantId}/me/profile`)
     .expect(401);
   expect(readProfile).toHaveBeenCalledTimes(1);
+});
+
+it('submits only strict contact proposals with session CSRF and an idempotency key', async () => {
+  const path = `/api/v1/tenants/${tenantId}/me/profile-change-requests`;
+  const key = randomUUID();
+  const input = {
+    expectedContactVersion: 1,
+    personalEmail: 'new@example.com',
+    mobilePhone: '03001234567',
+    emergencyContactName: 'Contact Person',
+    emergencyContactPhone: '03007654321',
+    reason: 'Update my contact details',
+  };
+  submitChange.mockResolvedValueOnce({ id: randomUUID(), status: 'pending' });
+  await request(app.getHttpServer())
+    .post(path)
+    .set('Cookie', `__Host-kinto-session=${token}`)
+    .set('Origin', 'https://kinto.example')
+    .set('X-CSRF-Token', session.csrf)
+    .set('Idempotency-Key', key)
+    .send(input)
+    .expect(201);
+  expect(submitChange).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+    key,
+    input,
+  );
+  await request(app.getHttpServer())
+    .post(path)
+    .set('Cookie', `__Host-kinto-session=${token}`)
+    .set('Idempotency-Key', randomUUID())
+    .send(input)
+    .expect(403);
+  await request(app.getHttpServer())
+    .post(path)
+    .set('Cookie', `__Host-kinto-session=${token}`)
+    .set('Origin', 'https://kinto.example')
+    .set('X-CSRF-Token', session.csrf)
+    .set('Idempotency-Key', randomUUID())
+    .send({ ...input, cnic: '3520212345678' })
+    .expect(400);
+  await request(app.getHttpServer())
+    .post(path)
+    .set('Cookie', `__Host-kinto-session=${token}`)
+    .set('Origin', 'https://kinto.example')
+    .set('X-CSRF-Token', session.csrf)
+    .send(input)
+    .expect(400);
+  expect(submitChange).toHaveBeenCalledTimes(1);
+  listChanges.mockResolvedValueOnce({ requests: [] });
+  await authenticated(path).expect(200, { requests: [] });
+  expect(listChanges).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+  );
 });
 
 it('serves an own document as a no-store attachment and rejects mismatched paths', async () => {

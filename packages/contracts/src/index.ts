@@ -829,6 +829,43 @@ export const employeeSelfProfileSchema = z.strictObject({
     .nullable(),
 });
 export type EmployeeSelfProfile = z.infer<typeof employeeSelfProfileSchema>;
+export const employeeProfileChangeRequestInputSchema = z
+  .strictObject({
+    expectedContactVersion: z.number().int().min(0),
+    personalEmail: z.string().trim().toLowerCase().pipe(z.email()).nullable(),
+    mobilePhone: privatePhoneSchema.nullable(),
+    emergencyContactName: privateNullableText(160),
+    emergencyContactPhone: privatePhoneSchema.nullable(),
+    reason: employeeReasonSchema,
+  })
+  .superRefine((value, context) => {
+    if (
+      (value.emergencyContactName === null) !==
+      (value.emergencyContactPhone === null)
+    )
+      context.addIssue({
+        code: 'custom',
+        path: ['emergencyContactPhone'],
+        message: 'Emergency contact name and phone must be supplied together',
+      });
+  });
+export type EmployeeProfileChangeRequestInput = z.infer<
+  typeof employeeProfileChangeRequestInputSchema
+>;
+export const employeeProfileChangeRequestViewSchema = z.strictObject({
+  id: tenantIdSchema,
+  status: z.enum(['pending', 'approved', 'rejected']),
+  expectedContactVersion: z.number().int().min(0),
+  personalEmail: z.email().nullable(),
+  mobilePhone: z.string().nullable(),
+  emergencyContactName: z.string().max(160).nullable(),
+  emergencyContactPhone: z.string().nullable(),
+  reason: employeeReasonSchema,
+  createdAt: z.iso.datetime({ offset: true }),
+});
+export const employeeProfileChangeRequestListSchema = z.strictObject({
+  requests: employeeProfileChangeRequestViewSchema.array().max(100),
+});
 const compensationAmountSchema = z
   .string()
   .trim()

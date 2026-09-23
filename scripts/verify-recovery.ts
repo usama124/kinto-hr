@@ -77,6 +77,7 @@ async function snapshot(db: PrismaClient) {
       'employee_import_rows',
       'employee_invitations',
       'employee_private_details',
+      'employee_profile_change_requests',
       'employees',
       'employment_periods',
       'entitlement_grants',
@@ -137,6 +138,10 @@ async function snapshot(db: PrismaClient) {
     employeePrivateDetails: await db.employeePrivateDetail.findMany({
       orderBy: { id: 'asc' },
     }),
+    employeeProfileChangeRequests:
+      await db.employeeProfileChangeRequest.findMany({
+        orderBy: { id: 'asc' },
+      }),
     compensationAgreements: await db.compensationAgreement.findMany({
       orderBy: { id: 'asc' },
     }),
@@ -328,6 +333,19 @@ async function main() {
       });
       const membership = await source.membership.create({
         data: { tenantId, identityId: identity.id, roles: ['hr_admin'] },
+      });
+      await source.employeeProfileChangeRequest.create({
+        data: {
+          id: randomUUID(),
+          tenantId,
+          employeeId: employee.id,
+          requestedByIdentityId: identity.id,
+          requestKey: randomUUID(),
+          requestDigest: 'a'.repeat(64),
+          expectedContactVersion: 0,
+          personalEmail: `recovery-${tenantId}@example.com`,
+          reason: 'Synthetic recovery contact request',
+        },
       });
       accountActors.push({
         identityId: identity.id,
@@ -811,7 +829,7 @@ async function main() {
     const policies = await restored.$queryRaw<
       { enabled: boolean; forced: boolean }[]
     >`SELECT relrowsecurity AS enabled, relforcerowsecurity AS forced FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND relkind='r' AND relname <> '_prisma_migrations'`;
-    assert.equal(policies.length, 37);
+    assert.equal(policies.length, 38);
     assert.ok(policies.every((row) => row.enabled && row.forced));
     assert.deepEqual(await restoredApp.employee.findMany(), []);
     stage = 'restored tenant lifecycle visibility';
@@ -865,6 +883,12 @@ async function main() {
       assert.equal(employmentPeriodCount, 4);
       assert.equal(
         await restored.employeePrivateDetail.count({ where: { tenantId } }),
+        1,
+      );
+      assert.equal(
+        await restored.employeeProfileChangeRequest.count({
+          where: { tenantId },
+        }),
         1,
       );
       assert.equal(
@@ -936,6 +960,7 @@ async function main() {
       organizationCatalogsPreserved: true,
       employeeAssignmentsPreserved: true,
       employeePrivateDetailsPreserved: true,
+      employeeProfileChangeRequestsPreserved: true,
       employeeChecklistsPreserved: true,
       committedEmployeeImportsPreserved: true,
       documentQuarantineMetadataPreserved: true,

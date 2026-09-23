@@ -26,6 +26,8 @@ import {
   readTenantSelfEmployeeDocuments,
   authorizeTenantSelfEmployeeDocumentDownload,
   readTenantSelfEmployeeProfile,
+  submitTenantSelfProfileChangeRequest,
+  readTenantSelfProfileChangeRequests,
 } from '@kinto/database';
 
 if (existsSync('.env')) process.loadEnvFile('.env');
@@ -185,6 +187,9 @@ describe('tenant employee records and effective assignments', () => {
       where: { tenantId: { in: tenants } },
     });
     await admin.employeeDocument.deleteMany({
+      where: { tenantId: { in: tenants } },
+    });
+    await admin.employeeProfileChangeRequest.deleteMany({
       where: { tenantId: { in: tenants } },
     });
     await admin.employeeAssignment.deleteMany({
@@ -836,6 +841,106 @@ describe('tenant employee records and effective assignments', () => {
     expect(JSON.stringify(profile)).not.toMatch(
       /cnic|residential|salary|bank/i,
     );
+    const changeInput = {
+      expectedContactVersion: 1,
+      personalEmail: 'new-linked@example.com',
+      mobilePhone: '03001234567',
+      emergencyContactName: 'Emergency Person',
+      emergencyContactPhone: '03007654321',
+      reason: 'Update personal contact email',
+    };
+    await expect(
+      submitTenantSelfProfileChangeRequest(
+        runtime,
+        actor(identities.employee),
+        tenantId,
+        randomUUID(),
+        { ...changeInput, expectedContactVersion: 0 },
+      ),
+    ).rejects.toMatchObject({ code: 'STALE_VERSION' });
+    await expect(
+      submitTenantSelfProfileChangeRequest(
+        runtime,
+        actor(identities.employee),
+        tenantId,
+        randomUUID(),
+        { ...changeInput, personalEmail: 'linked@example.com' },
+      ),
+    ).rejects.toMatchObject({ code: 'INVALID_STATE' });
+    const requestKey = randomUUID();
+    const submitted = await Promise.all([
+      submitTenantSelfProfileChangeRequest(
+        runtime,
+        actor(identities.employee),
+        tenantId,
+        requestKey,
+        changeInput,
+      ),
+      submitTenantSelfProfileChangeRequest(
+        runtime,
+        actor(identities.employee),
+        tenantId,
+        requestKey,
+        changeInput,
+      ),
+    ]);
+    expect(submitted[0]).toEqual(submitted[1]);
+    expect(submitted[0]).toMatchObject({
+      status: 'pending',
+      personalEmail: 'new-linked@example.com',
+      expectedContactVersion: 1,
+    });
+    expect(
+      await readTenantSelfProfileChangeRequests(
+        runtime,
+        actor(identities.employee),
+        tenantId,
+      ),
+    ).toEqual({ requests: [submitted[0]] });
+    await expect(
+      submitTenantSelfProfileChangeRequest(
+        runtime,
+        actor(identities.employee),
+        tenantId,
+        requestKey,
+        { ...changeInput, personalEmail: 'changed@example.com' },
+      ),
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+    await expect(
+      submitTenantSelfProfileChangeRequest(
+        runtime,
+        actor(identities.employee),
+        tenantId,
+        randomUUID(),
+        changeInput,
+      ),
+    ).rejects.toMatchObject({ code: 'INVALID_STATE' });
+    expect(
+      (
+        await readTenantSelfEmployeeProfile(
+          runtime,
+          actor(identities.employee),
+          tenantId,
+        )
+      ).contact?.personalEmail,
+    ).toBe('linked@example.com');
+    await expect(
+      runtime.employeeProfileChangeRequest.findMany(),
+    ).rejects.toThrow();
+    expect(
+      await admin.auditEvent.count({
+        where: { tenantId, action: 'employee.profile_change_requested' },
+      }),
+    ).toBe(1);
+    const fact = await admin.auditEvent.findFirstOrThrow({
+      where: { tenantId, action: 'employee.profile_change_requested' },
+    });
+    expect(JSON.stringify(fact)).not.toContain('new-linked@example.com');
+    expect(
+      await admin.outboxEvent.count({
+        where: { tenantId, type: 'employee.profile_change_requested.v1' },
+      }),
+    ).toBe(1);
     for (const denied of [
       actor(identities.employee, false),
       actor(identities.hr),
@@ -844,6 +949,15 @@ describe('tenant employee records and effective assignments', () => {
       await expect(
         readTenantSelfEmployeeProfile(runtime, denied, tenantId),
       ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(
+      submitTenantSelfProfileChangeRequest(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        randomUUID(),
+        changeInput,
+      ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
     await expect(
       readTenantSelfEmployeeProfile(
         runtime,
@@ -972,6 +1086,13 @@ describe('tenant employee records and effective assignments', () => {
     });
     await expect(
       readTenantSelfEmployeeProfile(
+        runtime,
+        actor(identities.employee),
+        tenantId,
+      ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(
+      readTenantSelfProfileChangeRequests(
         runtime,
         actor(identities.employee),
         tenantId,
