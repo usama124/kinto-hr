@@ -50,6 +50,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 22 September 2026 — pending employee contact change requests
+
+Engineering added a strict contact/emergency proposal path for active employee accounts. An employee must provide recent MFA, selected tenant, same-origin CSRF, expected contact version, reason and an idempotency key; the database derives the employee from the durable identity link. One pending request is allowed per employee, with exact retry replay and no-op/stale/changed-key rejection. Values stay in a forced-RLS request table; approved private details remain unchanged and audit/outbox facts carry no proposal values. HR decisions, UI, notifications and deployment encryption review remain future work. See [evidence](../evidence/phase-01/employee-profile-change-requests.md).
+
 ### 22 September 2026 — read-only employee self profile
 
 Engineering added a narrow `/me/profile` read path backed by the active employee identity link, selected tenant and recent trusted MFA. It returns only the employee's core identity plus own contact/emergency fields when available; CNIC, address, compensation and bank data remain excluded. The database refuses stale terminated/archive access even if a membership was not yet revoked. This is read-only; employee change requests and HR decisions remain the next self-service work. See [evidence](../evidence/phase-01/employee-self-profile.md).

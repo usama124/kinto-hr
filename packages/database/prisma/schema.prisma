@@ -24,6 +24,7 @@ model Tenant {
   employeeImportBatches        EmployeeImportBatch[]
   employeeImportRows           EmployeeImportRow[]
   employeeDocuments            EmployeeDocument[]
+  profileChangeRequests        EmployeeProfileChangeRequest[]
   employmentPeriods            EmploymentPeriod[]
   employeeAssignments          EmployeeAssignment[]
   auditEvents                  AuditEvent[]
@@ -79,6 +80,7 @@ model Identity {
   createdEmployeeImportBatches  EmployeeImportBatch[]              @relation("EmployeeImportCreatedBy")
   committedEmployeeImportBatches EmployeeImportBatch[]              @relation("EmployeeImportCommittedBy")
   createdEmployeeDocuments       EmployeeDocument[]                  @relation("EmployeeDocumentCreatedBy")
+  submittedProfileChangeRequests EmployeeProfileChangeRequest[]      @relation("ProfileChangeRequestedBy")
 
   @@unique([issuer, subject])
   @@map("identities")
@@ -419,6 +421,7 @@ model Employee {
   checklistTasks         ChecklistTask[]
   importedByRows         EmployeeImportRow[]     @relation("ImportedEmployee")
   documents              EmployeeDocument[]      @relation("EmployeeDocuments")
+  profileChangeRequests  EmployeeProfileChangeRequest[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, employeeNumber])
@@ -447,6 +450,31 @@ model EmployeePrivateDetail {
   @@unique([tenantId, id])
   @@unique([tenantId, employeeId])
   @@map("employee_private_details")
+}
+
+model EmployeeProfileChangeRequest {
+  id                     String   @id @db.Uuid
+  tenantId               String   @map("tenant_id") @db.Uuid
+  employeeId             String   @map("employee_id") @db.Uuid
+  requestedByIdentityId  String   @map("requested_by_identity_id") @db.Uuid
+  requestKey             String   @map("request_key") @db.Uuid
+  requestDigest          String   @map("request_digest") @db.Char(64)
+  expectedContactVersion Int      @map("expected_contact_version")
+  personalEmail          String?  @map("personal_email") @db.VarChar(320)
+  mobilePhone            String?  @map("mobile_phone") @db.VarChar(16)
+  emergencyContactName   String?  @map("emergency_contact_name") @db.VarChar(160)
+  emergencyContactPhone  String?  @map("emergency_contact_phone") @db.VarChar(16)
+  reason                 String   @db.VarChar(240)
+  status                 String   @default("pending") @db.VarChar(20)
+  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  tenant                 Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  employee               Employee @relation(fields: [tenantId, employeeId], references: [tenantId, id], onDelete: Restrict)
+  requestedBy            Identity @relation("ProfileChangeRequestedBy", fields: [requestedByIdentityId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, requestKey])
+  @@index([tenantId, employeeId, createdAt])
+  @@map("employee_profile_change_requests")
 }
 
 model CompensationAgreement {

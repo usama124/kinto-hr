@@ -62,6 +62,8 @@ import {
   readTenantSelfEmployeeDocuments,
   authorizeTenantSelfEmployeeDocumentDownload,
   readTenantSelfEmployeeProfile,
+  submitTenantSelfProfileChangeRequest,
+  readTenantSelfProfileChangeRequests,
 } from '@kinto/database';
 import {
   type AuthenticatedIdentity,
@@ -95,6 +97,7 @@ import {
   type EmployeeImportUpload,
   type EmployeeImportConfirmation,
   type EmployeeDocumentRegistration,
+  type EmployeeProfileChangeRequestInput,
 } from '@kinto/contracts';
 import { readConfig } from './config';
 @Injectable()
@@ -489,6 +492,26 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     tenantId: string,
   ) {
     return readTenantSelfEmployeeProfile(this.db, actor, tenantId);
+  }
+  submitSelfProfileChangeRequest(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    requestKey: string,
+    input: EmployeeProfileChangeRequestInput,
+  ) {
+    return submitTenantSelfProfileChangeRequest(
+      this.db,
+      actor,
+      tenantId,
+      requestKey,
+      input,
+    );
+  }
+  readSelfProfileChangeRequests(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+  ) {
+    return readTenantSelfProfileChangeRequests(this.db, actor, tenantId);
   }
   readEmployees(
     actor: { identityId: string; mfaVerified: boolean },

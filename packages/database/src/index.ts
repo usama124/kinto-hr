@@ -65,12 +65,16 @@ import {
   employeeDocumentUploadTargetSchema,
   employeeDocumentDownloadTargetSchema,
   employeeSelfProfileSchema,
+  employeeProfileChangeRequestInputSchema,
+  employeeProfileChangeRequestViewSchema,
+  employeeProfileChangeRequestListSchema,
   parseEmployeeImportCsv,
   employeeAssignmentCreateSchema,
   employeeRecordViewSchema,
   employeeRosterSchema,
   type EmployeeRecordCreate,
   type EmployeeProfileUpdate,
+  type EmployeeProfileChangeRequestInput,
   type EmployeeActivation,
   type EmployeeTermination,
   type EmployeeArchive,
@@ -1533,6 +1537,55 @@ export async function readTenantSelfEmployeeProfile(
   if (!rows[0] || rows[0].outcome === 'forbidden')
     throw new DomainError('FORBIDDEN');
   return employeeSelfProfileSchema.parse(rows[0].snapshot);
+}
+export async function submitTenantSelfProfileChangeRequest(
+  db: PrismaClient,
+  actor: PeopleActor,
+  tenantId: string,
+  requestKey: string,
+  input: EmployeeProfileChangeRequestInput,
+) {
+  validatePeopleActor(actor, tenantId);
+  tenantIdSchema.parse(requestKey);
+  const value = employeeProfileChangeRequestInputSchema.parse(input);
+  const digest = createHash('sha256')
+    .update(JSON.stringify(value))
+    .digest('hex');
+  const rows = await db.$queryRaw<
+    {
+      outcome:
+        'submitted' | 'forbidden' | 'invalid_state' | 'stale' | 'conflict';
+      snapshot: unknown;
+    }[]
+  >`SELECT * FROM public.submit_tenant_self_profile_change_request(
+    ${actor.identityId}::uuid,${actor.mfaVerified},${tenantId}::uuid,
+    ${randomUUID()}::uuid,${requestKey}::uuid,${digest}::varchar,
+    ${value.expectedContactVersion}::integer,${value.personalEmail}::varchar,
+    ${value.mobilePhone}::varchar,${value.emergencyContactName}::varchar,
+    ${value.emergencyContactPhone}::varchar,${value.reason}::varchar,
+    ${randomUUID()}::uuid,${randomUUID()}::uuid
+  )`;
+  const row = rows[0];
+  if (!row || row.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (row.outcome === 'invalid_state') throw new DomainError('INVALID_STATE');
+  if (row.outcome === 'stale') throw new DomainError('STALE_VERSION');
+  if (row.outcome === 'conflict') throw new DomainError('CONFLICT');
+  return employeeProfileChangeRequestViewSchema.parse(row.snapshot);
+}
+export async function readTenantSelfProfileChangeRequests(
+  db: PrismaClient,
+  actor: PeopleActor,
+  tenantId: string,
+) {
+  validatePeopleActor(actor, tenantId);
+  const rows = await db.$queryRaw<
+    { outcome: 'ok' | 'forbidden'; snapshot: unknown }[]
+  >`SELECT * FROM public.read_tenant_self_profile_change_requests(
+    ${actor.identityId}::uuid,${actor.mfaVerified},${tenantId}::uuid
+  )`;
+  if (!rows[0] || rows[0].outcome === 'forbidden')
+    throw new DomainError('FORBIDDEN');
+  return employeeProfileChangeRequestListSchema.parse(rows[0].snapshot);
 }
 export async function readTenantEmployees(
   db: PrismaClient,

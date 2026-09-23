@@ -2,6 +2,7 @@ import { BadRequestException, UnauthorizedException } from '@nestjs/common';
 import { tenantIdSchema } from '@kinto/contracts';
 import {
   assertSelectedTenant,
+  assertSessionMutation,
   readCookie,
   SESSION_COOKIE,
   type AuthRequest,
@@ -12,6 +13,7 @@ export async function readEmployeeSelfContext(
   auth: AuthService,
   req: AuthRequest,
   tenantId: unknown,
+  mutation = false,
 ) {
   const tenant = tenantIdSchema.safeParse(tenantId);
   if (!tenant.success) throw new BadRequestException();
@@ -19,6 +21,7 @@ export async function readEmployeeSelfContext(
   const token = readCookie(req, SESSION_COOKIE);
   if (!token) throw new UnauthorizedException();
   const session = await auth.session(token);
+  if (mutation) assertSessionMutation(req, auth.origin(), session.csrf);
   assertSelectedTenant(session, tenant.data);
   const now = Math.floor(Date.now() / 1000);
   return {

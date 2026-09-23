@@ -115,6 +115,8 @@ try {
     'CREATE POLICY platform_control ON employee_assignments FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON employee_private_details',
     'CREATE POLICY platform_control ON employee_private_details FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
+    'DROP POLICY IF EXISTS platform_control ON employee_profile_change_requests',
+    'CREATE POLICY platform_control ON employee_profile_change_requests FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON compensation_agreements',
     'CREATE POLICY platform_control ON compensation_agreements FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON salary_components',
@@ -186,6 +188,9 @@ try {
   );
   await database.$executeRawUnsafe(
     'GRANT SELECT, INSERT, UPDATE ON employee_private_details TO kinto_control_owner',
+  );
+  await database.$executeRawUnsafe(
+    'GRANT SELECT, INSERT, UPDATE ON employee_profile_change_requests TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
     'GRANT SELECT, INSERT, UPDATE ON compensation_agreements, salary_components, compensation_component_versions TO kinto_control_owner',
@@ -279,6 +284,8 @@ try {
     'public.read_tenant_self_employee_documents(uuid, boolean, uuid)',
     'public.authorize_tenant_self_employee_document_download(uuid, boolean, uuid, uuid, uuid)',
     'public.read_tenant_self_employee_profile(uuid, boolean, uuid)',
+    'public.submit_tenant_self_profile_change_request(uuid, boolean, uuid, uuid, uuid, varchar, integer, varchar, varchar, varchar, varchar, varchar, uuid, uuid)',
+    'public.read_tenant_self_profile_change_requests(uuid, boolean, uuid)',
   ]) {
     await database.$executeRawUnsafe(
       `ALTER FUNCTION ${signature} OWNER TO kinto_control_owner`,
@@ -303,6 +310,7 @@ try {
     'public.create_final_settlement_checklist()',
     'public.tenant_employee_document_authorized(uuid, boolean, uuid, boolean)',
     'public.employee_document_json(public.employee_documents)',
+    'public.employee_profile_change_request_json(public.employee_profile_change_requests)',
     'public.tenant_employee_import_authorized(uuid, boolean, uuid)',
     'public.employee_import_preview_json(uuid, uuid)',
     'public.create_tenant_employee_import_preview(uuid, boolean, uuid, uuid, varchar, varchar, jsonb, jsonb, varchar, uuid, uuid)',

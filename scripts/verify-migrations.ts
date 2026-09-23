@@ -9,6 +9,8 @@ import { createDatabase, inTenant } from '@kinto/database';
 
 if (existsSync('.env')) process.loadEnvFile('.env');
 
+let stage = 'validating configuration';
+
 async function main() {
   const keys = [
     'MIGRATION_DATABASE_URL',
@@ -50,9 +52,11 @@ async function main() {
       throw new Error('Migration verification command failed');
   }
   try {
+    stage = 'creating isolated database';
     // This identifier is generated internally, never interpolated from user input.
     await admin.$executeRawUnsafe(`CREATE DATABASE "${databaseName}"`);
     created = true;
+    stage = 'copying baseline migration';
     const prisma = resolve('packages/database/prisma');
     await cp(join(prisma, 'schema.prisma'), join(folder, 'schema.prisma'));
     await cp(
@@ -74,20 +78,26 @@ async function main() {
       '--schema',
       join(folder, 'schema.prisma'),
     ]);
+    stage = 'creating baseline fixtures';
     const ids = [randomUUID(), randomUUID()];
     const events = [randomUUID(), randomUUID()];
     for (let i = 0; i < ids.length; i++) {
       await target.$executeRaw`INSERT INTO tenants(id, name, employee_limit) VALUES (${ids[i]}::uuid, 'Synthetic migration fixture', 5)`;
       await target.$executeRaw`INSERT INTO outbox_events(id, tenant_id, type, aggregate_id, aggregate_version) VALUES (${events[i]}::uuid, ${ids[i]}::uuid, 'employee.activated.v1', ${randomUUID()}::uuid, 1)`;
     }
+    stage = 'applying upgrade migrations';
     run(['db:migrate']);
+    stage = 'applying database bootstrap';
     run(['db:bootstrap']);
     env.PLATFORM_BOOTSTRAP_ISSUER = 'https://migration.synthetic.example/realm';
     env.PLATFORM_BOOTSTRAP_SUBJECT = 'synthetic-first-operator';
     env.PLATFORM_BOOTSTRAP_CONFIRM = 'bootstrap-first-platform-operator';
+    stage = 'bootstrapping first platform operator';
     run(['db:bootstrap:operator']);
     run(['db:bootstrap:operator']);
+    stage = 'replaying migrations';
     run(['db:migrate']);
+    stage = 'verifying upgraded data and tenant isolation';
     assert.equal(await target.platformOperator.count(), 1);
     assert.equal(
       await target.platformAuditEvent.count({
@@ -119,6 +129,6 @@ async function main() {
   }
 }
 void main().catch(() => {
-  console.error('Isolated migration verification failed');
+  console.error(`Isolated migration verification failed at: ${stage}`);
   process.exitCode = 1;
 });
