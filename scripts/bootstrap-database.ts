@@ -286,6 +286,8 @@ try {
     'public.read_tenant_self_employee_profile(uuid, boolean, uuid)',
     'public.submit_tenant_self_profile_change_request(uuid, boolean, uuid, uuid, uuid, varchar, integer, varchar, varchar, varchar, varchar, varchar, uuid, uuid)',
     'public.read_tenant_self_profile_change_requests(uuid, boolean, uuid)',
+    'public.read_tenant_profile_change_requests(uuid, boolean, uuid)',
+    'public.decide_tenant_profile_change_request(uuid, boolean, uuid, uuid, uuid, varchar, integer, varchar, varchar, uuid, uuid, uuid, uuid)',
   ]) {
     await database.$executeRawUnsafe(
       `ALTER FUNCTION ${signature} OWNER TO kinto_control_owner`,

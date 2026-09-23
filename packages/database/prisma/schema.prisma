@@ -81,6 +81,7 @@ model Identity {
   committedEmployeeImportBatches EmployeeImportBatch[]              @relation("EmployeeImportCommittedBy")
   createdEmployeeDocuments       EmployeeDocument[]                  @relation("EmployeeDocumentCreatedBy")
   submittedProfileChangeRequests EmployeeProfileChangeRequest[]      @relation("ProfileChangeRequestedBy")
+  decidedProfileChangeRequests   EmployeeProfileChangeRequest[]      @relation("ProfileChangeDecidedBy")
 
   @@unique([issuer, subject])
   @@map("identities")
@@ -466,13 +467,22 @@ model EmployeeProfileChangeRequest {
   emergencyContactPhone  String?  @map("emergency_contact_phone") @db.VarChar(16)
   reason                 String   @db.VarChar(240)
   status                 String   @default("pending") @db.VarChar(20)
+  version                Int      @default(1)
+  decisionKey            String?  @map("decision_key") @db.Uuid
+  decisionDigest         String?  @map("decision_digest") @db.Char(64)
+  decidedByIdentityId    String?  @map("decided_by_identity_id") @db.Uuid
+  decisionReason         String?  @map("decision_reason") @db.VarChar(240)
+  decidedAt              DateTime? @map("decided_at") @db.Timestamptz()
+  appliedContactVersion  Int?     @map("applied_contact_version")
   createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz()
   tenant                 Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   employee               Employee @relation(fields: [tenantId, employeeId], references: [tenantId, id], onDelete: Restrict)
   requestedBy            Identity @relation("ProfileChangeRequestedBy", fields: [requestedByIdentityId], references: [id], onDelete: Restrict)
+  decidedBy              Identity? @relation("ProfileChangeDecidedBy", fields: [decidedByIdentityId], references: [id], onDelete: Restrict)
 
   @@unique([tenantId, id])
   @@unique([tenantId, requestKey])
+  @@unique([tenantId, decisionKey])
   @@index([tenantId, employeeId, createdAt])
   @@map("employee_profile_change_requests")
 }
