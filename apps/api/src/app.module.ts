@@ -23,6 +23,7 @@ import { DocumentUploadService } from './documents/upload';
 import { SelfDocumentsController } from './documents/self-controller';
 import { SelfProfileController } from './employees/self-profile-controller';
 import { ProfileChangeController } from './employees/profile-change-controller';
+import { ProfileChangeDecisionController } from './employees/profile-change-decision-controller';
 @Controller('health')
 export class HealthController {
   constructor(
@@ -58,6 +59,7 @@ export class HealthController {
     SelfDocumentsController,
     SelfProfileController,
     ProfileChangeController,
+    ProfileChangeDecisionController,
   ],
   providers: [
     DatabaseService,

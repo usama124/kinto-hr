@@ -854,6 +854,7 @@ export type EmployeeProfileChangeRequestInput = z.infer<
 >;
 export const employeeProfileChangeRequestViewSchema = z.strictObject({
   id: tenantIdSchema,
+  version: z.number().int().positive(),
   status: z.enum(['pending', 'approved', 'rejected']),
   expectedContactVersion: z.number().int().min(0),
   personalEmail: z.email().nullable(),
@@ -861,10 +862,30 @@ export const employeeProfileChangeRequestViewSchema = z.strictObject({
   emergencyContactName: z.string().max(160).nullable(),
   emergencyContactPhone: z.string().nullable(),
   reason: employeeReasonSchema,
+  decisionReason: employeeReasonSchema.nullable(),
+  decidedAt: z.iso.datetime({ offset: true }).nullable(),
+  appliedContactVersion: z.number().int().positive().nullable(),
   createdAt: z.iso.datetime({ offset: true }),
 });
 export const employeeProfileChangeRequestListSchema = z.strictObject({
   requests: employeeProfileChangeRequestViewSchema.array().max(100),
+});
+export const employeeProfileChangeDecisionInputSchema = z.strictObject({
+  expectedVersion: z.number().int().positive(),
+  decision: z.enum(['approved', 'rejected']),
+  reason: employeeReasonSchema,
+});
+export type EmployeeProfileChangeDecisionInput = z.infer<
+  typeof employeeProfileChangeDecisionInputSchema
+>;
+export const employeeProfileChangeRequestReviewSchema = z.strictObject({
+  ...employeeProfileChangeRequestViewSchema.shape,
+  employeeId: tenantIdSchema,
+  employeeNumber: z.string().min(1).max(50),
+  employeeName: z.string().min(1).max(160),
+});
+export const employeeProfileChangeRequestReviewListSchema = z.strictObject({
+  requests: employeeProfileChangeRequestReviewSchema.array().max(100),
 });
 const compensationAmountSchema = z
   .string()

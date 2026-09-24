@@ -28,6 +28,8 @@ import {
   readTenantSelfEmployeeProfile,
   submitTenantSelfProfileChangeRequest,
   readTenantSelfProfileChangeRequests,
+  readTenantProfileChangeRequests,
+  decideTenantProfileChangeRequest,
 } from '@kinto/database';
 
 if (existsSync('.env')) process.loadEnvFile('.env');
@@ -924,6 +926,206 @@ describe('tenant employee records and effective assignments', () => {
         )
       ).contact?.personalEmail,
     ).toBe('linked@example.com');
+    expect(
+      await readTenantProfileChangeRequests(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+      ),
+    ).toMatchObject({
+      requests: [
+        {
+          id: submitted[0].id,
+          version: 1,
+          employeeId: employee.id,
+          employeeNumber: 'SELF-001',
+          employeeName: 'Linked Employee',
+          status: 'pending',
+        },
+      ],
+    });
+    await expect(
+      decideTenantProfileChangeRequest(
+        runtime,
+        actor(identities.employee),
+        tenantId,
+        submitted[0].id,
+        randomUUID(),
+        {
+          expectedVersion: 1,
+          decision: 'approved',
+          reason: 'Employee cannot approve own request',
+        },
+      ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(
+      decideTenantProfileChangeRequest(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        submitted[0].id,
+        randomUUID(),
+        {
+          expectedVersion: 2,
+          decision: 'approved',
+          reason: 'Stale request decision attempt',
+        },
+      ),
+    ).rejects.toMatchObject({ code: 'STALE_VERSION' });
+    const decisionKey = randomUUID();
+    const approved = await Promise.all([
+      decideTenantProfileChangeRequest(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        submitted[0].id,
+        decisionKey,
+        {
+          expectedVersion: 1,
+          decision: 'approved',
+          reason: 'Verified employee contact request',
+        },
+      ),
+      decideTenantProfileChangeRequest(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        submitted[0].id,
+        decisionKey,
+        {
+          expectedVersion: 1,
+          decision: 'approved',
+          reason: 'Verified employee contact request',
+        },
+      ),
+    ]);
+    expect(approved[0]).toEqual(approved[1]);
+    expect(approved[0]).toMatchObject({
+      version: 2,
+      status: 'approved',
+      appliedContactVersion: 2,
+      decisionReason: 'Verified employee contact request',
+    });
+    expect(
+      (
+        await readTenantSelfEmployeeProfile(
+          runtime,
+          actor(identities.employee),
+          tenantId,
+        )
+      ).contact?.personalEmail,
+    ).toBe('new-linked@example.com');
+    expect(
+      await admin.employeePrivateDetail.findFirstOrThrow({
+        where: { tenantId, employeeId: employee.id },
+        select: { residentialAddress: true, cnic: true },
+      }),
+    ).toEqual({
+      residentialAddress: 'Private residential address',
+      cnic: '3520212345678',
+    });
+    await expect(
+      decideTenantProfileChangeRequest(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        submitted[0].id,
+        decisionKey,
+        {
+          expectedVersion: 1,
+          decision: 'rejected',
+          reason: 'Changed reuse must fail',
+        },
+      ),
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+    const second = await submitTenantSelfProfileChangeRequest(
+      runtime,
+      actor(identities.employee),
+      tenantId,
+      randomUUID(),
+      {
+        ...changeInput,
+        expectedContactVersion: 2,
+        mobilePhone: '03001111111',
+        reason: 'Request another mobile update',
+      },
+    );
+    const rejected = await decideTenantProfileChangeRequest(
+      runtime,
+      actor(identities.hr),
+      tenantId,
+      second.id,
+      randomUUID(),
+      {
+        expectedVersion: 1,
+        decision: 'rejected',
+        reason: 'Could not verify requested number',
+      },
+    );
+    expect(rejected).toMatchObject({
+      version: 2,
+      status: 'rejected',
+      appliedContactVersion: null,
+    });
+    expect(
+      (
+        await readTenantSelfEmployeeProfile(
+          runtime,
+          actor(identities.employee),
+          tenantId,
+        )
+      ).contact?.mobilePhone,
+    ).toBe('03001234567');
+    const staleContactRequest = await submitTenantSelfProfileChangeRequest(
+      runtime,
+      actor(identities.employee),
+      tenantId,
+      randomUUID(),
+      {
+        ...changeInput,
+        expectedContactVersion: 2,
+        personalEmail: 'stale-request@example.com',
+        reason: 'Request email after rejected mobile update',
+      },
+    );
+    await updateTenantEmployeePrivateDetails(
+      runtime,
+      actor(identities.hr),
+      tenantId,
+      employee.id,
+      {
+        expectedVersion: 2,
+        personalEmail: 'new-linked@example.com',
+        mobilePhone: '03001234567',
+        residentialAddress: 'Updated private residential address',
+        emergencyContactName: 'Emergency Person',
+        emergencyContactPhone: '03007654321',
+        cnic: '3520212345678',
+        reason: 'Approved address correction after employee request',
+      },
+    );
+    await expect(
+      decideTenantProfileChangeRequest(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        staleContactRequest.id,
+        randomUUID(),
+        {
+          expectedVersion: 1,
+          decision: 'approved',
+          reason: 'Attempt stale contact request approval',
+        },
+      ),
+    ).rejects.toMatchObject({ code: 'STALE_VERSION' });
+    for (const denied of [
+      actor(identities.employee),
+      actor(identities.payroll),
+      actor(identities.otherOwner),
+    ])
+      await expect(
+        readTenantProfileChangeRequests(runtime, denied, tenantId),
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
     await expect(
       runtime.employeeProfileChangeRequest.findMany(),
     ).rejects.toThrow();
@@ -931,7 +1133,7 @@ describe('tenant employee records and effective assignments', () => {
       await admin.auditEvent.count({
         where: { tenantId, action: 'employee.profile_change_requested' },
       }),
-    ).toBe(1);
+    ).toBe(3);
     const fact = await admin.auditEvent.findFirstOrThrow({
       where: { tenantId, action: 'employee.profile_change_requested' },
     });
@@ -940,7 +1142,34 @@ describe('tenant employee records and effective assignments', () => {
       await admin.outboxEvent.count({
         where: { tenantId, type: 'employee.profile_change_requested.v1' },
       }),
-    ).toBe(1);
+    ).toBe(3);
+    expect(
+      await admin.auditEvent.count({
+        where: {
+          tenantId,
+          action: {
+            in: [
+              'employee.profile_change_approved',
+              'employee.profile_change_rejected',
+            ],
+          },
+        },
+      }),
+    ).toBe(2);
+    const decisionFacts = await admin.auditEvent.findMany({
+      where: {
+        tenantId,
+        action: {
+          in: [
+            'employee.profile_change_approved',
+            'employee.profile_change_rejected',
+          ],
+        },
+      },
+    });
+    expect(JSON.stringify(decisionFacts)).not.toMatch(
+      /new-linked@example\.com|03001111111/,
+    );
     for (const denied of [
       actor(identities.employee, false),
       actor(identities.hr),
@@ -969,6 +1198,20 @@ describe('tenant employee records and effective assignments', () => {
       where: { id: employee.id },
       data: { status: 'terminated' },
     });
+    await expect(
+      decideTenantProfileChangeRequest(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        staleContactRequest.id,
+        randomUUID(),
+        {
+          expectedVersion: 1,
+          decision: 'rejected',
+          reason: 'Close request after employee termination',
+        },
+      ),
+    ).resolves.toMatchObject({ status: 'rejected', version: 2 });
     await expect(
       readTenantSelfEmployeeProfile(
         runtime,

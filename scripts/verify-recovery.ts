@@ -345,6 +345,13 @@ async function main() {
           expectedContactVersion: 0,
           personalEmail: `recovery-${tenantId}@example.com`,
           reason: 'Synthetic recovery contact request',
+          status: 'rejected',
+          version: 2,
+          decisionKey: randomUUID(),
+          decisionDigest: 'b'.repeat(64),
+          decidedByIdentityId: identity.id,
+          decisionReason: 'Synthetic recovery rejection',
+          decidedAt: new Date('2026-09-23T00:00:00.000Z'),
         },
       });
       accountActors.push({
@@ -960,7 +967,7 @@ async function main() {
       organizationCatalogsPreserved: true,
       employeeAssignmentsPreserved: true,
       employeePrivateDetailsPreserved: true,
-      employeeProfileChangeRequestsPreserved: true,
+      employeeProfileChangeRequestDecisionsPreserved: true,
       employeeChecklistsPreserved: true,
       committedEmployeeImportsPreserved: true,
       documentQuarantineMetadataPreserved: true,
