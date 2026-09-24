@@ -1,7 +1,7 @@
 # Employee contact change requests
 
-Date: 23 September 2026
-Scope: P01-05 employee-submitted contact/emergency proposals and HR decisions.
+Date: 24 September 2026
+Scope: P01-05 employee-submitted contact/emergency proposals, HR decisions and responsive workspace.
 
 An employee with an active linked account, selected tenant and recent trusted MFA can submit a complete proposed snapshot of personal email, mobile phone and emergency contact through `POST /api/v1/tenants/{tenantId}/me/profile-change-requests`. The request requires same-origin CSRF, a UUID idempotency key, an expected contact version and a reason. Unknown fields, including CNIC, address, salary, manager, role and status, are rejected. The employee can list up to 100 own requests with `GET` on the same path.
 
@@ -9,4 +9,6 @@ The constrained database function derives employee identity from the active memb
 
 An owner or HR administrator with private-detail permission and recent MFA can list up to 100 tenant requests through `GET /api/v1/tenants/{tenantId}/profile-change-requests` and decide a pending request through `POST /api/v1/tenants/{tenantId}/profile-change-requests/{requestId}/decision`. Decisions require same-origin CSRF, a UUID idempotency key, the expected request version and a reason. Approval rechecks the proposed contact version under row locks and atomically changes only personal email, mobile and emergency contact; address and CNIC are preserved. Rejection changes no approved profile data. A decided request is immutable, exact retries return the original result, and stale profile/request versions or changed key reuse fail.
 
-Synthetic PostgreSQL tests cover submission and decision concurrency/replay, stale request/contact versions, approval and rejection, changed key, no-op, second pending request, role denial, direct-table denial and address/CNIC preservation. HTTP tests cover strict bodies, sessions, Origin/CSRF and idempotency keys. Migration replay and synthetic database restore include decision metadata. Notifications, employee/HR UI, retention rules and field-encryption deployment review remain open; do not use with customer data.
+The `/profile-changes` workspace derives its view from the selected tenant roles. Employees see only their approved contact/emergency projection, submit the complete whitelisted proposal and review their own decision history; a pending request replaces the form to prevent accidental duplicates. Owners/HR receive a pending-first queue with proposed fields and reason, then approve or reject with a required reason. Neither view renders address, CNIC, salary, manager, role or employment controls. Signed-out, no-company, denied, loading, failure and busy states are explicit, and no profile data is placed in browser storage.
+
+Synthetic PostgreSQL tests cover submission and decision concurrency/replay, stale request/contact versions, approval and rejection, changed key, no-op, second pending request, role denial, direct-table denial and address/CNIC preservation. HTTP tests cover strict bodies, sessions, Origin/CSRF and idempotency keys. Desktop/mobile browser tests cover employee submission, HR approval, CSRF/idempotency headers, responsive layout and status refresh. Migration replay and synthetic database restore include decision metadata. Notifications, retention rules and field-encryption deployment review remain open; do not use with customer data.

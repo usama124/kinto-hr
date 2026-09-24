@@ -499,6 +499,220 @@ test('owner configures a legal employer, branch and published organization defau
   ).toBe(true);
 });
 
+test('employee reviews approved contact data and submits one strict change request', async ({
+  page,
+}) => {
+  const tenantId = '9d2ea3ef-3938-42d0-84f9-d2248f692f67';
+  const employeeId = '44c4bf77-58bb-42ea-9886-5db47c1c3de5';
+  const requestId = '82ffbc9e-febd-4a62-bdaf-fd8740ee6982';
+  const csrf = 'b'.repeat(43);
+  let requests: Record<string, unknown>[] = [];
+  const submittedKeys: string[] = [];
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        csrfToken: csrf,
+        selectedTenantId: tenantId,
+        tenants: [
+          { id: tenantId, name: 'Synthetic Company', roles: ['employee'] },
+        ],
+      }),
+    }),
+  );
+  await page.route(`**/api/v1/tenants/${tenantId}/me/profile`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        employee: {
+          id: employeeId,
+          employeeNumber: 'EMP-101',
+          name: 'Sana Khan',
+          legalName: null,
+          status: 'active',
+          joiningDate: '2026-09-01',
+        },
+        contact: {
+          version: 1,
+          personalEmail: 'sana@example.com',
+          mobilePhone: '03001234567',
+          emergencyContactName: 'Ali Khan',
+          emergencyContactPhone: '03007654321',
+        },
+      }),
+    }),
+  );
+  await page.route(
+    `**/api/v1/tenants/${tenantId}/me/profile-change-requests`,
+    async (route) => {
+      if (route.request().method() === 'GET')
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ requests }),
+        });
+      expect(route.request().method()).toBe('POST');
+      expect(route.request().headers()['x-csrf-token']).toBe(csrf);
+      const idempotencyKey = route.request().headers()['idempotency-key'];
+      expect(idempotencyKey).toMatch(/^[0-9a-f-]{36}$/);
+      submittedKeys.push(idempotencyKey);
+      expect(route.request().postDataJSON()).toEqual({
+        expectedContactVersion: 1,
+        personalEmail: 'sana.new@example.com',
+        mobilePhone: '03001234567',
+        emergencyContactName: 'Ali Khan',
+        emergencyContactPhone: '03007654321',
+        reason: 'Use my new personal email',
+      });
+      if (submittedKeys.length === 1)
+        return route.fulfill({ status: 503, body: '{}' });
+      requests = [
+        {
+          id: requestId,
+          version: 1,
+          status: 'pending',
+          expectedContactVersion: 1,
+          personalEmail: 'sana.new@example.com',
+          mobilePhone: '03001234567',
+          emergencyContactName: 'Ali Khan',
+          emergencyContactPhone: '03007654321',
+          reason: 'Use my new personal email',
+          decisionReason: null,
+          decidedAt: null,
+          appliedContactVersion: null,
+          createdAt: '2026-09-24T07:00:00.000Z',
+        },
+      ];
+      return route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify(requests[0]),
+      });
+    },
+  );
+  await page.goto('/profile-changes');
+  await expect(
+    page.getByRole('heading', { name: 'Your approved profile' }),
+  ).toBeVisible();
+  await expect(page.getByText('sana@example.com')).toBeVisible();
+  await page.getByLabel('Personal email').fill('sana.new@example.com');
+  await page.getByLabel('Reason').fill('Use my new personal email');
+  await page.getByRole('button', { name: 'Send request' }).click();
+  await expect(page.getByRole('status')).toHaveText(
+    /The request could not be submitted/,
+  );
+  await page.getByRole('button', { name: 'Send request' }).click();
+  await expect(page.getByRole('status')).toHaveText(
+    'Your contact change request is waiting for HR review.',
+  );
+  expect(submittedKeys).toHaveLength(2);
+  expect(new Set(submittedKeys).size).toBe(1);
+  await expect(page.getByText(/already waiting for review/)).toBeVisible();
+  await expect(page.getByText('Use my new personal email')).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  expect(
+    await page.evaluate(() => [localStorage.length, sessionStorage.length]),
+  ).toEqual([0, 0]);
+});
+
+test('HR reviews and approves a pending contact proposal', async ({ page }) => {
+  const tenantId = '9d2ea3ef-3938-42d0-84f9-d2248f692f67';
+  const employeeId = '44c4bf77-58bb-42ea-9886-5db47c1c3de5';
+  const requestId = '82ffbc9e-febd-4a62-bdaf-fd8740ee6982';
+  const csrf = 'b'.repeat(43);
+  const pending = {
+    id: requestId,
+    version: 1,
+    status: 'pending',
+    expectedContactVersion: 1,
+    personalEmail: 'sana.new@example.com',
+    mobilePhone: '03001234567',
+    emergencyContactName: 'Ali Khan',
+    emergencyContactPhone: '03007654321',
+    reason: 'Use my new personal email',
+    decisionReason: null,
+    decidedAt: null,
+    appliedContactVersion: null,
+    createdAt: '2026-09-24T07:00:00.000Z',
+    employeeId,
+    employeeNumber: 'EMP-101',
+    employeeName: 'Sana Khan',
+  };
+  let requests: Record<string, unknown>[] = [pending];
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        csrfToken: csrf,
+        selectedTenantId: tenantId,
+        tenants: [
+          { id: tenantId, name: 'Synthetic Company', roles: ['hr_admin'] },
+        ],
+      }),
+    }),
+  );
+  await page.route(
+    `**/api/v1/tenants/${tenantId}/profile-change-requests**`,
+    async (route) => {
+      if (route.request().method() === 'GET')
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ requests }),
+        });
+      expect(route.request().headers()['x-csrf-token']).toBe(csrf);
+      expect(route.request().headers()['idempotency-key']).toMatch(
+        /^[0-9a-f-]{36}$/,
+      );
+      expect(route.request().postDataJSON()).toEqual({
+        expectedVersion: 1,
+        decision: 'approved',
+        reason: 'Verified directly with employee',
+      });
+      requests = [
+        {
+          ...pending,
+          version: 2,
+          status: 'approved',
+          decisionReason: 'Verified directly with employee',
+          decidedAt: '2026-09-24T07:30:00.000Z',
+          appliedContactVersion: 2,
+        },
+      ];
+      return route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify(requests[0]),
+      });
+    },
+  );
+  await page.goto('/profile-changes');
+  await expect(
+    page.getByRole('heading', { name: 'HR review queue' }),
+  ).toBeVisible();
+  await expect(page.getByText('Sana Khan')).toBeVisible();
+  await expect(page.getByText('sana.new@example.com')).toBeVisible();
+  await page
+    .getByLabel('Decision reason')
+    .fill('Verified directly with employee');
+  await page.getByRole('button', { name: 'Approve' }).click();
+  await expect(page.getByRole('status')).toHaveText('Request approved.');
+  await expect(page.getByText('0 pending')).toBeVisible();
+  await expect(page.getByText('Verified directly with employee')).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+});
+
 test('owner reviews the effective complimentary plan and employee capacity', async ({
   page,
 }) => {
