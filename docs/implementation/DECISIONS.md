@@ -50,9 +50,13 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 24 September 2026 — profile-change employee and HR workspace
+
+Engineering added one role-aware `/profile-changes` workspace over the existing proposal and decision APIs. Employees see only their approved contact/emergency projection, can submit one complete whitelisted proposal and track their own history. Owners/HR see a pending-first review queue and provide the required approval/rejection reason. Both mutations use server session CSRF and retain a UUID idempotency key in component memory until the action succeeds; browser storage is not used. Desktop/mobile journeys verify both roles and responsive layout. Notifications, retention and deployment encryption review remain future work. See [evidence](../evidence/phase-01/employee-profile-change-requests.md).
+
 ### 23 September 2026 — HR contact-change decisions
 
-Engineering completed the decision boundary for contact-change proposals. Owners/HR with private-detail permission and recent MFA can list tenant requests and approve or reject a pending request with optimistic versioning, same-origin CSRF, reason and an idempotency key. Approval rechecks the contact version and atomically applies only email/mobile/emergency fields while preserving address/CNIC; rejection changes no profile data. Decisions are immutable, retry-safe and audited without copying proposed values. UI, notifications, retention and deployment encryption review remain future work. See [evidence](../evidence/phase-01/employee-profile-change-requests.md).
+Engineering completed the decision boundary for contact-change proposals. Owners/HR with private-detail permission and recent MFA can list tenant requests and approve or reject a pending request with optimistic versioning, same-origin CSRF, reason and an idempotency key. Approval rechecks the contact version and atomically applies only email/mobile/emergency fields while preserving address/CNIC; rejection changes no profile data. Decisions are immutable, retry-safe and audited without copying proposed values. Notifications, retention and deployment encryption review remain future work. See [evidence](../evidence/phase-01/employee-profile-change-requests.md).
 
 ### 22 September 2026 — pending employee contact change requests
 
@@ -60,7 +64,7 @@ Engineering added a strict contact/emergency proposal path for active employee a
 
 ### 22 September 2026 — read-only employee self profile
 
-Engineering added a narrow `/me/profile` read path backed by the active employee identity link, selected tenant and recent trusted MFA. It returns only the employee's core identity plus own contact/emergency fields when available; CNIC, address, compensation and bank data remain excluded. The database refuses stale terminated/archive access even if a membership was not yet revoked. Employee proposals and HR decisions now exist as separate audited commands; the self-service UI remains open. See [evidence](../evidence/phase-01/employee-self-profile.md).
+Engineering added a narrow `/me/profile` read path backed by the active employee identity link, selected tenant and recent trusted MFA. It returns only the employee's core identity plus own contact/emergency fields when available; CNIC, address, compensation and bank data remain excluded. The database refuses stale terminated/archive access even if a membership was not yet revoked. Employee proposals, HR decisions and the role-aware workspace now build on this projection. See [evidence](../evidence/phase-01/employee-self-profile.md).
 
 ### 22 September 2026 — employee-visible local document self-service
 

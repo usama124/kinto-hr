@@ -867,9 +867,15 @@ export const employeeProfileChangeRequestViewSchema = z.strictObject({
   appliedContactVersion: z.number().int().positive().nullable(),
   createdAt: z.iso.datetime({ offset: true }),
 });
+export type EmployeeProfileChangeRequestView = z.infer<
+  typeof employeeProfileChangeRequestViewSchema
+>;
 export const employeeProfileChangeRequestListSchema = z.strictObject({
   requests: employeeProfileChangeRequestViewSchema.array().max(100),
 });
+export type EmployeeProfileChangeRequestList = z.infer<
+  typeof employeeProfileChangeRequestListSchema
+>;
 export const employeeProfileChangeDecisionInputSchema = z.strictObject({
   expectedVersion: z.number().int().positive(),
   decision: z.enum(['approved', 'rejected']),
@@ -884,6 +890,9 @@ export const employeeProfileChangeRequestReviewSchema = z.strictObject({
   employeeNumber: z.string().min(1).max(50),
   employeeName: z.string().min(1).max(160),
 });
+export type EmployeeProfileChangeRequestReview = z.infer<
+  typeof employeeProfileChangeRequestReviewSchema
+>;
 export const employeeProfileChangeRequestReviewListSchema = z.strictObject({
   requests: employeeProfileChangeRequestReviewSchema.array().max(100),
 });
