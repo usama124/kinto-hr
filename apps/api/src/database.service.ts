@@ -36,6 +36,7 @@ import {
   createEntitlementChange,
   revokeEntitlementChange,
   readTenantEmployees,
+  readTenantWorkforceHeadcountReport,
   readTenantEmployee,
   createTenantEmployee,
   updateTenantEmployeeProfile,
@@ -101,6 +102,7 @@ import {
   type EmployeeDocumentRegistration,
   type EmployeeProfileChangeRequestInput,
   type EmployeeProfileChangeDecisionInput,
+  type WorkforceHeadcountQuery,
 } from '@kinto/contracts';
 import { readConfig } from './config';
 @Injectable()
@@ -543,6 +545,13 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     tenantId: string,
   ) {
     return readTenantEmployees(this.db, actor, tenantId);
+  }
+  readWorkforceHeadcountReport(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    query: WorkforceHeadcountQuery,
+  ) {
+    return readTenantWorkforceHeadcountReport(this.db, actor, tenantId, query);
   }
   readEmployee(
     actor: { identityId: string; mfaVerified: boolean },

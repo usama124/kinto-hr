@@ -75,6 +75,8 @@ import {
   employeeAssignmentCreateSchema,
   employeeRecordViewSchema,
   employeeRosterSchema,
+  workforceHeadcountQuerySchema,
+  workforceHeadcountReportSchema,
   type EmployeeRecordCreate,
   type EmployeeProfileUpdate,
   type EmployeeProfileChangeRequestInput,
@@ -91,6 +93,7 @@ import {
   type EmployeeImportConfirmation,
   type EmployeeDocumentRegistration,
   type EmployeeAssignmentCreate,
+  type WorkforceHeadcountQuery,
 } from '@kinto/contracts';
 import {
   assertCanActivate,
@@ -1661,6 +1664,25 @@ export async function readTenantEmployees(
   if (!rows[0] || rows[0].outcome === 'forbidden')
     throw new DomainError('FORBIDDEN');
   return employeeRosterSchema.parse(rows[0].snapshot);
+}
+export async function readTenantWorkforceHeadcountReport(
+  db: PrismaClient,
+  actor: PeopleActor,
+  tenantId: string,
+  query: WorkforceHeadcountQuery,
+) {
+  validatePeopleActor(actor, tenantId);
+  const value = workforceHeadcountQuerySchema.parse(query);
+  const rows = await db.$queryRaw<
+    { outcome: 'ok' | 'forbidden' | 'invalid_state'; snapshot: unknown }[]
+  >`SELECT * FROM public.read_tenant_workforce_headcount_report(
+    ${actor.identityId}::uuid, ${actor.mfaVerified}, ${tenantId}::uuid,
+    ${value.asOf}::date, ${value.periodStart}::date, ${value.periodEnd}::date
+  )`;
+  const row = rows[0];
+  if (!row || row.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (row.outcome === 'invalid_state') throw new DomainError('INVALID_STATE');
+  return workforceHeadcountReportSchema.parse(row.snapshot);
 }
 export async function readTenantEmployee(
   db: PrismaClient,

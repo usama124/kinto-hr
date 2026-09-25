@@ -259,6 +259,7 @@ try {
     'public.create_entitlement_change(uuid, boolean, uuid, uuid, varchar, timestamptz, timestamptz, integer, integer, varchar, uuid, uuid)',
     'public.revoke_entitlement_change(uuid, boolean, uuid, varchar, uuid, integer, varchar, uuid, uuid)',
     'public.read_tenant_employees(uuid, boolean, uuid, uuid)',
+    'public.read_tenant_workforce_headcount_report(uuid, boolean, uuid, date, date, date)',
     'public.read_tenant_employee_private_details(uuid, boolean, uuid, uuid)',
     'public.read_tenant_employee_compensation(uuid, boolean, uuid, uuid)',
     'public.read_tenant_employee_checklist(uuid, boolean, uuid, uuid)',

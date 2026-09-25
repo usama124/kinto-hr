@@ -738,6 +738,51 @@ export const employeeRosterSchema = z.strictObject({
 });
 export type EmployeeRecordView = z.infer<typeof employeeRecordViewSchema>;
 export type EmployeeRoster = z.infer<typeof employeeRosterSchema>;
+export const workforceHeadcountQuerySchema = z
+  .strictObject({
+    asOf: z.iso.date(),
+    periodStart: z.iso.date(),
+    periodEnd: z.iso.date(),
+  })
+  .superRefine(({ periodStart, periodEnd }, context) => {
+    const start = Date.parse(`${periodStart}T00:00:00Z`);
+    const end = Date.parse(`${periodEnd}T00:00:00Z`);
+    if (start > end) {
+      context.addIssue({
+        code: 'custom',
+        message: 'periodStart must not be later than periodEnd',
+        path: ['periodStart'],
+      });
+    } else if ((end - start) / 86_400_000 > 365) {
+      context.addIssue({
+        code: 'custom',
+        message: 'report period must not exceed 366 days',
+        path: ['periodEnd'],
+      });
+    }
+  });
+export const workforceDepartmentHeadcountSchema = z.strictObject({
+  departmentId: tenantIdSchema,
+  departmentCode: z.string().min(1).max(20),
+  departmentName: z.string().min(1).max(160),
+  headcount: z.number().int().nonnegative(),
+});
+export const workforceHeadcountReportSchema = z.strictObject({
+  asOf: z.iso.date(),
+  periodStart: z.iso.date(),
+  periodEnd: z.iso.date(),
+  headcount: z.number().int().nonnegative(),
+  joiners: z.number().int().nonnegative(),
+  leavers: z.number().int().nonnegative(),
+  departments: workforceDepartmentHeadcountSchema.array().max(250),
+  unassignedHeadcount: z.number().int().nonnegative(),
+});
+export type WorkforceHeadcountQuery = z.infer<
+  typeof workforceHeadcountQuerySchema
+>;
+export type WorkforceHeadcountReport = z.infer<
+  typeof workforceHeadcountReportSchema
+>;
 const privatePhoneSchema = z
   .string()
   .trim()
