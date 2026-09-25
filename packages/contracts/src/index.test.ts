@@ -38,7 +38,41 @@ import {
   employeeDocumentRegistrationSchema,
   parseEmployeeImportCsv,
   employeeAssignmentCreateSchema,
+  workforceHeadcountQuerySchema,
+  workforceHeadcountReportSchema,
 } from './index';
+it('accepts bounded workforce report dates and strict aggregate results', () => {
+  const query = {
+    asOf: '2026-09-25',
+    periodStart: '2026-09-01',
+    periodEnd: '2026-09-30',
+  };
+  expect(workforceHeadcountQuerySchema.parse(query)).toEqual(query);
+  expect(
+    workforceHeadcountQuerySchema.safeParse({
+      ...query,
+      periodStart: '2026-10-01',
+    }).success,
+  ).toBe(false);
+  expect(
+    workforceHeadcountQuerySchema.safeParse({
+      ...query,
+      periodEnd: '2028-01-01',
+    }).success,
+  ).toBe(false);
+  expect(
+    workforceHeadcountReportSchema.safeParse({
+      ...query,
+      headcount: 2,
+      joiners: 1,
+      leavers: 1,
+      departments: [],
+      unassignedHeadcount: 0,
+      employeeNames: ['Private value'],
+    }).success,
+  ).toBe(false);
+});
+
 it('trims names while preserving employee identifiers as strings', () => {
   expect(
     employeeDraftSchema.parse({ employeeNumber: '0012', name: ' Sana Khan ' }),
