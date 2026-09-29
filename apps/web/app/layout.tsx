@@ -60,6 +60,9 @@ export default function RootLayout({
               <Link className="nav-item" href="/profile-changes">
                 Profile changes <span>10</span>
               </Link>
+              <Link className="nav-item" href="/reports">
+                Workforce reports <span>11</span>
+              </Link>
             </nav>
             <div className="upcoming">
               <span className="nav-heading">UPCOMING MODULES</span>

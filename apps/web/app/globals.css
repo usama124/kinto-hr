@@ -8,6 +8,102 @@
   --white: #fff;
 }
 
+.report-controls,
+.report-departments,
+.report-export {
+  margin-bottom: 18px;
+}
+.report-date-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  align-items: end;
+  gap: 12px;
+}
+.report-date-grid label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.report-date-grid input {
+  width: 100%;
+  padding: 9px 10px;
+  color: var(--ink);
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+.report-date-grid .primary-button,
+.report-export-form .primary-button {
+  justify-content: center;
+  min-height: 37px;
+  margin: 0;
+  border: 0;
+}
+.report-date-grid .primary-button:disabled,
+.report-export-form .primary-button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+.report-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.report-metrics span,
+.report-metrics small {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+}
+.report-metrics strong {
+  display: block;
+  margin: 7px 0 3px;
+  font-size: 28px;
+  font-weight: 500;
+}
+.report-table-scroll {
+  overflow-x: auto;
+}
+.report-table-scroll table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.report-table-scroll th,
+.report-table-scroll td {
+  padding: 11px 8px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+.report-table-scroll th {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 500;
+}
+.report-table-scroll th:last-child,
+.report-table-scroll td:last-child {
+  text-align: right;
+}
+.report-export-form {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+}
+.export-result {
+  margin-top: 18px;
+  padding: 16px;
+  border-radius: 7px;
+  background: var(--paper);
+}
+.export-result p {
+  margin: 9px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+.export-result .primary-button {
+  margin-top: 12px;
+}
+
 .profile-change-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -946,6 +1042,12 @@ footer span:last-child {
   footer {
     padding: 10px 25px 25px;
   }
+  .report-date-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .report-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 @media (max-width: 680px) {
   .shell {
@@ -1076,5 +1178,14 @@ footer span:last-child {
   .policy-form {
     grid-template-columns: 1fr;
     align-items: stretch;
+  }
+  .report-date-grid,
+  .report-metrics,
+  .report-export-form {
+    grid-template-columns: 1fr;
+  }
+  .report-date-grid .primary-button,
+  .report-export-form .primary-button {
+    width: 100%;
   }
 }

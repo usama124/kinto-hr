@@ -11,7 +11,7 @@ The response contains only dates and aggregate counts. It excludes employee name
 
 Synthetic contract tests cover strict dates, reversed/excessive intervals and response projection. HTTP tests cover authentication, selected-tenant enforcement, recent/stale MFA propagation and unknown fields. PostgreSQL integration tests cover draft exclusion, historical termination, effective department grouping, as-of changes, second-tenant isolation, employee-role denial, stale-MFA denial and internal helper denial.
 
-Downloadable artifacts are now implemented in the separate [workforce export evidence](workforce-report-exports.md). The next report increment is the responsive aggregate report and export workspace. Production object storage/scanner work and full Phase 1 acceptance remain open.
+Downloadable artifacts are implemented in the separate [workforce export evidence](workforce-report-exports.md), and the responsive client is recorded in the [workforce report workspace evidence](workforce-report-workspace.md). Production object storage/scanner work and full Phase 1 acceptance remain open.
 
 ## Local verification
 
