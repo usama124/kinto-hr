@@ -25,6 +25,7 @@ model Tenant {
   employeeImportRows           EmployeeImportRow[]
   employeeDocuments            EmployeeDocument[]
   profileChangeRequests        EmployeeProfileChangeRequest[]
+  workforceReportExports       WorkforceReportExport[]
   employmentPeriods            EmploymentPeriod[]
   employeeAssignments          EmployeeAssignment[]
   auditEvents                  AuditEvent[]
@@ -82,6 +83,7 @@ model Identity {
   createdEmployeeDocuments       EmployeeDocument[]                  @relation("EmployeeDocumentCreatedBy")
   submittedProfileChangeRequests EmployeeProfileChangeRequest[]      @relation("ProfileChangeRequestedBy")
   decidedProfileChangeRequests   EmployeeProfileChangeRequest[]      @relation("ProfileChangeDecidedBy")
+  createdWorkforceReportExports  WorkforceReportExport[]              @relation("WorkforceReportExportCreatedBy")
 
   @@unique([issuer, subject])
   @@map("identities")
@@ -772,6 +774,30 @@ model EmployeeIdentityLink {
   @@unique([tenantId, identityId])
   @@unique([tenantId, membershipId])
   @@map("employee_identity_links")
+}
+
+model WorkforceReportExport {
+  id                  String   @id @db.Uuid
+  tenantId            String   @map("tenant_id") @db.Uuid
+  requestKey          String   @map("request_key") @db.Uuid
+  requestDigest       String   @map("request_digest") @db.Char(64)
+  kind                String   @db.VarChar(40)
+  parameters          Json     @db.JsonB
+  snapshot            Json?    @db.JsonB
+  status              String   @default("pending") @db.VarChar(20)
+  createdByIdentityId String   @map("created_by_identity_id") @db.Uuid
+  reason              String   @db.VarChar(240)
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  expiresAt           DateTime @map("expires_at") @db.Timestamptz()
+  readyAt             DateTime? @map("ready_at") @db.Timestamptz()
+  tenant              Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  createdBy           Identity @relation("WorkforceReportExportCreatedBy", fields: [createdByIdentityId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, requestKey])
+  @@index([tenantId, createdAt])
+  @@index([tenantId, status, expiresAt])
+  @@map("workforce_report_exports")
 }
 
 model AuditEvent {

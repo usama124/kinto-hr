@@ -16,16 +16,27 @@ export const consumer = 'foundation-observer.v1';
 
 export class ProcessingError extends Error {
   constructor(
-    public readonly code: 'UNSUPPORTED_EVENT' | 'TENANT_UNAVAILABLE',
+    public readonly code:
+      'UNSUPPORTED_EVENT' | 'TENANT_UNAVAILABLE' | 'EXPORT_UNAVAILABLE',
   ) {
     super(code);
   }
 }
 
-// This observer records receipts for committed employee lifecycle facts only.
-// The due transition itself is a constrained database command; this handler
-// sends no email, changes no employment state and performs no payroll work.
-const observeLifecycle: Handler = async (_tx, event) => {
+// The consumer records receipts for committed employee lifecycle facts and runs
+// the one constrained aggregate export generator. The due transition remains a
+// separate database command; this handler sends no email, transfers no salary
+// and receives no direct employee, compensation or export-table access.
+const handleCommittedEvent: Handler = async (tx, event) => {
+  if (event.type === 'workforce_report_export.requested.v1') {
+    const rows = await tx.$queryRaw<{ outcome: string }[]>`
+      SELECT * FROM public.generate_tenant_workforce_report_export(
+        ${event.tenantId}::uuid,${event.aggregateId}::uuid
+      )`;
+    if (!rows[0] || !['ready', 'expired'].includes(rows[0].outcome))
+      throw new ProcessingError('EXPORT_UNAVAILABLE');
+    return;
+  }
   if (
     ![
       'employee.activated.v1',
@@ -60,7 +71,7 @@ export function retryDelay(attempt: number, random = Math.random()): number {
 export async function processEvent(
   db: PrismaClient,
   data: unknown,
-  handler: Handler = observeLifecycle,
+  handler: Handler = handleCommittedEvent,
 ) {
   const ref = referenceSchema.parse(data);
   return db.$transaction(

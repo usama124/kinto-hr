@@ -40,7 +40,46 @@ import {
   employeeAssignmentCreateSchema,
   workforceHeadcountQuerySchema,
   workforceHeadcountReportSchema,
+  workforceReportExportCreateSchema,
+  workforceReportExportViewSchema,
 } from './index';
+it('accepts strict workforce export creation and status projections', () => {
+  const parameters = {
+    asOf: '2026-09-25',
+    periodStart: '2026-09-01',
+    periodEnd: '2026-09-30',
+  };
+  expect(
+    workforceReportExportCreateSchema.parse({
+      kind: 'workforce_headcount_csv',
+      parameters,
+      reason: 'Monthly workforce review',
+    }),
+  ).toEqual({
+    kind: 'workforce_headcount_csv',
+    parameters,
+    reason: 'Monthly workforce review',
+  });
+  expect(
+    workforceReportExportCreateSchema.safeParse({
+      kind: 'employee_private_csv',
+      parameters,
+      reason: 'Unsupported private export',
+    }).success,
+  ).toBe(false);
+  expect(
+    workforceReportExportViewSchema.safeParse({
+      id: crypto.randomUUID(),
+      kind: 'workforce_headcount_csv',
+      status: 'ready',
+      parameters,
+      createdAt: '2026-09-25T10:00:00.000Z',
+      expiresAt: '2026-09-26T10:00:00.000Z',
+      report: { employeeNames: ['Private'] },
+    }).success,
+  ).toBe(false);
+});
+
 it('accepts bounded workforce report dates and strict aggregate results', () => {
   const query = {
     asOf: '2026-09-25',

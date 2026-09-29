@@ -25,6 +25,7 @@ import { SelfProfileController } from './employees/self-profile-controller';
 import { ProfileChangeController } from './employees/profile-change-controller';
 import { ProfileChangeDecisionController } from './employees/profile-change-decision-controller';
 import { ReportsController } from './reports/controller';
+import { ReportExportsController } from './reports/export-controller';
 @Controller('health')
 export class HealthController {
   constructor(
@@ -62,6 +63,7 @@ export class HealthController {
     ProfileChangeController,
     ProfileChangeDecisionController,
     ReportsController,
+    ReportExportsController,
   ],
   providers: [
     DatabaseService,

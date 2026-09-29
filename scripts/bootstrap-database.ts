@@ -117,6 +117,8 @@ try {
     'CREATE POLICY platform_control ON employee_private_details FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON employee_profile_change_requests',
     'CREATE POLICY platform_control ON employee_profile_change_requests FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
+    'DROP POLICY IF EXISTS platform_control ON workforce_report_exports',
+    'CREATE POLICY platform_control ON workforce_report_exports FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON compensation_agreements',
     'CREATE POLICY platform_control ON compensation_agreements FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON salary_components',
@@ -193,6 +195,9 @@ try {
     'GRANT SELECT, INSERT, UPDATE ON employee_profile_change_requests TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
+    'GRANT SELECT, INSERT, UPDATE ON workforce_report_exports TO kinto_control_owner',
+  );
+  await database.$executeRawUnsafe(
     'GRANT SELECT, INSERT, UPDATE ON compensation_agreements, salary_components, compensation_component_versions TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
@@ -260,6 +265,9 @@ try {
     'public.revoke_entitlement_change(uuid, boolean, uuid, varchar, uuid, integer, varchar, uuid, uuid)',
     'public.read_tenant_employees(uuid, boolean, uuid, uuid)',
     'public.read_tenant_workforce_headcount_report(uuid, boolean, uuid, date, date, date)',
+    'public.create_tenant_workforce_report_export(uuid, boolean, uuid, uuid, uuid, varchar, varchar, date, date, date, varchar, uuid, uuid)',
+    'public.read_tenant_workforce_report_export(uuid, boolean, uuid, uuid)',
+    'public.authorize_tenant_workforce_report_export_download(uuid, boolean, uuid, uuid, uuid)',
     'public.read_tenant_employee_private_details(uuid, boolean, uuid, uuid)',
     'public.read_tenant_employee_compensation(uuid, boolean, uuid, uuid)',
     'public.read_tenant_employee_checklist(uuid, boolean, uuid, uuid)',
@@ -306,6 +314,9 @@ try {
     'public.reject_overlapping_entitlement_override()',
     'public.tenant_people_authorized(uuid, boolean, uuid, boolean)',
     'public.employee_record_json(uuid, uuid)',
+    'public.workforce_headcount_report_json(uuid, date, date, date)',
+    'public.workforce_report_export_json(public.workforce_report_exports)',
+    'public.generate_tenant_workforce_report_export(uuid, uuid)',
     'public.tenant_employee_private_authorized(uuid, boolean, uuid, varchar)',
     'public.tenant_compensation_authorized(uuid, boolean, uuid, boolean)',
     'public.reject_compensation_version_overlap()',
@@ -329,8 +340,9 @@ try {
   );
   await assertSafeRuntimeRole(appDatabase);
   // The dispatcher can call reviewed metadata functions and the single bounded
-  // due-termination command. The worker has tenant-scoped delivery access, but
-  // no employee, salary or audit table privileges.
+  // due-termination command. The worker has tenant-scoped delivery access and
+  // one constrained aggregate-export generator, but no direct employee, salary,
+  // export-artifact or audit table privileges.
   for (const [role, envKey] of [
     ['kinto_worker', 'WORKER_DATABASE_URL'],
     ['kinto_dispatcher', 'DISPATCHER_DATABASE_URL'],
@@ -404,6 +416,9 @@ try {
   );
   await database.$executeRawUnsafe(
     'GRANT INSERT ON consumer_receipts TO kinto_worker',
+  );
+  await database.$executeRawUnsafe(
+    'GRANT EXECUTE ON FUNCTION public.generate_tenant_workforce_report_export(uuid, uuid) TO kinto_worker',
   );
   await database.$executeRawUnsafe(
     'ALTER FUNCTION public.enqueue_outbox_delivery() OWNER TO kinto_outbox_owner',

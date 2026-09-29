@@ -11,12 +11,12 @@ The response contains only dates and aggregate counts. It excludes employee name
 
 Synthetic contract tests cover strict dates, reversed/excessive intervals and response projection. HTTP tests cover authentication, selected-tenant enforcement, recent/stale MFA propagation and unknown fields. PostgreSQL integration tests cover draft exclusion, historical termination, effective department grouping, as-of changes, second-tenant isolation, employee-role denial, stale-MFA denial and internal helper denial.
 
-This increment does not create downloadable artifacts. The next report increment must add a formula-safe, permission-scoped CSV artifact with deterministic idempotency and audit creation/download evidence, then expose the aggregate report and export control in the responsive workspace. Production object storage/scanner work and full Phase 1 acceptance remain open.
+Downloadable artifacts are now implemented in the separate [workforce export evidence](workforce-report-exports.md). The next report increment is the responsive aggregate report and export workspace. Production object storage/scanner work and full Phase 1 acceptance remain open.
 
 ## Local verification
 
 - `pnpm verify`: passed; 21 unit/API files and 148 tests passed with 96.66% statement coverage, and all planning links validated.
 - `pnpm build`: API, web and worker production builds passed.
 - `pnpm test:integration`: 18 files and 145 PostgreSQL integration tests passed.
-- `pnpm test:migrations`: clean foundation, all 37 migrations, restricted-role bootstrap, operator replay and second migration replay passed in an isolated generated database.
+- `pnpm test:migrations`: clean foundation, all 38 migrations, restricted-role bootstrap, operator replay and second migration replay passed in an isolated generated database.
 - Local `pnpm db:migrate` and `pnpm db:bootstrap`: the report migration applied and the exact RPC grant was verified against the synthetic `kinto_test` database.

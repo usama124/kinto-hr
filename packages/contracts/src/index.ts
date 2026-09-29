@@ -783,6 +783,32 @@ export type WorkforceHeadcountQuery = z.infer<
 export type WorkforceHeadcountReport = z.infer<
   typeof workforceHeadcountReportSchema
 >;
+export const workforceReportExportCreateSchema = z.strictObject({
+  kind: z.literal('workforce_headcount_csv'),
+  parameters: workforceHeadcountQuerySchema,
+  reason: z.string().trim().min(3).max(240),
+});
+export const workforceReportExportViewSchema = z.strictObject({
+  id: tenantIdSchema,
+  kind: z.literal('workforce_headcount_csv'),
+  status: z.enum(['pending', 'ready', 'expired']),
+  parameters: workforceHeadcountQuerySchema,
+  createdAt: z.iso.datetime({ offset: true }),
+  expiresAt: z.iso.datetime({ offset: true }),
+});
+export const workforceReportExportDownloadSchema = z.strictObject({
+  export: workforceReportExportViewSchema,
+  report: workforceHeadcountReportSchema,
+});
+export type WorkforceReportExportCreate = z.infer<
+  typeof workforceReportExportCreateSchema
+>;
+export type WorkforceReportExportView = z.infer<
+  typeof workforceReportExportViewSchema
+>;
+export type WorkforceReportExportDownload = z.infer<
+  typeof workforceReportExportDownloadSchema
+>;
 const privatePhoneSchema = z
   .string()
   .trim()
