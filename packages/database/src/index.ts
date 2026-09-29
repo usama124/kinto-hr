@@ -77,6 +77,9 @@ import {
   employeeRosterSchema,
   workforceHeadcountQuerySchema,
   workforceHeadcountReportSchema,
+  workforceReportExportCreateSchema,
+  workforceReportExportViewSchema,
+  workforceReportExportDownloadSchema,
   type EmployeeRecordCreate,
   type EmployeeProfileUpdate,
   type EmployeeProfileChangeRequestInput,
@@ -94,6 +97,7 @@ import {
   type EmployeeDocumentRegistration,
   type EmployeeAssignmentCreate,
   type WorkforceHeadcountQuery,
+  type WorkforceReportExportCreate,
 } from '@kinto/contracts';
 import {
   assertCanActivate,
@@ -1683,6 +1687,80 @@ export async function readTenantWorkforceHeadcountReport(
   if (!row || row.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
   if (row.outcome === 'invalid_state') throw new DomainError('INVALID_STATE');
   return workforceHeadcountReportSchema.parse(row.snapshot);
+}
+export async function createTenantWorkforceReportExport(
+  db: PrismaClient,
+  actor: PeopleActor,
+  tenantId: string,
+  requestKey: string,
+  input: WorkforceReportExportCreate,
+) {
+  validatePeopleActor(actor, tenantId);
+  tenantIdSchema.parse(requestKey);
+  const value = workforceReportExportCreateSchema.parse(input);
+  const digest = createHash('sha256')
+    .update(JSON.stringify(value), 'utf8')
+    .digest('hex');
+  const rows = await db.$queryRaw<
+    {
+      outcome:
+        'created' | 'replayed' | 'forbidden' | 'invalid_state' | 'conflict';
+      snapshot: unknown;
+    }[]
+  >`SELECT * FROM public.create_tenant_workforce_report_export(
+    ${actor.identityId}::uuid,${actor.mfaVerified},${tenantId}::uuid,
+    ${randomUUID()}::uuid,${requestKey}::uuid,${digest}::varchar,
+    ${value.kind}::varchar,${value.parameters.asOf}::date,
+    ${value.parameters.periodStart}::date,${value.parameters.periodEnd}::date,
+    ${value.reason}::varchar,${randomUUID()}::uuid,${randomUUID()}::uuid
+  )`;
+  const row = rows[0];
+  if (!row || row.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (row.outcome === 'invalid_state') throw new DomainError('INVALID_STATE');
+  if (row.outcome === 'conflict') throw new DomainError('CONFLICT');
+  return workforceReportExportViewSchema.parse(row.snapshot);
+}
+export async function readTenantWorkforceReportExport(
+  db: PrismaClient,
+  actor: PeopleActor,
+  tenantId: string,
+  exportId: string,
+) {
+  validatePeopleActor(actor, tenantId);
+  tenantIdSchema.parse(exportId);
+  const rows = await db.$queryRaw<
+    { outcome: 'ok' | 'forbidden' | 'not_found'; snapshot: unknown }[]
+  >`SELECT * FROM public.read_tenant_workforce_report_export(
+    ${actor.identityId}::uuid,${actor.mfaVerified},${tenantId}::uuid,${exportId}::uuid
+  )`;
+  const row = rows[0];
+  if (!row || row.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (row.outcome === 'not_found') throw new DomainError('NOT_FOUND');
+  return workforceReportExportViewSchema.parse(row.snapshot);
+}
+export async function authorizeTenantWorkforceReportExportDownload(
+  db: PrismaClient,
+  actor: PeopleActor,
+  tenantId: string,
+  exportId: string,
+) {
+  validatePeopleActor(actor, tenantId);
+  tenantIdSchema.parse(exportId);
+  const rows = await db.$queryRaw<
+    {
+      outcome: 'ok' | 'forbidden' | 'not_found' | 'pending' | 'expired';
+      snapshot: unknown;
+    }[]
+  >`SELECT * FROM public.authorize_tenant_workforce_report_export_download(
+    ${actor.identityId}::uuid,${actor.mfaVerified},${tenantId}::uuid,
+    ${exportId}::uuid,${randomUUID()}::uuid
+  )`;
+  const row = rows[0];
+  if (!row || row.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (row.outcome === 'not_found') throw new DomainError('NOT_FOUND');
+  if (row.outcome === 'pending' || row.outcome === 'expired')
+    throw new DomainError('INVALID_STATE');
+  return workforceReportExportDownloadSchema.parse(row.snapshot);
 }
 export async function readTenantEmployee(
   db: PrismaClient,

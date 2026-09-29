@@ -37,6 +37,7 @@ import {
   reviseTenantEmployeeCompensation,
   createTenantEmployeeImportPreview,
   confirmTenantEmployeeImport,
+  createTenantWorkforceReportExport,
   registerTenantEmployeeDocument,
   type PrismaClient,
 } from '@kinto/database';
@@ -95,6 +96,7 @@ async function snapshot(db: PrismaClient) {
       'tenant_entitlement_states',
       'tenant_subscriptions',
       'tenants',
+      'workforce_report_exports',
     ],
   );
   return {
@@ -142,6 +144,9 @@ async function snapshot(db: PrismaClient) {
       await db.employeeProfileChangeRequest.findMany({
         orderBy: { id: 'asc' },
       }),
+    workforceReportExports: await db.workforceReportExport.findMany({
+      orderBy: { id: 'asc' },
+    }),
     compensationAgreements: await db.compensationAgreement.findMany({
       orderBy: { id: 'asc' },
     }),
@@ -644,6 +649,34 @@ async function main() {
       stage = 'source setup';
       assert.equal(legalEntity.version, 1);
     }
+    const recoveryDate = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Karachi',
+    }).format(new Date());
+    const reportExport = await createTenantWorkforceReportExport(
+      sourceApp,
+      { identityId: membershipOwners[0], mfaVerified: true },
+      tenants[0],
+      randomUUID(),
+      {
+        kind: 'workforce_headcount_csv',
+        parameters: {
+          asOf: recoveryDate,
+          periodStart: recoveryDate,
+          periodEnd: recoveryDate,
+        },
+        reason: 'Recovery fixture workforce export',
+      },
+    );
+    const reportExportEvent = await source.outboxEvent.findFirstOrThrow({
+      where: { tenantId: tenants[0], aggregateId: reportExport.id },
+    });
+    assert.equal(
+      await processEvent(sourceWorker, {
+        eventId: reportExportEvent.id,
+        tenantId: tenants[0],
+      }),
+      'completed',
+    );
     const accountRequests = [];
     for (const [index, account] of accountActors.entries())
       accountRequests.push(
@@ -836,7 +869,7 @@ async function main() {
     const policies = await restored.$queryRaw<
       { enabled: boolean; forced: boolean }[]
     >`SELECT relrowsecurity AS enabled, relforcerowsecurity AS forced FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND relkind='r' AND relname <> '_prisma_migrations'`;
-    assert.equal(policies.length, 38);
+    assert.equal(policies.length, 39);
     assert.ok(policies.every((row) => row.enabled && row.forced));
     assert.deepEqual(await restoredApp.employee.findMany(), []);
     stage = 'restored tenant lifecycle visibility';
@@ -910,6 +943,10 @@ async function main() {
         await restored.employeeDocument.count({ where: { tenantId } }),
         1,
       );
+      assert.equal(
+        await restored.workforceReportExport.count({ where: { tenantId } }),
+        tenantIndex === 0 ? 1 : 0,
+      );
     }
     stage = 'restored tenant write isolation';
     await assert.rejects(
@@ -925,9 +962,9 @@ async function main() {
     );
     stage = 'restored worker replay';
     assert.equal(await processEvent(restoredWorker, refs[0]), 'completed');
-    assert.equal(await restored.consumerReceipt.count(), 1); // completed work is not repeated
+    assert.equal(await restored.consumerReceipt.count(), 2); // completed work is not repeated
     assert.equal(await processEvent(restoredWorker, refs[1]), 'completed');
-    assert.equal(await restored.consumerReceipt.count(), 2); // pending work resumes once
+    assert.equal(await restored.consumerReceipt.count(), 3); // pending work resumes once
     assert.equal(
       await processEvent(restoredWorker, {
         eventId: dead.id,
@@ -968,6 +1005,7 @@ async function main() {
       employeeAssignmentsPreserved: true,
       employeePrivateDetailsPreserved: true,
       employeeProfileChangeRequestDecisionsPreserved: true,
+      workforceReportExportPreserved: true,
       employeeChecklistsPreserved: true,
       committedEmployeeImportsPreserved: true,
       documentQuarantineMetadataPreserved: true,

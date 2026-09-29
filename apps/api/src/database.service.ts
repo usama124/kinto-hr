@@ -37,6 +37,9 @@ import {
   revokeEntitlementChange,
   readTenantEmployees,
   readTenantWorkforceHeadcountReport,
+  createTenantWorkforceReportExport,
+  readTenantWorkforceReportExport,
+  authorizeTenantWorkforceReportExportDownload,
   readTenantEmployee,
   createTenantEmployee,
   updateTenantEmployeeProfile,
@@ -103,6 +106,7 @@ import {
   type EmployeeProfileChangeRequestInput,
   type EmployeeProfileChangeDecisionInput,
   type WorkforceHeadcountQuery,
+  type WorkforceReportExportCreate,
 } from '@kinto/contracts';
 import { readConfig } from './config';
 @Injectable()
@@ -552,6 +556,39 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     query: WorkforceHeadcountQuery,
   ) {
     return readTenantWorkforceHeadcountReport(this.db, actor, tenantId, query);
+  }
+  createWorkforceReportExport(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    requestKey: string,
+    input: WorkforceReportExportCreate,
+  ) {
+    return createTenantWorkforceReportExport(
+      this.db,
+      actor,
+      tenantId,
+      requestKey,
+      input,
+    );
+  }
+  readWorkforceReportExport(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    exportId: string,
+  ) {
+    return readTenantWorkforceReportExport(this.db, actor, tenantId, exportId);
+  }
+  authorizeWorkforceReportExportDownload(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    exportId: string,
+  ) {
+    return authorizeTenantWorkforceReportExportDownload(
+      this.db,
+      actor,
+      tenantId,
+      exportId,
+    );
   }
   readEmployee(
     actor: { identityId: string; mfaVerified: boolean },
