@@ -20,4 +20,4 @@ Synthetic contract and HTTP tests cover strict kinds/fields, dates, idempotency 
 - `pnpm test:worker:runtime`: all 4 built worker startup, failure and monitor lifecycle tests passed.
 - `pnpm test:recovery`: synthetic archive checksum, restore equality, 39 forced-RLS tables, ready export preservation and durable worker replay passed.
 
-The responsive report workspace remains the next local P01-05 increment. Production object transfer/scanning/download, deployed file recovery, staging and full Phase 1 acceptance remain open.
+The responsive client is now implemented in the [workforce report workspace](workforce-report-workspace.md). Production object transfer/scanning/download, deployed file recovery, staging and full Phase 1 acceptance remain open.

@@ -1440,3 +1440,197 @@ test('HR creates, activates, separates, archives and rehires an employee', async
     ),
   ).toBe(true);
 });
+
+test('HR reviews aggregate workforce movement and safely retries an audited export', async ({
+  page,
+}) => {
+  const tenantId = '9d2ea3ef-3938-42d0-84f9-d2248f692f67';
+  const departmentId = '44c4bf77-58bb-42ea-9886-5db47c1c3de5';
+  const exportId = '82ffbc9e-febd-4a62-bdaf-fd8740ee6982';
+  const csrf = 'r'.repeat(43);
+  const submittedKeys: string[] = [];
+  let reportRequests = 0;
+
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        csrfToken: csrf,
+        selectedTenantId: tenantId,
+        tenants: [
+          { id: tenantId, name: 'Synthetic Company', roles: ['hr_admin'] },
+        ],
+      }),
+    }),
+  );
+  await page.route(
+    `**/api/v1/tenants/${tenantId}/reports/headcount**`,
+    (route) => {
+      reportRequests += 1;
+      const url = new URL(route.request().url());
+      const asOf = url.searchParams.get('asOf');
+      const periodStart = url.searchParams.get('periodStart');
+      const periodEnd = url.searchParams.get('periodEnd');
+      expect(asOf).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(periodStart).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(periodEnd).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          asOf,
+          periodStart,
+          periodEnd,
+          headcount: 12,
+          joiners: 3,
+          leavers: 1,
+          departments: [
+            {
+              departmentId,
+              departmentCode: 'ENG',
+              departmentName: 'Engineering',
+              headcount: 9,
+            },
+          ],
+          unassignedHeadcount: 3,
+        }),
+      });
+    },
+  );
+  await page.route(`**/api/v1/tenants/${tenantId}/exports**`, async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (request.method() === 'POST' && url.pathname.endsWith('/exports')) {
+      expect(request.headers()['x-csrf-token']).toBe(csrf);
+      const key = request.headers()['idempotency-key'];
+      expect(key).toMatch(/^[0-9a-f-]{36}$/);
+      submittedKeys.push(key);
+      expect(request.postDataJSON()).toEqual({
+        kind: 'workforce_headcount_csv',
+        parameters: {
+          asOf: '2026-09-29',
+          periodStart: '2026-09-01',
+          periodEnd: '2026-09-29',
+        },
+        reason: 'Monthly workforce review',
+      });
+      if (submittedKeys.length === 1)
+        return route.fulfill({ status: 503, body: '{}' });
+      return route.fulfill({
+        status: 202,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          id: exportId,
+          kind: 'workforce_headcount_csv',
+          status: 'pending',
+          parameters: {
+            asOf: '2026-09-29',
+            periodStart: '2026-09-01',
+            periodEnd: '2026-09-29',
+          },
+          createdAt: '2026-09-29T08:00:00.000Z',
+          expiresAt: '2026-09-30T08:00:00.000Z',
+        }),
+      });
+    }
+    expect(request.method()).toBe('GET');
+    expect(url.pathname).toBe(
+      `/api/v1/tenants/${tenantId}/exports/${exportId}`,
+    );
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        id: exportId,
+        kind: 'workforce_headcount_csv',
+        status: 'ready',
+        parameters: {
+          asOf: '2026-09-29',
+          periodStart: '2026-09-01',
+          periodEnd: '2026-09-29',
+        },
+        createdAt: '2026-09-29T08:00:00.000Z',
+        expiresAt: '2026-09-30T08:00:00.000Z',
+      }),
+    });
+  });
+
+  await page.goto('/reports');
+  await expect(
+    page.getByRole('heading', { name: 'Synthetic Company' }),
+  ).toBeVisible();
+  const totals = page.getByRole('region', { name: 'Workforce totals' });
+  await expect(totals.getByText('12')).toBeVisible();
+  await expect(page.getByRole('cell', { name: 'Engineering' })).toBeVisible();
+
+  await page.getByLabel('Movement period start').fill('2025-01-01');
+  await page.getByLabel('Movement period end').fill('2026-09-29');
+  await page.getByRole('button', { name: 'Update report' }).click();
+  await expect(page.getByRole('status')).toHaveText(/no more than 366 days/);
+  expect(reportRequests).toBe(1);
+
+  await page.getByLabel('Headcount as of').fill('2026-09-29');
+  await page.getByLabel('Movement period start').fill('2026-09-01');
+  await page.getByLabel('Movement period end').fill('2026-09-29');
+  await page.getByRole('button', { name: 'Update report' }).click();
+  await expect(page.getByRole('status')).toHaveText(
+    'Workforce totals updated.',
+  );
+  expect(reportRequests).toBe(2);
+
+  await page.getByRole('button', { name: 'Prepare CSV' }).click();
+  await expect(page.getByRole('status')).toHaveText(
+    /Retry to safely reuse the same request/,
+  );
+  await page.getByRole('button', { name: 'Prepare CSV' }).click();
+  await expect(page.getByRole('status')).toHaveText(
+    'Your aggregate CSV is ready to download.',
+  );
+  expect(submittedKeys).toHaveLength(2);
+  expect(new Set(submittedKeys).size).toBe(1);
+  await expect(
+    page.getByRole('link', { name: 'Download aggregate CSV' }),
+  ).toHaveAttribute(
+    'href',
+    `/api/v1/tenants/${tenantId}/exports/${exportId}/content`,
+  );
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  expect(
+    await page.evaluate(() => [localStorage.length, sessionStorage.length]),
+  ).toEqual([0, 0]);
+});
+
+test('employee role cannot open company workforce reports', async ({
+  page,
+}) => {
+  const tenantId = '9d2ea3ef-3938-42d0-84f9-d2248f692f67';
+  let reportRequested = false;
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        csrfToken: 'e'.repeat(43),
+        selectedTenantId: tenantId,
+        tenants: [
+          { id: tenantId, name: 'Synthetic Company', roles: ['employee'] },
+        ],
+      }),
+    }),
+  );
+  await page.route('**/api/v1/tenants/*/reports/headcount**', (route) => {
+    reportRequested = true;
+    return route.fulfill({ status: 500, body: '{}' });
+  });
+
+  await page.goto('/reports');
+  await expect(page.getByRole('status')).toHaveText(
+    'Only company owners and HR administrators can view workforce reports.',
+  );
+  expect(reportRequested).toBe(false);
+});
