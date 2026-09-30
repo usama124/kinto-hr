@@ -797,6 +797,7 @@ describe('tenant employee records and effective assignments', () => {
     const second = await register('employment', original.id, 'c');
     const wrongCategory = await register('bank', original.id, 'd');
     const noTarget = await register('employment', null, 'e');
+    const nestedCandidate = await register('employment', first.id, 'f');
     await clean(original.id);
     await expect(
       activateTenantEmployeeDocumentReplacement(
@@ -813,6 +814,7 @@ describe('tenant employee records and effective assignments', () => {
       clean(second.id),
       clean(wrongCategory.id),
       clean(noTarget.id),
+      clean(nestedCandidate.id),
     ]);
     for (const candidate of [first, second, wrongCategory])
       await expect(
@@ -824,6 +826,16 @@ describe('tenant employee records and effective assignments', () => {
           candidate.id,
         ),
       ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(
+      activateTenantEmployeeDocumentReplacement(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        employee.id,
+        nestedCandidate.id,
+        { reason: 'Pending replacement cannot be superseded' },
+      ),
+    ).rejects.toMatchObject({ code: 'INVALID_STATE' });
     await expect(
       activateTenantEmployeeDocumentReplacement(
         runtime,

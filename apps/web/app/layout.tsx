@@ -57,11 +57,14 @@ export default function RootLayout({
               <Link className="nav-item" href="/employee-imports">
                 Employee imports <span>09</span>
               </Link>
+              <Link className="nav-item" href="/documents">
+                Documents <span>10</span>
+              </Link>
               <Link className="nav-item" href="/profile-changes">
-                Profile changes <span>10</span>
+                Profile changes <span>11</span>
               </Link>
               <Link className="nav-item" href="/reports">
-                Workforce reports <span>11</span>
+                Workforce reports <span>12</span>
               </Link>
             </nav>
             <div className="upcoming">

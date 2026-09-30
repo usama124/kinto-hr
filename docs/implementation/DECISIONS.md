@@ -50,6 +50,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 30 September 2026 — owner/HR employee document manager
+
+Engineering added a responsive selected-company document workspace for owners/HR. It strictly parses the employee/document projections, computes upload digests in-browser, uses memory-only idempotency, supports exact-file retry after scanner/storage outage, shows only authoritative clean downloads and requires a reason to activate replacements. PostgreSQL now independently rejects replacing a candidate that never became authoritative. Local storage remains prohibited in production, and physical purge remains blocked by E09. See [workspace evidence](../evidence/phase-01/employee-document-workspace.md).
+
 ### 30 September 2026 — controlled employee document replacement activation
 
 Engineering added a selected-tenant, recent-MFA, CSRF-protected owner/HR command that activates only a clean replacement naming a clean document for the same employee and category. PostgreSQL serializes competing replacements and atomically records logical removal time, actor, reason and replacement source before old-download authorization can succeed again; exact retries do not duplicate audit/outbox facts. Metadata and bytes remain retained. Automatic/physical purge, legal holds, object-storage recovery and retention schedules remain blocked by E09. See [evidence](../evidence/phase-01/employee-documents.md).
