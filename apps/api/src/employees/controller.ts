@@ -26,6 +26,7 @@ import {
   employeeChecklistTaskCompletionSchema,
   employeeRecordCreateSchema,
   employeeDocumentRegistrationSchema,
+  employeeDocumentReplacementActivationSchema,
   tenantIdSchema,
 } from '@kinto/contracts';
 import {
@@ -131,6 +132,29 @@ export class EmployeesController {
       context.tenantId,
       employee.data,
       key.data,
+      input.data,
+    );
+  }
+
+  @Post(':employeeId/documents/:documentId/replacement-activation')
+  async activateDocumentReplacement(
+    @Req() req: AuthRequest,
+    @Param('tenantId') tenantId: unknown,
+    @Param('employeeId') employeeId: unknown,
+    @Param('documentId') documentId: unknown,
+    @Body() body: unknown,
+  ) {
+    const employee = tenantIdSchema.safeParse(employeeId);
+    const document = tenantIdSchema.safeParse(documentId);
+    const input = employeeDocumentReplacementActivationSchema.safeParse(body);
+    if (!employee.success || !document.success || !input.success)
+      throw new BadRequestException();
+    const context = await this.context(req, tenantId, true);
+    return this.database.activateEmployeeDocumentReplacement(
+      context.actor,
+      context.tenantId,
+      employee.data,
+      document.data,
       input.data,
     );
   }

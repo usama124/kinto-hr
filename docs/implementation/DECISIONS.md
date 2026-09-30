@@ -50,6 +50,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 30 September 2026 — controlled employee document replacement activation
+
+Engineering added a selected-tenant, recent-MFA, CSRF-protected owner/HR command that activates only a clean replacement naming a clean document for the same employee and category. PostgreSQL serializes competing replacements and atomically records logical removal time, actor, reason and replacement source before old-download authorization can succeed again; exact retries do not duplicate audit/outbox facts. Metadata and bytes remain retained. Automatic/physical purge, legal holds, object-storage recovery and retention schedules remain blocked by E09. See [evidence](../evidence/phase-01/employee-documents.md).
+
 ### 29 September 2026 — explicit employee account reactivation after rehire
 
 Engineering added a separate owner/HR command that restores only the retained verified employee identity after employment rehire. It requires recent MFA, selected tenant, same-origin CSRF, optimistic membership version and an audit reason. PostgreSQL rechecks an active second-or-later employment period, a previous ended period, active global identity, fixed employee-only roles and the exact revoked membership/request/invitation chain before atomically restoring access and emitting audit/outbox facts. Rehire itself still grants no login, and the command cannot select an identity, email or role. See [evidence](../evidence/phase-01/employee-account-reactivation.md).

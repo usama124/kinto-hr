@@ -48,6 +48,7 @@ const methods = {
   completeEmployeeChecklistTask: vi.fn(),
   readEmployeeDocuments: vi.fn(),
   registerEmployeeDocument: vi.fn(),
+  activateEmployeeDocumentReplacement: vi.fn(),
   createEmployeeAssignment: vi.fn(),
   activateEmployee: vi.fn(),
   scheduleEmployeeTermination: vi.fn(),
@@ -156,6 +157,47 @@ it('lists and registers only strict private document metadata', async () => {
     .send({ ...input, downloadUrl: 'https://evil.example/file' })
     .expect(400);
   await mutation('post', `${base}/${employeeId}/documents`)
+    .send(input)
+    .expect(400);
+});
+
+it('activates only a strict document replacement mutation', async () => {
+  const documentId = randomUUID();
+  const retiredDocumentId = randomUUID();
+  const input = { reason: 'Approve verified replacement' };
+  methods.activateEmployeeDocumentReplacement.mockResolvedValueOnce({
+    replacement: { id: documentId, status: 'clean' },
+    retiredDocument: { id: retiredDocumentId, status: 'removed' },
+  });
+  await mutation(
+    'post',
+    `${base}/${employeeId}/documents/${documentId}/replacement-activation`,
+  )
+    .send(input)
+    .expect(201);
+  expect(methods.activateEmployeeDocumentReplacement).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+    employeeId,
+    documentId,
+    input,
+  );
+  await authenticated(
+    'post',
+    `${base}/${employeeId}/documents/${documentId}/replacement-activation`,
+  )
+    .send(input)
+    .expect(403);
+  await mutation(
+    'post',
+    `${base}/${employeeId}/documents/${documentId}/replacement-activation`,
+  )
+    .send({ ...input, status: 'removed' })
+    .expect(400);
+  await mutation(
+    'post',
+    `${base}/${employeeId}/documents/invalid/replacement-activation`,
+  )
     .send(input)
     .expect(400);
 });

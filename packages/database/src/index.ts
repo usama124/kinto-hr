@@ -63,6 +63,8 @@ import {
   employeeImportConfirmationSchema,
   employeeImportPreviewSchema,
   employeeDocumentRegistrationSchema,
+  employeeDocumentReplacementActivationSchema,
+  employeeDocumentReplacementActivationResultSchema,
   employeeDocumentSchema,
   employeeDocumentListSchema,
   employeeDocumentUploadTargetSchema,
@@ -98,6 +100,7 @@ import {
   type EmployeeImportUpload,
   type EmployeeImportConfirmation,
   type EmployeeDocumentRegistration,
+  type EmployeeDocumentReplacementActivation,
   type EmployeeAssignmentCreate,
   type WorkforceHeadcountQuery,
   type WorkforceReportExportCreate,
@@ -1410,6 +1413,34 @@ export async function registerTenantEmployeeDocument(
   if (row.outcome === 'invalid_state') throw new DomainError('INVALID_STATE');
   if (row.outcome === 'conflict') throw new DomainError('CONFLICT');
   return employeeDocumentSchema.parse(row.snapshot);
+}
+export async function activateTenantEmployeeDocumentReplacement(
+  db: PrismaClient,
+  actor: PeopleActor,
+  tenantId: string,
+  employeeId: string,
+  documentId: string,
+  input: EmployeeDocumentReplacementActivation,
+) {
+  validatePeopleActor(actor, tenantId);
+  tenantIdSchema.parse(employeeId);
+  tenantIdSchema.parse(documentId);
+  const value = employeeDocumentReplacementActivationSchema.parse(input);
+  const rows = await db.$queryRaw<
+    {
+      outcome: 'activated' | 'forbidden' | 'not_found' | 'invalid_state';
+      snapshot: unknown;
+    }[]
+  >`SELECT * FROM public.activate_tenant_employee_document_replacement(
+    ${actor.identityId}::uuid,${actor.mfaVerified},${tenantId}::uuid,
+    ${employeeId}::uuid,${documentId}::uuid,${value.reason}::varchar,
+    ${randomUUID()}::uuid,${randomUUID()}::uuid
+  )`;
+  const row = rows[0];
+  if (!row || row.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (row.outcome === 'not_found') throw new DomainError('NOT_FOUND');
+  if (row.outcome === 'invalid_state') throw new DomainError('INVALID_STATE');
+  return employeeDocumentReplacementActivationResultSchema.parse(row.snapshot);
 }
 export async function readTenantEmployeeDocuments(
   db: PrismaClient,

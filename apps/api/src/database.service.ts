@@ -60,6 +60,7 @@ import {
   readTenantEmployeeImportPreview,
   confirmTenantEmployeeImport,
   registerTenantEmployeeDocument,
+  activateTenantEmployeeDocumentReplacement,
   readTenantEmployeeDocuments,
   authorizeTenantEmployeeDocumentUpload,
   transitionTenantEmployeeDocumentScan,
@@ -105,6 +106,7 @@ import {
   type EmployeeImportUpload,
   type EmployeeImportConfirmation,
   type EmployeeDocumentRegistration,
+  type EmployeeDocumentReplacementActivation,
   type EmployeeProfileChangeRequestInput,
   type EmployeeProfileChangeDecisionInput,
   type WorkforceHeadcountQuery,
@@ -424,6 +426,22 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       tenantId,
       employeeId,
       requestKey,
+      input,
+    );
+  }
+  activateEmployeeDocumentReplacement(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    employeeId: string,
+    documentId: string,
+    input: EmployeeDocumentReplacementActivation,
+  ) {
+    return activateTenantEmployeeDocumentReplacement(
+      this.db,
+      actor,
+      tenantId,
+      employeeId,
+      documentId,
       input,
     );
   }
