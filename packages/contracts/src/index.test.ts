@@ -9,6 +9,8 @@ import {
   companyProvisioningSchema,
   entitlementSnapshotSchema,
   employeeAccountProvisioningSchema,
+  employeeAccountReactivationSchema,
+  employeeAccountReactivationResultSchema,
   membershipRoleUpdateSchema,
   membershipRevocationSchema,
   administratorInvitationSchema,
@@ -78,6 +80,32 @@ it('accepts strict workforce export creation and status projections', () => {
       report: { employeeNames: ['Private'] },
     }).success,
   ).toBe(false);
+});
+
+it('accepts only strict employee account reactivation commands and results', () => {
+  expect(
+    employeeAccountReactivationSchema.parse({
+      expectedMembershipVersion: 2,
+      reason: 'Approved access restoration after rehire',
+    }),
+  ).toEqual({
+    expectedMembershipVersion: 2,
+    reason: 'Approved access restoration after rehire',
+  });
+  expect(
+    employeeAccountReactivationSchema.safeParse({
+      expectedMembershipVersion: 2,
+      reason: 'Approved access restoration after rehire',
+      email: 'replacement@example.com',
+    }).success,
+  ).toBe(false);
+  expect(
+    employeeAccountReactivationResultSchema.parse({
+      membershipId: crypto.randomUUID(),
+      membershipVersion: 3,
+      status: 'active',
+    }).status,
+  ).toBe('active');
 });
 
 it('accepts bounded workforce report dates and strict aggregate results', () => {

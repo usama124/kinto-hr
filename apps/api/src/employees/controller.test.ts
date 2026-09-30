@@ -53,6 +53,7 @@ const methods = {
   scheduleEmployeeTermination: vi.fn(),
   archiveEmployee: vi.fn(),
   rehireEmployee: vi.fn(),
+  reactivateEmployeeAccount: vi.fn(),
 };
 const uploadDocument = vi.fn();
 const downloadDocument = vi.fn();
@@ -503,6 +504,31 @@ it('archives a terminated employee without accepting deletion controls', async (
   );
   await mutation('post', `${base}/${employeeId}/archive`)
     .send({ ...archive, deleteHistory: true })
+    .expect(400);
+});
+
+it('reactivates only the retained employee account binding through a strict command', async () => {
+  const input = {
+    expectedMembershipVersion: 2,
+    reason: 'Approved access restoration after rehire',
+  };
+  const membershipId = randomUUID();
+  methods.reactivateEmployeeAccount.mockResolvedValueOnce({
+    membershipId,
+    membershipVersion: 3,
+    status: 'active',
+  });
+  await mutation('post', `${base}/${employeeId}/account/reactivation`)
+    .send(input)
+    .expect(201, { membershipId, membershipVersion: 3, status: 'active' });
+  expect(methods.reactivateEmployeeAccount).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+    employeeId,
+    input,
+  );
+  await mutation('post', `${base}/${employeeId}/account/reactivation`)
+    .send({ ...input, identityId: randomUUID() })
     .expect(400);
 });
 

@@ -279,6 +279,7 @@ try {
     'public.schedule_tenant_employee_termination(uuid, boolean, uuid, uuid, integer, date, varchar, uuid, uuid)',
     'public.archive_tenant_employee(uuid, boolean, uuid, uuid, integer, varchar, uuid, uuid)',
     'public.rehire_tenant_employee(uuid, boolean, uuid, uuid, uuid, uuid, integer, date, uuid, uuid, uuid, uuid, varchar, varchar, uuid, uuid)',
+    'public.reactivate_tenant_employee_account(uuid, boolean, uuid, uuid, integer, varchar, uuid, uuid)',
     'public.update_tenant_employee_private_details(uuid, boolean, uuid, uuid, uuid, integer, varchar, varchar, varchar, varchar, varchar, varchar, varchar, uuid, uuid)',
     'public.revise_tenant_employee_compensation(uuid, boolean, uuid, uuid, uuid, integer, date, jsonb, varchar, uuid, uuid)',
     'public.create_tenant_employee_checklist_task(uuid, boolean, uuid, uuid, uuid, varchar, varchar, varchar, uuid, date, varchar, uuid, uuid)',

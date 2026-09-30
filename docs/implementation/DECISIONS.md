@@ -50,6 +50,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 29 September 2026 — explicit employee account reactivation after rehire
+
+Engineering added a separate owner/HR command that restores only the retained verified employee identity after employment rehire. It requires recent MFA, selected tenant, same-origin CSRF, optimistic membership version and an audit reason. PostgreSQL rechecks an active second-or-later employment period, a previous ended period, active global identity, fixed employee-only roles and the exact revoked membership/request/invitation chain before atomically restoring access and emitting audit/outbox facts. Rehire itself still grants no login, and the command cannot select an identity, email or role. See [evidence](../evidence/phase-01/employee-account-reactivation.md).
+
 ### 24 September 2026 — profile-change employee and HR workspace
 
 Engineering added one role-aware `/profile-changes` workspace over the existing proposal and decision APIs. Employees see only their approved contact/emergency projection, can submit one complete whitelisted proposal and track their own history. Owners/HR see a pending-first review queue and provide the required approval/rejection reason. Both mutations use server session CSRF and retain a UUID idempotency key in component memory until the action succeeds; browser storage is not used. Desktop/mobile journeys verify both roles and responsive layout. Notifications, retention and deployment encryption review remain future work. See [evidence](../evidence/phase-01/employee-profile-change-requests.md).
