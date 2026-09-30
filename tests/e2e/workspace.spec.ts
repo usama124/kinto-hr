@@ -1675,3 +1675,253 @@ test('employee role cannot open company workforce reports', async ({
   );
   expect(reportRequested).toBe(false);
 });
+
+test('HR registers, scans, activates, and downloads an employee document replacement', async ({
+  page,
+}) => {
+  const tenantId = '9d2ea3ef-3938-42d0-84f9-d2248f692f67';
+  const employeeId = '44c4bf77-58bb-42ea-9886-5db47c1c3de5';
+  const originalId = '82ffbc9e-febd-4a62-bdaf-fd8740ee6982';
+  const replacementId = 'eb071d7d-89e8-493a-b5b7-3edaf41d4ae3';
+  const csrf = 'b'.repeat(43);
+  const bytes = Buffer.from('%PDF-1.7\n%%EOF');
+  const employee = {
+    id: employeeId,
+    employeeNumber: 'EMP-001',
+    name: 'Sana Khan',
+    legalName: null,
+    status: 'active',
+    version: 2,
+    joiningDate: '2026-09-08',
+    employmentType: 'monthly_salaried',
+    payrollSetup: 'complete',
+    accountAccess: { status: 'active', membershipVersion: 1 },
+    finalWorkingDate: null,
+    archivedAt: null,
+    employmentHistory: [
+      {
+        id: '2415cafa-d6dc-45ae-8b50-4cd2d0035cdd',
+        periodNumber: 1,
+        joiningDate: '2026-09-08',
+        finalWorkingDate: null,
+        status: 'active',
+      },
+    ],
+    currentAssignment: null,
+    assignmentHistory: [],
+  };
+  const original = {
+    id: originalId,
+    employeeId,
+    category: 'employment',
+    visibility: 'employee_visible',
+    fileName: 'contract-2025.pdf',
+    contentType: 'application/pdf',
+    sizeBytes: bytes.length,
+    status: 'clean',
+    expiresOn: null,
+    replacementDocumentId: null,
+    createdAt: '2026-09-01T09:00:00.000Z',
+    scannedAt: '2026-09-01T09:01:00.000Z',
+    removedAt: null,
+    removalReason: null,
+    removalReplacementDocumentId: null,
+  };
+  const documents: Record<string, unknown>[] = [original];
+  let uploadAttempts = 0;
+
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        csrfToken: csrf,
+        selectedTenantId: tenantId,
+        tenants: [
+          { id: tenantId, name: 'Synthetic Company', roles: ['hr_admin'] },
+        ],
+      }),
+    }),
+  );
+  await page.route(`**/api/v1/tenants/${tenantId}/employees`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ employees: [employee] }),
+    }),
+  );
+  await page.route(
+    `**/api/v1/tenants/${tenantId}/employees/${employeeId}/documents**`,
+    async (route) => {
+      const request = route.request();
+      const url = request.url();
+      if (url.endsWith(`/${replacementId}/content`)) {
+        if (request.method() === 'PUT') {
+          expect(request.headers()['x-csrf-token']).toBe(csrf);
+          expect(request.postDataBuffer()).toEqual(bytes);
+          uploadAttempts += 1;
+          if (uploadAttempts === 1)
+            return route.fulfill({ status: 503, body: '{}' });
+          Object.assign(documents[1], {
+            status: 'clean',
+            scannedAt: '2026-09-30T09:01:00.000Z',
+          });
+          return route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify(documents[1]),
+          });
+        }
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/pdf',
+          body: bytes,
+        });
+      }
+      if (url.endsWith(`/${replacementId}/replacement-activation`)) {
+        expect(request.method()).toBe('POST');
+        expect(request.headers()['x-csrf-token']).toBe(csrf);
+        expect(request.postDataJSON()).toEqual({
+          reason: 'Approved signed contract replacement',
+        });
+        Object.assign(documents[0], {
+          status: 'removed',
+          removedAt: '2026-09-30T09:02:00.000Z',
+          removalReason: 'Approved signed contract replacement',
+          removalReplacementDocumentId: replacementId,
+        });
+        return route.fulfill({
+          status: 201,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            replacement: documents[1],
+            retiredDocument: documents[0],
+          }),
+        });
+      }
+      if (request.method() === 'POST') {
+        expect(request.headers()['x-csrf-token']).toBe(csrf);
+        expect(request.headers()['idempotency-key']).toMatch(/^[0-9a-f-]{36}$/);
+        expect(request.postDataJSON()).toMatchObject({
+          category: 'employment',
+          visibility: 'employee_visible',
+          fileName: 'contract-2026.pdf',
+          contentType: 'application/pdf',
+          sizeBytes: bytes.length,
+          fileDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+          expiresOn: null,
+          replacementDocumentId: originalId,
+          reason: 'Register signed contract replacement',
+        });
+        documents.push({
+          ...original,
+          id: replacementId,
+          fileName: 'contract-2026.pdf',
+          status: 'awaiting_upload',
+          replacementDocumentId: originalId,
+          createdAt: '2026-09-30T09:00:00.000Z',
+          scannedAt: null,
+        });
+        return route.fulfill({
+          status: 201,
+          contentType: 'application/json',
+          body: JSON.stringify(documents[1]),
+        });
+      }
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ documents }),
+      });
+    },
+  );
+
+  await page.goto('/documents');
+  await expect(
+    page.getByRole('heading', { name: 'Synthetic Company' }),
+  ).toBeVisible();
+  await expect(
+    page.getByText('contract-2025.pdf', { exact: true }),
+  ).toBeVisible();
+  await page.getByLabel('File').setInputFiles({
+    name: 'contract-2026.pdf',
+    mimeType: 'application/pdf',
+    buffer: bytes,
+  });
+  await page.getByLabel('Visibility').selectOption('employee_visible');
+  await page
+    .getByLabel('Replaces document (optional)')
+    .selectOption(originalId);
+  await page
+    .getByLabel('Registration reason')
+    .fill('Register signed contract replacement');
+  await page.getByRole('button', { name: 'Register and upload' }).click();
+  await expect(page.getByRole('status')).toHaveText(
+    /Metadata was saved, but upload or malware scanning is unavailable/,
+  );
+  await page.reload();
+  await page.getByLabel('Exact registered file').setInputFiles({
+    name: 'contract-2026.pdf',
+    mimeType: 'application/pdf',
+    buffer: bytes,
+  });
+  await page.getByRole('button', { name: 'Upload and scan' }).click();
+  await expect(page.getByRole('status')).toHaveText(
+    'Document uploaded and malware scanning completed.',
+  );
+  await expect(page.getByText('Awaiting activation')).toBeVisible();
+  await page
+    .getByLabel('Activation reason')
+    .fill('Approved signed contract replacement');
+  await page.getByRole('button', { name: 'Activate replacement' }).click();
+  await expect(page.getByRole('status')).toHaveText(
+    'Replacement activated. The superseded document is retired.',
+  );
+  await expect(
+    page.getByText('Approved signed contract replacement'),
+  ).toBeVisible();
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download' }).click();
+  await download;
+  await expect(page.getByRole('status')).toHaveText(
+    'Authorized document download started.',
+  );
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+});
+
+test('employee role cannot open the company document manager', async ({
+  page,
+}) => {
+  const tenantId = '9d2ea3ef-3938-42d0-84f9-d2248f692f67';
+  let rosterRequests = 0;
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        csrfToken: 'b'.repeat(43),
+        selectedTenantId: tenantId,
+        tenants: [
+          { id: tenantId, name: 'Synthetic Company', roles: ['employee'] },
+        ],
+      }),
+    }),
+  );
+  await page.route('**/api/v1/tenants/*/employees', (route) => {
+    rosterRequests += 1;
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: '{"employees":[]}',
+    });
+  });
+  await page.goto('/documents');
+  await expect(page.getByRole('main')).toHaveText(
+    'Only company owners and HR administrators can manage documents.',
+  );
+  expect(rosterRequests).toBe(0);
+});
