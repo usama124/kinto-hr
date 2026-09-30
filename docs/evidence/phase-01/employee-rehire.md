@@ -19,4 +19,4 @@ Status: locally verified · 13 September 2026 · P01-04 increment
 
 ## Remaining P01-04 work
 
-Private employee details, permission-separated compensation history and onboarding/offboarding checklists remain incomplete. Explicit post-rehire account reactivation also remains a separate security increment. This preview is not approved for customer data.
+Private employee details, permission-separated compensation history and onboarding/offboarding checklists remain incomplete. Explicit post-rehire access restoration is now delivered as a [separate security increment](employee-account-reactivation.md); employment rehire itself still never grants login access. This preview is not approved for customer data.

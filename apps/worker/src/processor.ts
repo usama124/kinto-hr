@@ -44,6 +44,7 @@ const handleCommittedEvent: Handler = async (tx, event) => {
       'employee.terminated.v1',
       'employee.archived.v1',
       'employee.rehired.v1',
+      'employee.account_reactivated.v1',
       'employee.private_details_changed.v1',
       'employee.compensation_changed.v1',
       'employee.checklist.created.v1',

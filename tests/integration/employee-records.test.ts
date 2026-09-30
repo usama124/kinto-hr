@@ -272,6 +272,7 @@ describe('tenant employee records and effective assignments', () => {
       joiningDate: date(-1),
       employmentType: 'monthly_salaried',
       payrollSetup: 'incomplete',
+      accountAccess: { status: 'not_provisioned', membershipVersion: null },
       currentAssignment: {
         branch: { id: refs.branchId },
         department: { id: refs.departmentId },

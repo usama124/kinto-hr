@@ -48,6 +48,7 @@ import {
   scheduleTenantEmployeeTermination,
   archiveTenantEmployee,
   rehireTenantEmployee,
+  reactivateTenantEmployeeAccount,
   readTenantEmployeePrivateDetails,
   updateTenantEmployeePrivateDetails,
   readTenantEmployeeCompensation,
@@ -75,6 +76,7 @@ import {
   type AuthenticatedIdentity,
   type CompanyProvisioning,
   type EmployeeAccountProvisioning,
+  type EmployeeAccountReactivation,
   type MembershipRoleUpdate,
   type MembershipRevocation,
   type AdministratorInvitation,
@@ -753,6 +755,20 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     input: EmployeeRehire,
   ) {
     return rehireTenantEmployee(this.db, actor, tenantId, employeeId, input);
+  }
+  reactivateEmployeeAccount(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    employeeId: string,
+    input: EmployeeAccountReactivation,
+  ) {
+    return reactivateTenantEmployeeAccount(
+      this.db,
+      actor,
+      tenantId,
+      employeeId,
+      input,
+    );
   }
   async onModuleDestroy() {
     await this.db.$disconnect();

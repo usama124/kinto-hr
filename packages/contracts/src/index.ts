@@ -727,6 +727,10 @@ export const employeeRecordViewSchema = z.strictObject({
   joiningDate: z.iso.date(),
   employmentType: z.literal('monthly_salaried'),
   payrollSetup: z.enum(['incomplete', 'complete']),
+  accountAccess: z.strictObject({
+    status: z.enum(['not_provisioned', 'active', 'revoked']),
+    membershipVersion: z.number().int().positive().nullable(),
+  }),
   finalWorkingDate: z.iso.date().nullable(),
   archivedAt: z.iso.datetime({ offset: true }).nullable(),
   employmentHistory: employmentPeriodViewSchema.array().max(250),
@@ -1238,4 +1242,16 @@ export const employeeAccountProvisioningSchema = z.strictObject({
 });
 export type EmployeeAccountProvisioning = z.infer<
   typeof employeeAccountProvisioningSchema
+>;
+export const employeeAccountReactivationSchema = z.strictObject({
+  expectedMembershipVersion: z.number().int().positive(),
+  reason: z.string().trim().min(3).max(240),
+});
+export const employeeAccountReactivationResultSchema = z.strictObject({
+  membershipId: tenantIdSchema,
+  membershipVersion: z.number().int().positive(),
+  status: z.literal('active'),
+});
+export type EmployeeAccountReactivation = z.infer<
+  typeof employeeAccountReactivationSchema
 >;

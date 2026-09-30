@@ -5,6 +5,7 @@ import {
   activateTenantEmployee,
   archiveTenantEmployee,
   rehireTenantEmployee,
+  reactivateTenantEmployeeAccount,
   createDatabase,
   createTenantBranch,
   createTenantEmployee,
@@ -119,6 +120,52 @@ async function createActive(
     reason: 'Activate termination fixture employee',
   });
   return { ...draft, version: 2 };
+}
+
+async function linkEmployeeAccount(employeeId: string) {
+  const membership = await admin.membership.create({
+    data: {
+      tenantId,
+      identityId: employeeIdentityId,
+      roles: ['employee'],
+    },
+  });
+  const request = await admin.employeeAccountRequest.create({
+    data: {
+      id: randomUUID(),
+      requestKey: randomUUID(),
+      tenantId,
+      employeeId,
+      requestedByIdentityId: ownerId,
+      email: 'returning.employee@example.com',
+      status: 'active',
+    },
+  });
+  const invitation = await admin.employeeInvitation.create({
+    data: {
+      id: randomUUID(),
+      requestId: request.id,
+      tenantId,
+      employeeId,
+      identityId: employeeIdentityId,
+      status: 'accepted',
+      createdAt: new Date(Date.now() - 1_000),
+      expiresAt: new Date(Date.now() + 86_400_000),
+      deliveredAt: new Date(),
+      acceptedAt: new Date(),
+    },
+  });
+  await admin.employeeIdentityLink.create({
+    data: {
+      id: randomUUID(),
+      tenantId,
+      employeeId,
+      identityId: employeeIdentityId,
+      membershipId: membership.id,
+      invitationId: invitation.id,
+    },
+  });
+  return { membership, request, invitation };
 }
 
 async function makeTerminated(employeeId: string) {
@@ -716,6 +763,160 @@ describe('scheduled employee termination and access revocation', () => {
         },
       }),
     ).toBe(1);
+  });
+
+  it('restores only the retained verified account after an explicit rehire approval', async () => {
+    const refs = await setupOrganization();
+    const employee = await createActive('EMP-ACCESS-RETURN', refs, date(-20));
+    const linked = await linkEmployeeAccount(employee.id);
+    await expect(
+      reactivateTenantEmployeeAccount(
+        runtime,
+        actor(ownerId),
+        tenantId,
+        employee.id,
+        {
+          expectedMembershipVersion: 1,
+          reason: 'Premature access restoration attempt',
+        },
+      ),
+    ).rejects.toThrow('INVALID_STATE');
+    await makeTerminated(employee.id);
+    await expect(
+      admin.membership.findUniqueOrThrow({
+        where: { id: linked.membership.id },
+      }),
+    ).resolves.toMatchObject({ status: 'revoked', version: 2 });
+    await archiveTenantEmployee(
+      runtime,
+      actor(ownerId),
+      tenantId,
+      employee.id,
+      { expectedVersion: 4, reason: 'Archive before approved return' },
+    );
+    await rehireTenantEmployee(runtime, actor(hrId), tenantId, employee.id, {
+      expectedVersion: 5,
+      joiningDate: date(1),
+      ...refs,
+      managerEmployeeId: null,
+      topLevelReason: 'Approved returning top-level role',
+      reason: 'Approved employee rehire',
+    });
+    await expect(
+      readTenantEmployee(runtime, actor(ownerId), tenantId, employee.id),
+    ).resolves.toMatchObject({
+      status: 'active',
+      accountAccess: { status: 'revoked', membershipVersion: 2 },
+    });
+    const input = {
+      expectedMembershipVersion: 2,
+      reason: 'Approved access restoration after rehire',
+    };
+    await expect(
+      reactivateTenantEmployeeAccount(
+        runtime,
+        actor(ownerId, false),
+        tenantId,
+        employee.id,
+        input,
+      ),
+    ).rejects.toThrow('FORBIDDEN');
+    await expect(
+      reactivateTenantEmployeeAccount(
+        runtime,
+        actor(ownerId),
+        otherTenantId,
+        employee.id,
+        input,
+      ),
+    ).rejects.toThrow('FORBIDDEN');
+    await admin.identity.update({
+      where: { id: employeeIdentityId },
+      data: { status: 'disabled' },
+    });
+    await expect(
+      reactivateTenantEmployeeAccount(
+        runtime,
+        actor(ownerId),
+        tenantId,
+        employee.id,
+        input,
+      ),
+    ).rejects.toThrow('INVALID_STATE');
+    await admin.identity.update({
+      where: { id: employeeIdentityId },
+      data: { status: 'active' },
+    });
+    await expect(
+      reactivateTenantEmployeeAccount(
+        runtime,
+        actor(hrId),
+        tenantId,
+        employee.id,
+        input,
+      ),
+    ).resolves.toEqual({
+      membershipId: linked.membership.id,
+      membershipVersion: 3,
+      status: 'active',
+    });
+    await expect(
+      Promise.all([
+        admin.membership.findUniqueOrThrow({
+          where: { id: linked.membership.id },
+        }),
+        admin.employeeInvitation.findUniqueOrThrow({
+          where: { id: linked.invitation.id },
+        }),
+        admin.employeeAccountRequest.findUniqueOrThrow({
+          where: { id: linked.request.id },
+        }),
+      ]),
+    ).resolves.toEqual([
+      expect.objectContaining({ status: 'active', version: 3 }),
+      expect.objectContaining({ status: 'accepted' }),
+      expect.objectContaining({ status: 'active' }),
+    ]);
+    await expect(
+      readTenantEmployee(runtime, actor(ownerId), tenantId, employee.id),
+    ).resolves.toMatchObject({
+      accountAccess: { status: 'active', membershipVersion: 3 },
+    });
+    expect(
+      await admin.auditEvent.count({
+        where: {
+          tenantId,
+          action: 'employee.account_reactivated',
+          resourceId: linked.membership.id,
+          reason: input.reason,
+        },
+      }),
+    ).toBe(1);
+    expect(
+      await admin.outboxEvent.count({
+        where: {
+          tenantId,
+          type: 'employee.account_reactivated.v1',
+          aggregateId: employee.id,
+          aggregateVersion: 3,
+        },
+      }),
+    ).toBe(1);
+    await expect(
+      reactivateTenantEmployeeAccount(
+        runtime,
+        actor(ownerId),
+        tenantId,
+        employee.id,
+        input,
+      ),
+    ).rejects.toThrow('STALE_VERSION');
+    await expect(
+      runtime.membership.update({
+        where: { id: linked.membership.id },
+        data: { status: 'revoked' },
+      }),
+    ).rejects.toThrow();
   });
 
   it('rejects stale, premature, unauthorized, repeated and over-capacity rehires', async () => {

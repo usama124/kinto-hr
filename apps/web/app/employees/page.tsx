@@ -575,6 +575,45 @@ export default function Employees() {
     }
   }
 
+  async function reactivateEmployeeAccount(
+    event: FormEvent<HTMLFormElement>,
+    employeeId: string,
+    expectedMembershipVersion: number,
+  ) {
+    event.preventDefault();
+    setBusy(true);
+    setMessage('');
+    const form = new FormData(event.currentTarget);
+    try {
+      const response = await fetch(
+        `/api/v1/tenants/${tenantId}/employees/${employeeId}/account/reactivation`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': csrf,
+          },
+          body: JSON.stringify({
+            expectedMembershipVersion,
+            reason: form.get('accountReactivationReason'),
+          }),
+        },
+      );
+      if (response.status === 403) return setState('denied');
+      if (!response.ok) throw new Error('Request failed');
+      await load(tenantId);
+      setMessage(
+        'Employee login access restored to the existing verified account.',
+      );
+    } catch {
+      setMessage(
+        'Access restoration was blocked. Reload the roster and verify the employee and identity are active.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function rehireEmployee(
     event: FormEvent<HTMLFormElement>,
     employeeId: string,
@@ -692,6 +731,10 @@ export default function Employees() {
                       </small>
                     </div>
                   </div>
+                  <p className="employee-schedule">
+                    Login access:{' '}
+                    {employee.accountAccess.status.replace('_', ' ')}
+                  </p>
                   {!checklists[employee.id] ? (
                     <button
                       className="secondary-button"
@@ -1154,6 +1197,34 @@ export default function Employees() {
                       </button>
                     </form>
                   )}
+                  {employee.status === 'active' &&
+                    employee.employmentHistory.length > 1 &&
+                    employee.accountAccess.status === 'revoked' &&
+                    employee.accountAccess.membershipVersion !== null && (
+                      <form
+                        className="employee-activation"
+                        onSubmit={(event) =>
+                          reactivateEmployeeAccount(
+                            event,
+                            employee.id,
+                            employee.accountAccess.membershipVersion!,
+                          )
+                        }
+                      >
+                        <label>
+                          Access restoration reason for {employee.name}
+                          <input
+                            name="accountReactivationReason"
+                            required
+                            minLength={3}
+                            maxLength={240}
+                          />
+                        </label>
+                        <button className="secondary-button" disabled={busy}>
+                          {busy ? 'Restoring…' : 'Restore login access'}
+                        </button>
+                      </form>
+                    )}
                   {employee.status === 'archived' && (
                     <>
                       {employee.archivedAt && (

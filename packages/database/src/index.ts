@@ -10,7 +10,10 @@ import {
   companyProvisioningSchema,
   type CompanyProvisioning,
   employeeAccountProvisioningSchema,
+  employeeAccountReactivationSchema,
+  employeeAccountReactivationResultSchema,
   type EmployeeAccountProvisioning,
+  type EmployeeAccountReactivation,
   membershipRoleUpdateSchema,
   type MembershipRoleUpdate,
   membershipRevocationSchema,
@@ -2128,6 +2131,40 @@ export async function rehireTenantEmployee(
   `;
   return { ...assertPeopleMutation(rows[0]), status: 'active' as const };
 }
+export async function reactivateTenantEmployeeAccount(
+  db: PrismaClient,
+  actor: PeopleActor,
+  tenantId: string,
+  employeeId: string,
+  input: EmployeeAccountReactivation,
+) {
+  validatePeopleActor(actor, tenantId);
+  tenantIdSchema.parse(employeeId);
+  const value = employeeAccountReactivationSchema.parse(input);
+  const rows = await db.$queryRaw<
+    {
+      outcome:
+        'reactivated' | 'forbidden' | 'not_found' | 'stale' | 'invalid_state';
+      membership_id: string | null;
+      membership_version: number | null;
+    }[]
+  >`SELECT * FROM public.reactivate_tenant_employee_account(
+    ${actor.identityId}::uuid,${actor.mfaVerified},${tenantId}::uuid,
+    ${employeeId}::uuid,${value.expectedMembershipVersion}::integer,
+    ${value.reason}::varchar,${randomUUID()}::uuid,${randomUUID()}::uuid
+  )`;
+  const row = rows[0];
+  if (!row || row.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (row.outcome === 'not_found') throw new DomainError('NOT_FOUND');
+  if (row.outcome === 'stale') throw new DomainError('STALE_VERSION');
+  if (row.outcome === 'invalid_state') throw new DomainError('INVALID_STATE');
+  return employeeAccountReactivationResultSchema.parse({
+    membershipId: row.membership_id,
+    membershipVersion: row.membership_version,
+    status: 'active',
+  });
+}
+
 export async function activateEmployee(
   db: PrismaClient,
   tenantId: string,

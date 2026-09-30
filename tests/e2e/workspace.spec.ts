@@ -1202,6 +1202,29 @@ test('HR creates, activates, separates, archives and rehires an employee', async
     },
   );
   await page.route(
+    `**/api/v1/tenants/${tenantId}/employees/${employeeId}/account/reactivation`,
+    async (route) => {
+      expect(route.request().headers()['x-csrf-token']).toBe(csrf);
+      expect(route.request().postDataJSON()).toEqual({
+        expectedMembershipVersion: 2,
+        reason: 'Approved access restoration after rehire',
+      });
+      Object.assign(employees[0].accountAccess as Record<string, unknown>, {
+        status: 'active',
+        membershipVersion: 3,
+      });
+      await route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          membershipId: '8f8f15eb-374d-4569-a2ca-4ac9d7ce23a1',
+          membershipVersion: 3,
+          status: 'active',
+        }),
+      });
+    },
+  );
+  await page.route(
     `**/api/v1/tenants/${tenantId}/employees/${employeeId}/rehire`,
     async (route) => {
       expect(route.request().headers()['x-csrf-token']).toBe(csrf);
@@ -1264,6 +1287,7 @@ test('HR creates, activates, separates, archives and rehires an employee', async
         joiningDate,
         employmentType: 'monthly_salaried',
         payrollSetup: 'incomplete',
+        accountAccess: { status: 'active', membershipVersion: 1 },
         finalWorkingDate: null,
         archivedAt: null,
         employmentHistory: [
@@ -1406,7 +1430,11 @@ test('HR creates, activates, separates, archives and rehires an employee', async
       'Final working date: 2026-09-30. Access ends after this date.',
     ),
   ).toBeVisible();
-  Object.assign(employees[0], { status: 'terminated', version: 4 });
+  Object.assign(employees[0], {
+    status: 'terminated',
+    version: 4,
+    accountAccess: { status: 'revoked', membershipVersion: 2 },
+  });
   const history = employees[0].employmentHistory;
   if (!Array.isArray(history)) throw new Error('Missing period history');
   history[0] = {
@@ -1434,6 +1462,19 @@ test('HR creates, activates, separates, archives and rehires an employee', async
       'Employee rehired with a new employment period and allocated seat. Login access remains revoked.',
     ),
   ).toBeVisible();
+  await page
+    .getByLabel('Access restoration reason for Sana Khan')
+    .fill('Approved access restoration after rehire');
+  await page.getByRole('button', { name: 'Restore login access' }).click();
+  await expect(
+    page.getByText(
+      'Employee login access restored to the existing verified account.',
+    ),
+  ).toBeVisible();
+  await expect(page.getByText('Login access: active')).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Restore login access' }),
+  ).toHaveCount(0);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,

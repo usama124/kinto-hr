@@ -311,6 +311,7 @@ describe('durable outbox worker with real PostgreSQL and Redis', () => {
 
   it('observes checklist and import facts without performing workflow mutations', async () => {
     for (const type of [
+      'employee.account_reactivated.v1',
       'employee.checklist.created.v1',
       'employee.checklist.completed.v1',
       'employee.import_previewed.v1',

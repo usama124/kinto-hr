@@ -18,6 +18,7 @@ import {
   employeeTerminationSchema,
   employeeArchiveSchema,
   employeeRehireSchema,
+  employeeAccountReactivationSchema,
   employeeProfileUpdateSchema,
   employeePrivateDetailsUpdateSchema,
   employeeCompensationRevisionSchema,
@@ -408,6 +409,25 @@ export class EmployeesController {
     if (!employee.success || !input.success) throw new BadRequestException();
     const context = await this.context(req, tenantId, true);
     return this.database.archiveEmployee(
+      context.actor,
+      context.tenantId,
+      employee.data,
+      input.data,
+    );
+  }
+
+  @Post(':employeeId/account/reactivation')
+  async reactivateAccount(
+    @Req() req: AuthRequest,
+    @Param('tenantId') tenantId: unknown,
+    @Param('employeeId') employeeId: unknown,
+    @Body() body: unknown,
+  ) {
+    const employee = tenantIdSchema.safeParse(employeeId);
+    const input = employeeAccountReactivationSchema.safeParse(body);
+    if (!employee.success || !input.success) throw new BadRequestException();
+    const context = await this.context(req, tenantId, true);
+    return this.database.reactivateEmployeeAccount(
       context.actor,
       context.tenantId,
       employee.data,
