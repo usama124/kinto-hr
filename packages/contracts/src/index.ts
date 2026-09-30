@@ -439,6 +439,12 @@ export const employeeDocumentRegistrationSchema = z.strictObject({
 export type EmployeeDocumentRegistration = z.infer<
   typeof employeeDocumentRegistrationSchema
 >;
+export const employeeDocumentReplacementActivationSchema = z.strictObject({
+  reason: employeeReasonSchema,
+});
+export type EmployeeDocumentReplacementActivation = z.infer<
+  typeof employeeDocumentReplacementActivationSchema
+>;
 export const employeeDocumentSchema = z.strictObject({
   id: tenantIdSchema,
   employeeId: tenantIdSchema,
@@ -462,11 +468,20 @@ export const employeeDocumentSchema = z.strictObject({
   replacementDocumentId: tenantIdSchema.nullable(),
   createdAt: z.iso.datetime({ offset: true }),
   scannedAt: z.iso.datetime({ offset: true }).nullable(),
+  removedAt: z.iso.datetime({ offset: true }).nullable(),
+  removalReason: z.string().min(3).max(240).nullable(),
+  removalReplacementDocumentId: tenantIdSchema.nullable(),
 });
 export const employeeDocumentListSchema = z.strictObject({
   documents: employeeDocumentSchema.array().max(500),
 });
 export type EmployeeDocument = z.infer<typeof employeeDocumentSchema>;
+export const employeeDocumentReplacementActivationResultSchema = z.strictObject(
+  {
+    replacement: employeeDocumentSchema,
+    retiredDocument: employeeDocumentSchema,
+  },
+);
 export const employeeDocumentUploadTargetSchema = z.strictObject({
   storageObjectKey: z.string().regex(/^[a-f0-9]{2}\/[a-f0-9-]{36}$/),
   contentType: employeeDocumentContentTypeSchema,

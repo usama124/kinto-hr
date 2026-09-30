@@ -19,6 +19,7 @@ import {
   completeTenantEmployeeChecklistTask,
   updateTenantEmployeeProfile,
   registerTenantEmployeeDocument,
+  activateTenantEmployeeDocumentReplacement,
   readTenantEmployeeDocuments,
   authorizeTenantEmployeeDocumentUpload,
   transitionTenantEmployeeDocumentScan,
@@ -730,6 +731,244 @@ describe('tenant employee records and effective assignments', () => {
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 
+  it('atomically activates one clean same-category replacement and logically retires its target', async () => {
+    const refs = await setupOrganization(tenantId, identities.owner, 'REPLACE');
+    const employee = await createTenantEmployee(
+      runtime,
+      actor(identities.hr),
+      tenantId,
+      {
+        employeeNumber: 'REPLACE-001',
+        name: 'Replacement Fixture',
+        joiningDate: date(-1),
+        employmentType: 'monthly_salaried',
+        ...refs,
+        managerEmployeeId: null,
+        topLevelReason: 'Approved replacement fixture',
+        reason: 'Create replacement fixture',
+      },
+    );
+    const register = (
+      category: 'employment' | 'bank',
+      replacementDocumentId: string | null,
+      digest: string,
+    ) =>
+      registerTenantEmployeeDocument(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        employee.id,
+        randomUUID(),
+        {
+          category,
+          visibility: 'hr_only',
+          fileName: `${digest[0]}.pdf`,
+          contentType: 'application/pdf',
+          sizeBytes: 1024,
+          fileDigest: digest.repeat(64),
+          expiresOn: null,
+          replacementDocumentId,
+          reason: 'Register replacement lifecycle fixture',
+        },
+      );
+    const clean = async (documentId: string) => {
+      await transitionTenantEmployeeDocumentScan(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        employee.id,
+        documentId,
+        'awaiting_upload',
+        'quarantined',
+      );
+      return transitionTenantEmployeeDocumentScan(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        employee.id,
+        documentId,
+        'quarantined',
+        'clean',
+      );
+    };
+
+    const original = await register('employment', null, 'a');
+    const first = await register('employment', original.id, 'b');
+    const second = await register('employment', original.id, 'c');
+    const wrongCategory = await register('bank', original.id, 'd');
+    const noTarget = await register('employment', null, 'e');
+    await clean(original.id);
+    await expect(
+      activateTenantEmployeeDocumentReplacement(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        employee.id,
+        first.id,
+        { reason: 'Replacement is not clean yet' },
+      ),
+    ).rejects.toMatchObject({ code: 'INVALID_STATE' });
+    await Promise.all([
+      clean(first.id),
+      clean(second.id),
+      clean(wrongCategory.id),
+      clean(noTarget.id),
+    ]);
+    for (const candidate of [first, second, wrongCategory])
+      await expect(
+        authorizeTenantEmployeeDocumentDownload(
+          runtime,
+          actor(identities.hr),
+          tenantId,
+          employee.id,
+          candidate.id,
+        ),
+      ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(
+      activateTenantEmployeeDocumentReplacement(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        employee.id,
+        wrongCategory.id,
+        { reason: 'Wrong category cannot replace employment record' },
+      ),
+    ).rejects.toMatchObject({ code: 'INVALID_STATE' });
+    await expect(
+      activateTenantEmployeeDocumentReplacement(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        employee.id,
+        noTarget.id,
+        { reason: 'No replacement target exists' },
+      ),
+    ).rejects.toMatchObject({ code: 'INVALID_STATE' });
+
+    const attempts = await Promise.allSettled(
+      [first, second].map((replacement) =>
+        activateTenantEmployeeDocumentReplacement(
+          runtime,
+          actor(identities.hr),
+          tenantId,
+          employee.id,
+          replacement.id,
+          { reason: 'Approve verified employee document replacement' },
+        ),
+      ),
+    );
+    expect(
+      attempts.filter((attempt) => attempt.status === 'fulfilled'),
+    ).toHaveLength(1);
+    expect(
+      attempts.filter((attempt) => attempt.status === 'rejected'),
+    ).toHaveLength(1);
+    const activated = attempts.find(
+      (attempt) => attempt.status === 'fulfilled',
+    );
+    if (!activated || activated.status !== 'fulfilled')
+      throw new Error('Expected one activated document replacement');
+    expect(activated.value.replacement.status).toBe('clean');
+    expect(activated.value.retiredDocument).toMatchObject({
+      id: original.id,
+      status: 'removed',
+      removalReason: 'Approve verified employee document replacement',
+      removalReplacementDocumentId: activated.value.replacement.id,
+    });
+    expect(activated.value.retiredDocument.removedAt).not.toBeNull();
+
+    expect(
+      await activateTenantEmployeeDocumentReplacement(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        employee.id,
+        activated.value.replacement.id,
+        { reason: 'Idempotent retry does not rewrite retirement evidence' },
+      ),
+    ).toEqual(activated.value);
+    await expect(
+      authorizeTenantEmployeeDocumentDownload(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        employee.id,
+        original.id,
+      ),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(
+      authorizeTenantEmployeeDocumentDownload(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        employee.id,
+        activated.value.replacement.id,
+      ),
+    ).resolves.toMatchObject({ fileDigest: expect.any(String) });
+
+    const losingReplacement = [first, second].find(
+      (candidate) => candidate.id !== activated.value.replacement.id,
+    );
+    if (!losingReplacement)
+      throw new Error('Expected one losing document replacement');
+    await expect(
+      authorizeTenantEmployeeDocumentDownload(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        employee.id,
+        losingReplacement.id,
+      ),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+
+    for (const denied of [
+      actor(identities.hr, false),
+      actor(identities.employee),
+      actor(identities.otherOwner),
+    ])
+      await expect(
+        activateTenantEmployeeDocumentReplacement(
+          runtime,
+          denied,
+          tenantId,
+          employee.id,
+          activated.value.replacement.id,
+          { reason: 'Unauthorized retry must fail closed' },
+        ),
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(
+      await admin.auditEvent.count({
+        where: {
+          tenantId,
+          action: 'employee.document_replacement_activated',
+          resourceId: activated.value.replacement.id,
+        },
+      }),
+    ).toBe(1);
+    expect(
+      await admin.outboxEvent.count({
+        where: {
+          tenantId,
+          type: 'employee.document_replacement_activated.v1',
+          aggregateId: activated.value.replacement.id,
+        },
+      }),
+    ).toBe(1);
+    const stored = await admin.employeeDocument.findUniqueOrThrow({
+      where: { id: original.id },
+    });
+    expect(stored.removedByIdentityId).toBe(identities.hr);
+    expect(stored.removalReplacementDocumentId).toBe(
+      activated.value.replacement.id,
+    );
+    await expect(
+      admin.employeeDocument.update({
+        where: { id: wrongCategory.id },
+        data: { status: 'removed' },
+      }),
+    ).rejects.toThrow();
+  });
+
   it('shows only own clean employee-visible documents through an active identity link', async () => {
     const refs = await setupOrganization(tenantId, identities.owner, 'SELF');
     const employee = await createTenantEmployee(
@@ -1240,6 +1479,7 @@ describe('tenant employee records and effective assignments', () => {
       override: {
         visibility?: 'hr_only' | 'employee_visible';
         expiresOn?: string | null;
+        replacementDocumentId?: string | null;
       } = {},
     ) =>
       registerTenantEmployeeDocument(
@@ -1272,6 +1512,10 @@ describe('tenant employee records and effective assignments', () => {
     };
     const visible = await register(employee.id);
     await clean(employee.id, visible.id);
+    const replacement = await register(employee.id, {
+      replacementDocumentId: visible.id,
+    });
+    await clean(employee.id, replacement.id);
     const hrOnly = await register(employee.id, { visibility: 'hr_only' });
     await clean(employee.id, hrOnly.id);
     const pending = await register(employee.id);
@@ -1300,7 +1544,42 @@ describe('tenant employee records and effective assignments', () => {
     expect(JSON.stringify(selfDocuments)).not.toContain(
       target.storageObjectKey,
     );
-    for (const hidden of [hrOnly, pending, expired, another])
+    await expect(
+      authorizeTenantSelfEmployeeDocumentDownload(
+        runtime,
+        actor(identities.employee),
+        tenantId,
+        replacement.id,
+      ),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await activateTenantEmployeeDocumentReplacement(
+      runtime,
+      actor(identities.hr),
+      tenantId,
+      employee.id,
+      replacement.id,
+      { reason: 'Publish verified employee-visible replacement' },
+    );
+    expect(
+      await readTenantSelfEmployeeDocuments(
+        runtime,
+        actor(identities.employee),
+        tenantId,
+      ),
+    ).toEqual({
+      documents: [
+        expect.objectContaining({ id: replacement.id, status: 'clean' }),
+      ],
+    });
+    await expect(
+      authorizeTenantSelfEmployeeDocumentDownload(
+        runtime,
+        actor(identities.employee),
+        tenantId,
+        replacement.id,
+      ),
+    ).resolves.toMatchObject({ fileDigest: input.fileDigest });
+    for (const hidden of [visible, hrOnly, pending, expired, another])
       await expect(
         authorizeTenantSelfEmployeeDocumentDownload(
           runtime,
@@ -1357,7 +1636,7 @@ describe('tenant employee records and effective assignments', () => {
           action: 'employee.document_self_download_authorized',
         },
       }),
-    ).toBe(1);
+    ).toBe(2);
   });
 
   it('retains effective compensation revisions behind explicit payroll roles', async () => {

@@ -81,6 +81,7 @@ model Identity {
   createdEmployeeImportBatches  EmployeeImportBatch[]              @relation("EmployeeImportCreatedBy")
   committedEmployeeImportBatches EmployeeImportBatch[]              @relation("EmployeeImportCommittedBy")
   createdEmployeeDocuments       EmployeeDocument[]                  @relation("EmployeeDocumentCreatedBy")
+  removedEmployeeDocuments       EmployeeDocument[]                  @relation("EmployeeDocumentRemovedBy")
   submittedProfileChangeRequests EmployeeProfileChangeRequest[]      @relation("ProfileChangeRequestedBy")
   decidedProfileChangeRequests   EmployeeProfileChangeRequest[]      @relation("ProfileChangeDecidedBy")
   createdWorkforceReportExports  WorkforceReportExport[]              @relation("WorkforceReportExportCreatedBy")
@@ -671,11 +672,18 @@ model EmployeeDocument {
   createdByIdentityId   String             @map("created_by_identity_id") @db.Uuid
   createdAt             DateTime           @default(now()) @map("created_at") @db.Timestamptz()
   scannedAt             DateTime?          @map("scanned_at") @db.Timestamptz()
+  removedAt             DateTime?          @map("removed_at") @db.Timestamptz()
+  removalReason         String?            @map("removal_reason") @db.VarChar(240)
+  removedByIdentityId   String?            @map("removed_by_identity_id") @db.Uuid
+  removalReplacementDocumentId String?     @map("removal_replacement_document_id") @db.Uuid
   tenant                Tenant             @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   employee              Employee           @relation("EmployeeDocuments", fields: [tenantId, employeeId], references: [tenantId, id], onDelete: Restrict)
   createdBy             Identity           @relation("EmployeeDocumentCreatedBy", fields: [createdByIdentityId], references: [id], onDelete: Restrict)
+  removedBy             Identity?          @relation("EmployeeDocumentRemovedBy", fields: [removedByIdentityId], references: [id], onDelete: Restrict)
   replacementDocument   EmployeeDocument?  @relation("DocumentReplacement", fields: [tenantId, replacementDocumentId], references: [tenantId, id], onDelete: Restrict)
   replacements          EmployeeDocument[] @relation("DocumentReplacement")
+  removalReplacementDocument EmployeeDocument?  @relation("DocumentRemovalReplacement", fields: [tenantId, removalReplacementDocumentId], references: [tenantId, id], onDelete: Restrict)
+  removedDocuments      EmployeeDocument[] @relation("DocumentRemovalReplacement")
 
   @@unique([tenantId, id])
   @@unique([tenantId, requestKey])

@@ -55,6 +55,7 @@ const handleCommittedEvent: Handler = async (tx, event) => {
       'employee.document_quarantined.v1',
       'employee.document_clean.v1',
       'employee.document_rejected.v1',
+      'employee.document_replacement_activated.v1',
       'employee.profile_change_requested.v1',
       'employee.profile_change_approved.v1',
       'employee.profile_change_rejected.v1',

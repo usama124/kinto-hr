@@ -39,6 +39,8 @@ import {
   confirmTenantEmployeeImport,
   createTenantWorkforceReportExport,
   registerTenantEmployeeDocument,
+  transitionTenantEmployeeDocumentScan,
+  activateTenantEmployeeDocumentReplacement,
   type PrismaClient,
 } from '@kinto/database';
 import { processEvent } from '../apps/worker/src/processor';
@@ -453,7 +455,7 @@ async function main() {
           reason: 'Recovery fixture employee import confirmation',
         },
       );
-      await registerTenantEmployeeDocument(
+      const originalDocument = await registerTenantEmployeeDocument(
         sourceApp,
         principal,
         tenantId,
@@ -470,6 +472,52 @@ async function main() {
           replacementDocumentId: null,
           reason: 'Recovery fixture document registration',
         },
+      );
+      const replacementDocument = await registerTenantEmployeeDocument(
+        sourceApp,
+        principal,
+        tenantId,
+        imported.employees[0].employeeId,
+        randomUUID(),
+        {
+          category: 'employment',
+          visibility: 'hr_only',
+          fileName: 'synthetic-recovery-contract-replacement.pdf',
+          contentType: 'application/pdf',
+          sizeBytes: 1024,
+          fileDigest: 'b'.repeat(64),
+          expiresOn: null,
+          replacementDocumentId: originalDocument.id,
+          reason: 'Recovery fixture replacement registration',
+        },
+      );
+      for (const document of [originalDocument, replacementDocument]) {
+        await transitionTenantEmployeeDocumentScan(
+          sourceApp,
+          principal,
+          tenantId,
+          imported.employees[0].employeeId,
+          document.id,
+          'awaiting_upload',
+          'quarantined',
+        );
+        await transitionTenantEmployeeDocumentScan(
+          sourceApp,
+          principal,
+          tenantId,
+          imported.employees[0].employeeId,
+          document.id,
+          'quarantined',
+          'clean',
+        );
+      }
+      await activateTenantEmployeeDocumentReplacement(
+        sourceApp,
+        principal,
+        tenantId,
+        imported.employees[0].employeeId,
+        replacementDocument.id,
+        { reason: 'Recovery fixture replacement activation' },
       );
       const policy = await createOrganizationPolicyDraft(
         sourceApp,
@@ -941,8 +989,18 @@ async function main() {
       );
       assert.equal(
         await restored.employeeDocument.count({ where: { tenantId } }),
-        1,
+        2,
       );
+      const retiredDocument = await restored.employeeDocument.findFirstOrThrow({
+        where: { tenantId, status: 'removed' },
+      });
+      assert.equal(
+        retiredDocument.removalReason,
+        'Recovery fixture replacement activation',
+      );
+      assert.ok(retiredDocument.removedAt);
+      assert.ok(retiredDocument.removedByIdentityId);
+      assert.ok(retiredDocument.removalReplacementDocumentId);
       assert.equal(
         await restored.workforceReportExport.count({ where: { tenantId } }),
         tenantIndex === 0 ? 1 : 0,
@@ -1008,7 +1066,7 @@ async function main() {
       workforceReportExportPreserved: true,
       employeeChecklistsPreserved: true,
       committedEmployeeImportsPreserved: true,
-      documentQuarantineMetadataPreserved: true,
+      documentReplacementMetadataPreserved: true,
       employeeCompensationHistoryPreserved: true,
       completeEmployeeActivationPreserved: true,
       scheduledTerminationPreserved: true,
