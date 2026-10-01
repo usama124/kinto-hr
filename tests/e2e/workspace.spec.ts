@@ -2703,3 +2703,114 @@ test('company onboarding denies nonoperators and handles conflicts and malformed
     'Sign in to create a company account.',
   );
 });
+
+test('platform company directory paginates, filters and removes results after access loss', async ({
+  page,
+}) => {
+  const firstId = '00000000-0000-4000-8000-000000000001';
+  const secondId = '00000000-0000-4000-8000-000000000002';
+  let denied = false;
+  const first = {
+    id: firstId,
+    name: 'Synthetic Alpha',
+    status: 'active',
+    createdAt: '2026-10-01T09:00:00.000Z',
+    ownerSetupStatus: 'pending_activation',
+    baseSubscription: {
+      plan: 'growth',
+      planVersion: 1,
+      billingMode: 'complimentary',
+      employeeLimit: 50,
+    },
+  };
+  const second = {
+    ...first,
+    id: secondId,
+    name: 'Synthetic Beta',
+    status: 'suspended',
+    ownerSetupStatus: null,
+    baseSubscription: null,
+  };
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({ json: { selectedTenantId: null, tenants: [] } }),
+  );
+  await page.route('**/api/v1/platform/tenants?**', (route) => {
+    if (denied) return route.fulfill({ status: 403, json: {} });
+    const query = new URL(route.request().url()).searchParams;
+    expect(query.get('limit')).toBe('25');
+    if (query.get('search') === 'No match')
+      return route.fulfill({ json: { companies: [], nextCursor: null } });
+    return route.fulfill({
+      json: {
+        companies: [query.has('after') ? second : first],
+        nextCursor: query.has('after') ? null : firstId,
+      },
+    });
+  });
+  await page.goto('/platform');
+  await expect(
+    page.getByText('Synthetic Alpha', { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/Base plan: growth v1.*50 employees.*complimentary/),
+  ).toBeVisible();
+  await page.getByRole('button', { name: 'Next page' }).click();
+  await expect(page.getByText('Synthetic Beta', { exact: true })).toBeVisible();
+  await expect(page.getByText('No current base subscription')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Next page' })).toBeDisabled();
+  await page.getByRole('button', { name: 'Previous page' }).click();
+  await expect(
+    page.getByText('Synthetic Alpha', { exact: true }),
+  ).toBeVisible();
+  await page.getByLabel('Company name filter').fill('No match');
+  await page.getByRole('button', { name: 'Apply filter' }).click();
+  await expect(page.getByText('No companies match this filter.')).toBeVisible();
+  await page.getByLabel('Company name filter').fill('');
+  await page.getByRole('button', { name: 'Apply filter' }).click();
+  await expect(
+    page.getByText('Synthetic Alpha', { exact: true }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  denied = true;
+  await page.getByRole('button', { name: 'Refresh companies' }).click();
+  await expect(page.getByRole('main')).toHaveText(
+    /Only an active platform operator/,
+  );
+  await expect(page.getByText('Synthetic Alpha', { exact: true })).toHaveCount(
+    0,
+  );
+});
+
+test('platform directory fails closed for malformed metadata and signed-out sessions', async ({
+  page,
+}) => {
+  let status = 200;
+  let reads = 0;
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({ status, json: {} }),
+  );
+  await page.route('**/api/v1/platform/tenants?**', (route) => {
+    reads += 1;
+    return route.fulfill({
+      json: {
+        companies: [{ name: 'Private metadata', email: 'private@example.com' }],
+        nextCursor: null,
+      },
+    });
+  });
+  await page.goto('/platform');
+  await expect(page.getByRole('main')).toHaveText(
+    'Company directory is unavailable. Refresh and try again.',
+  );
+  await expect(page.getByText('private@example.com')).toHaveCount(0);
+  status = 401;
+  await page.reload();
+  await expect(page.getByRole('main')).toHaveText(
+    'Sign in to review platform companies.',
+  );
+  expect(reads).toBe(1);
+});

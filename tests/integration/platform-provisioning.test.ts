@@ -8,6 +8,7 @@ import {
   reconcileCompanyOwnerProvider,
   requestCompanyProvisioning,
   checkPlatformOperatorAccess,
+  listPlatformCompanies,
 } from '@kinto/database';
 
 if (existsSync('.env')) process.loadEnvFile('.env');
@@ -195,6 +196,60 @@ describe('platform-only company provisioning boundary', () => {
       }),
     ).rejects.toThrow();
     await expect(runtime.ownerInvitation.findMany()).rejects.toThrow();
+  });
+
+  it('lists private-field-free company metadata with bounded stable pages and literal filters', async () => {
+    const marker = `Directory ${operatorId}`;
+    for (const suffix of [' A%', ' B']) {
+      const created = await requestCompanyProvisioning(
+        runtime,
+        { identityId: operatorId, mfaVerified: true },
+        randomUUID(),
+        { ...input, companyName: marker + suffix },
+      );
+      tenantIds.push(created.tenantId);
+    }
+    const actor = { identityId: operatorId, mfaVerified: true };
+    const first = await listPlatformCompanies(runtime, actor, {
+      limit: 1,
+      search: marker,
+    });
+    expect(first.companies).toHaveLength(1);
+    expect(first.nextCursor).toBe(first.companies[0].id);
+    const second = await listPlatformCompanies(runtime, actor, {
+      limit: 1,
+      search: marker,
+      after: first.nextCursor!,
+    });
+    expect(second.companies).toHaveLength(1);
+    expect(second.nextCursor).toBeNull();
+    expect(first.companies[0].id < second.companies[0].id).toBe(true);
+    expect(first.companies[0]).toMatchObject({
+      ownerSetupStatus: 'pending_identity_provider',
+      baseSubscription: {
+        plan: 'starter',
+        planVersion: 1,
+        billingMode: 'complimentary',
+        employeeLimit: 20,
+      },
+    });
+    expect(JSON.stringify(first)).not.toContain(input.initialOwnerEmail);
+    const literal = await listPlatformCompanies(runtime, actor, {
+      limit: 25,
+      search: marker + ' A%',
+    });
+    expect(literal.companies).toHaveLength(1);
+    for (const denied of [
+      { identityId: ordinaryIdentityId, mfaVerified: true },
+      { identityId: operatorId, mfaVerified: false },
+    ])
+      await expect(
+        listPlatformCompanies(runtime, denied, { limit: 25 }),
+      ).rejects.toThrow('FORBIDDEN');
+    const invalid = await runtime.$queryRaw<
+      { outcome: string }[]
+    >`SELECT outcome FROM public.list_platform_companies(${operatorId}::uuid,true,NULL,NULL,NULL)`;
+    expect(invalid[0].outcome).toBe('invalid');
   });
 
   it('atomically creates one denied-until-provider request and both audit records', async () => {

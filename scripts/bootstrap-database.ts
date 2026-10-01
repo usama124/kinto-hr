@@ -237,6 +237,12 @@ try {
     'GRANT EXECUTE ON FUNCTION public.check_platform_operator_access(uuid, boolean) TO kinto_app',
   );
   await database.$executeRawUnsafe(
+    'ALTER FUNCTION public.list_platform_companies(uuid, boolean, integer, uuid, varchar) OWNER TO kinto_control_owner',
+  );
+  await database.$executeRawUnsafe(
+    'GRANT EXECUTE ON FUNCTION public.list_platform_companies(uuid, boolean, integer, uuid, varchar) TO kinto_app',
+  );
+  await database.$executeRawUnsafe(
     'ALTER FUNCTION public.request_company_provisioning(uuid, boolean, uuid, uuid, uuid, uuid, uuid, varchar, integer, varchar, varchar) OWNER TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(

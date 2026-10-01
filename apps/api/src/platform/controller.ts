@@ -5,6 +5,7 @@ import {
   Headers,
   HttpCode,
   Get,
+  Query,
   Inject,
   Param,
   Post,
@@ -13,6 +14,7 @@ import {
 } from '@nestjs/common';
 import {
   companyProvisioningSchema,
+  platformCompanyQuerySchema,
   entitlementChangeSchema,
   entitlementRevocationSchema,
   tenantIdSchema,
@@ -60,6 +62,13 @@ export class PlatformController {
   @Get('access')
   async access(@Req() req: AuthRequest) {
     return this.database.platformAccess(await this.actor(req, false));
+  }
+  @Get('tenants')
+  async companies(@Req() req: AuthRequest, @Query() query: unknown) {
+    const actor = await this.actor(req, false);
+    const input = platformCompanyQuerySchema.safeParse(query);
+    if (!input.success) throw new BadRequestException();
+    return this.database.platformCompanies(actor, input.data);
   }
 
   @Post('tenants')

@@ -9,6 +9,8 @@ import {
   companyProvisioningSchema,
   companyProvisioningResultSchema,
   platformAccessSchema,
+  platformCompanyQuerySchema,
+  platformCompanyListSchema,
   entitlementSnapshotSchema,
   employeeAccountProvisioningSchema,
   employeeAccountReactivationSchema,
@@ -472,6 +474,40 @@ it('accepts only explicit administrator invitation authority', () => {
     expect(administratorInvitationSchema.safeParse(input).success).toBe(false);
 });
 it('normalizes only approved company provisioning fields', () => {
+  expect(platformCompanyQuerySchema.parse({ search: ' Test ' })).toEqual({
+    limit: 25,
+    search: 'Test',
+  });
+  for (const query of [
+    { limit: 0 },
+    { limit: 101 },
+    { after: 'invalid' },
+    { search: '' },
+    { email: 'private@example.com' },
+  ])
+    expect(platformCompanyQuerySchema.safeParse(query).success).toBe(false);
+  const company = {
+    id: crypto.randomUUID(),
+    name: 'Synthetic',
+    status: 'active',
+    createdAt: '2026-10-01T09:00:00.000Z',
+    ownerSetupStatus: null,
+    baseSubscription: null,
+  };
+  expect(
+    platformCompanyListSchema.parse({ companies: [company], nextCursor: null }),
+  ).toEqual({ companies: [company], nextCursor: null });
+  for (const change of [
+    { email: 'private@example.com' },
+    { status: 'unknown' },
+    { baseSubscription: { plan: 'fake' } },
+  ])
+    expect(
+      platformCompanyListSchema.safeParse({
+        companies: [{ ...company, ...change }],
+        nextCursor: null,
+      }).success,
+    ).toBe(false);
   const result = {
     tenantId: crypto.randomUUID(),
     provisioningRequestId: crypto.randomUUID(),
