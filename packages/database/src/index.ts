@@ -8,6 +8,7 @@ import {
   tenantRoleSchema,
   type AuthenticatedIdentity,
   companyProvisioningSchema,
+  platformEntitlementStateSchema,
   platformCompanyQuerySchema,
   platformCompanyListSchema,
   type PlatformCompanyQuery,
@@ -1150,6 +1151,22 @@ function entitlementParameters(input: EntitlementChange) {
       input.changeType === 'capacity_addon' ? null : input.employeeLimit,
     seatDelta: input.changeType === 'capacity_addon' ? input.seatDelta : null,
   };
+}
+
+export async function readPlatformEntitlementState(
+  db: PrismaClient,
+  actor: { identityId: string; mfaVerified: boolean },
+  tenantId: string,
+) {
+  tenantIdSchema.parse(actor.identityId);
+  tenantIdSchema.parse(tenantId);
+  const rows = await db.$queryRaw<
+    { outcome: string; payload: unknown }[]
+  >`SELECT * FROM public.read_platform_entitlement_state(${actor.identityId}::uuid,${actor.mfaVerified},${tenantId}::uuid)`;
+  if (rows[0]?.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (rows[0]?.outcome === 'not_found') throw new DomainError('NOT_FOUND');
+  if (rows[0]?.outcome !== 'ok') throw new Error('Invalid entitlement state');
+  return platformEntitlementStateSchema.parse(rows[0].payload);
 }
 
 export async function previewEntitlementChange(

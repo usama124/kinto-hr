@@ -94,6 +94,17 @@ export class PlatformController {
     return owner ? { ...provisioned, status: owner.status } : provisioned;
   }
 
+  @Get('tenants/:tenantId/entitlements')
+  async entitlementState(
+    @Req() req: AuthRequest,
+    @Param('tenantId') value: unknown,
+  ) {
+    const actor = await this.actor(req, false);
+    const tenant = tenantIdSchema.safeParse(value);
+    if (!tenant.success) throw new BadRequestException();
+    return this.database.platformEntitlementState(actor, tenant.data);
+  }
+
   @Post('tenants/:tenantId/entitlement-changes/preview')
   @HttpCode(200)
   async previewEntitlement(

@@ -9,6 +9,7 @@ import {
   companyProvisioningSchema,
   companyProvisioningResultSchema,
   platformAccessSchema,
+  platformEntitlementStateSchema,
   platformCompanyQuerySchema,
   platformCompanyListSchema,
   entitlementSnapshotSchema,
@@ -1047,6 +1048,43 @@ it('normalizes complete monthly-salaried employee records and reporting rules', 
       managerEmployeeId: null,
       reason: 'Approved employee rehire',
       restoreAccess: true,
+    }).success,
+  ).toBe(false);
+});
+
+it('parses only bounded operator entitlement state without actor fields', () => {
+  const state = {
+    tenantId: crypto.randomUUID(),
+    companyName: 'Synthetic',
+    evaluatedAt: '2026-10-01T09:00:00Z',
+    historyTruncated: false,
+    effective: {
+      plan: { code: 'free', version: 1 },
+      billingMode: 'free',
+      employeeLimit: 5,
+      activeEmployees: 0,
+      availableEmployeeSeats: 5,
+      capabilities: { companySetup: true },
+      entitlementVersion: 1,
+      effectiveFrom: '2026-10-01T09:00:00Z',
+    },
+    controls: [],
+  };
+  expect(platformEntitlementStateSchema.parse(state)).toEqual(state);
+  expect(
+    platformEntitlementStateSchema.safeParse({
+      ...state,
+      identityId: crypto.randomUUID(),
+    }).success,
+  ).toBe(false);
+  expect(
+    platformEntitlementStateSchema.safeParse({ ...state, tenantId: 'invalid' })
+      .success,
+  ).toBe(false);
+  expect(
+    platformEntitlementStateSchema.safeParse({
+      ...state,
+      controls: [{ status: 'unknown' }],
     }).success,
   ).toBe(false);
 });

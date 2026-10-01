@@ -154,6 +154,11 @@ export default function CompanyDirectory() {
                   </div>
                   <span>{company.status}</span>
                 </div>
+                {company.status === 'active' && company.baseSubscription && (
+                  <Link href={`/platform/companies/${company.id}/entitlements`}>
+                    Manage entitlement controls
+                  </Link>
+                )}
                 <p>
                   Owner setup:{' '}
                   {company.ownerSetupStatus?.replaceAll('_', ' ') ??

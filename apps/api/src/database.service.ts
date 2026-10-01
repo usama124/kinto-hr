@@ -9,6 +9,7 @@ import {
   findActiveIdentity,
   requestCompanyProvisioning,
   checkPlatformOperatorAccess,
+  readPlatformEntitlementState,
   listPlatformCompanies,
   reconcileCompanyOwnerProvider,
   markCompanyOwnerInvitationDelivered,
@@ -134,6 +135,12 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
   }
   platformAccess(actor: { identityId: string; mfaVerified: boolean }) {
     return checkPlatformOperatorAccess(this.db, actor);
+  }
+  platformEntitlementState(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+  ) {
+    return readPlatformEntitlementState(this.db, actor, tenantId);
   }
   platformCompanies(
     actor: { identityId: string; mfaVerified: boolean },

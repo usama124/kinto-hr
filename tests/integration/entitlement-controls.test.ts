@@ -8,6 +8,7 @@ import {
   previewEntitlementChange,
   readTenantEntitlements,
   revokeEntitlementChange,
+  readPlatformEntitlementState,
 } from '@kinto/database';
 
 if (existsSync('.env')) process.loadEnvFile('.env');
@@ -108,6 +109,72 @@ describe('dated entitlement grants and overrides', () => {
   afterAll(async () =>
     Promise.all([admin.$disconnect(), runtime.$disconnect()]),
   );
+
+  it('projects operator-only effective state and control history without identity fields', async () => {
+    const change = await createEntitlementChange(
+      runtime,
+      actor(operatorId),
+      tenantId,
+      {
+        changeType: 'capacity_addon',
+        seatDelta: 5,
+        ...interval(),
+        reason: 'Synthetic capacity grant',
+      },
+    );
+    const result = await readPlatformEntitlementState(
+      runtime,
+      actor(operatorId),
+      tenantId,
+    );
+    expect(result).toMatchObject({
+      tenantId,
+      historyTruncated: false,
+      effective: { employeeLimit: 10 },
+      controls: [
+        {
+          id: change.id,
+          kind: 'grant',
+          version: 1,
+          reason: 'Synthetic capacity grant',
+        },
+      ],
+    });
+    expect(JSON.stringify(result)).not.toContain(operatorId);
+    expect(
+      (
+        await readPlatformEntitlementState(
+          runtime,
+          actor(operatorId),
+          otherTenantId,
+        )
+      ).controls,
+    ).toEqual([]);
+    for (const denied of [
+      actor(ownerId),
+      actor(nonOperatorId),
+      actor(operatorId, false),
+    ])
+      await expect(
+        readPlatformEntitlementState(runtime, denied, tenantId),
+      ).rejects.toThrow('FORBIDDEN');
+    await revokeEntitlementChange(
+      runtime,
+      actor(operatorId),
+      tenantId,
+      'grant',
+      change.id,
+      { expectedVersion: 1, reason: 'Synthetic grant cancellation' },
+    );
+    expect(
+      (await readPlatformEntitlementState(runtime, actor(operatorId), tenantId))
+        .controls[0],
+    ).toMatchObject({
+      status: 'revoked',
+      version: 2,
+      revokedReason: 'Synthetic grant cancellation',
+    });
+  });
 
   it('previews and applies additive capacity to activation under one entitlement version', async () => {
     await admin.employee.createMany({

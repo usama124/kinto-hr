@@ -1344,6 +1344,37 @@ export const entitlementPreviewSchema = z.strictObject({
     billingMode: z.boolean(),
   }),
 });
+export const platformEntitlementStateSchema = z.strictObject({
+  tenantId: tenantIdSchema,
+  companyName: z.string().min(1).max(160),
+  evaluatedAt: z.iso.datetime({ offset: true }),
+  effective: entitlementSnapshotSchema,
+  historyTruncated: z.boolean(),
+  controls: z
+    .array(
+      z.strictObject({
+        id: tenantIdSchema,
+        kind: z.enum(['grant', 'override']),
+        changeType: z.enum([
+          'capacity_addon',
+          'complimentary',
+          'employee_limit_override',
+        ]),
+        employeeLimit: z.number().int().min(0).max(250).nullable(),
+        seatDelta: z.number().int().min(1).max(250).nullable(),
+        startsAt: z.iso.datetime({ offset: true }),
+        endsAt: z.iso.datetime({ offset: true }),
+        status: z.enum(['active', 'revoked']),
+        version: z.number().int().positive(),
+        reason: z.string().min(3).max(240),
+        revokedReason: z.string().min(3).max(240).nullable(),
+      }),
+    )
+    .max(100),
+});
+export type PlatformEntitlementState = z.infer<
+  typeof platformEntitlementStateSchema
+>;
 export const employeeAccountProvisioningSchema = z.strictObject({
   email: z.string().trim().toLowerCase().pipe(z.email().max(320)),
 });
