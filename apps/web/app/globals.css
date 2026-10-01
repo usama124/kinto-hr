@@ -532,6 +532,20 @@ button {
 .settings-form select:disabled {
   background: var(--paper);
 }
+.membership-roles {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+.settings-form .membership-roles label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.settings-form .membership-roles input {
+  width: auto;
+}
 .settings-form.compact {
   margin-top: 22px;
   padding-top: 18px;

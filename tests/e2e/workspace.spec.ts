@@ -2078,3 +2078,270 @@ test('employee documents handle empty, invalid, unavailable and session states',
   );
   expect(listRequests).toBe(priorRequests);
 });
+
+test('owner manages administrative roles and revokes access without employee controls', async ({
+  page,
+}) => {
+  const tenantId = '9d2ea3ef-3938-42d0-84f9-d2248f692f67';
+  const adminId = '44c4bf77-58bb-42ea-9886-5db47c1c3de5';
+  const employeeId = '82ffbc9e-febd-4a62-bdaf-fd8740ee6982';
+  const csrf = 'b'.repeat(43);
+  const member = {
+    id: adminId,
+    identityId: adminId,
+    status: 'active',
+    roles: ['hr_admin'],
+    version: 1,
+    employeeId: null,
+    createdAt: '2026-10-01T09:00:00.000Z',
+  };
+  const employee = {
+    ...member,
+    id: employeeId,
+    identityId: employeeId,
+    roles: ['employee'],
+    employeeId,
+  };
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({
+      json: {
+        csrfToken: csrf,
+        selectedTenantId: tenantId,
+        tenants: [
+          { id: tenantId, name: 'Synthetic Company', roles: ['owner'] },
+        ],
+      },
+    }),
+  );
+  await page.route(`**/api/v1/tenants/${tenantId}/memberships`, (route) =>
+    route.fulfill({ json: { memberships: [member, employee] } }),
+  );
+  await page.route(
+    `**/api/v1/tenants/${tenantId}/memberships/${adminId}/*`,
+    (route) => {
+      const request = route.request();
+      expect(request.headers()['x-csrf-token']).toBe(csrf);
+      if (request.url().endsWith('/roles')) {
+        expect(request.method()).toBe('PUT');
+        expect(request.postDataJSON()).toEqual({
+          expectedVersion: 1,
+          roles: ['hr_admin', 'payroll_preparer'],
+          reason: 'Approved payroll responsibilities',
+        });
+        member.roles = ['hr_admin', 'payroll_preparer'];
+        member.version = 2;
+      } else {
+        expect(request.method()).toBe('POST');
+        expect(request.postDataJSON()).toEqual({
+          expectedVersion: 2,
+          reason: 'Approved access revocation',
+        });
+        member.status = 'revoked';
+        member.version = 3;
+      }
+      return route.fulfill({
+        json: {
+          id: member.id,
+          status: member.status,
+          roles: member.roles,
+          version: member.version,
+        },
+      });
+    },
+  );
+  await page.goto('/members');
+  await expect(
+    page.getByRole('heading', { name: 'Synthetic Company' }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: `Manage membership ${employeeId}` }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByText('Employee access: use employee lifecycle controls.'),
+  ).toBeVisible();
+  await page
+    .getByRole('button', { name: `Manage membership ${adminId}` })
+    .click();
+  await expect(page.getByRole('button', { name: 'Save roles' })).toBeDisabled();
+  await page.getByRole('checkbox', { name: 'payroll preparer' }).check();
+  await page
+    .getByLabel('Audit reason', { exact: true })
+    .fill('Approved payroll responsibilities');
+  await page.getByRole('button', { name: 'Save roles' }).click();
+  await expect(page.getByRole('status')).toHaveText(
+    'Administrative roles updated with an audit record.',
+  );
+  await page
+    .getByRole('button', { name: `Manage membership ${adminId}` })
+    .click();
+  await expect(
+    page.getByRole('checkbox', { name: 'payroll preparer' }),
+  ).toBeChecked();
+  await page
+    .getByLabel('Audit reason', { exact: true })
+    .fill('Approved access revocation');
+  page.once('dialog', (dialog) => dialog.dismiss());
+  await page
+    .getByRole('button', { name: 'Revoke administrative access' })
+    .click();
+  await expect(
+    page.getByRole('heading', { name: 'Edit administrative access' }),
+  ).toBeVisible();
+  page.once('dialog', (dialog) => dialog.accept());
+  await page
+    .getByRole('button', { name: 'Revoke administrative access' })
+    .click();
+  await expect(page.getByRole('status')).toHaveText(
+    'Administrative access revoked with an audit record.',
+  );
+  await expect(
+    page.getByRole('button', { name: `Manage membership ${adminId}` }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByText('Revoked access is retained for audit history.'),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+});
+
+test('membership conflicts refresh versions and uncertain mutations require refresh', async ({
+  page,
+}) => {
+  const tenantId = '9d2ea3ef-3938-42d0-84f9-d2248f692f67';
+  const memberId = '44c4bf77-58bb-42ea-9886-5db47c1c3de5';
+  const member = {
+    id: memberId,
+    identityId: memberId,
+    status: 'active',
+    roles: ['owner'],
+    version: 1,
+    employeeId: null,
+    createdAt: '2026-10-01T09:00:00.000Z',
+  };
+  let mutationStatus = 409;
+  let expectedVersion = 1;
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({
+      json: {
+        csrfToken: 'b'.repeat(43),
+        selectedTenantId: tenantId,
+        tenants: [
+          { id: tenantId, name: 'Synthetic Company', roles: ['owner'] },
+        ],
+      },
+    }),
+  );
+  await page.route(`**/api/v1/tenants/${tenantId}/memberships`, (route) =>
+    route.fulfill({ json: { memberships: [member] } }),
+  );
+  await page.route(
+    `**/api/v1/tenants/${tenantId}/memberships/${memberId}/roles`,
+    (route) => {
+      expect(route.request().postDataJSON().expectedVersion).toBe(
+        expectedVersion,
+      );
+      member.version += 1;
+      return route.fulfill({ status: mutationStatus, json: {} });
+    },
+  );
+  await page.goto('/members');
+  const manage = page.getByRole('button', {
+    name: `Manage membership ${memberId}`,
+  });
+  async function attempt() {
+    await manage.click();
+    await page.getByRole('checkbox', { name: 'hr admin' }).check();
+    await page
+      .getByLabel('Audit reason', { exact: true })
+      .fill('Approved administrative change');
+    await page.getByRole('button', { name: 'Save roles' }).click();
+  }
+  await attempt();
+  await expect(page.getByRole('status')).toHaveText(
+    /Change refused.*last active owner/,
+  );
+  mutationStatus = 503;
+  expectedVersion = 2;
+  await attempt();
+  await expect(page.getByRole('status')).toHaveText(
+    /Refresh memberships before trying again/,
+  );
+  await expect(manage).toBeDisabled();
+  await page.getByRole('button', { name: 'Refresh memberships' }).click();
+  await expect(manage).toBeEnabled();
+  mutationStatus = 403;
+  expectedVersion = 3;
+  await attempt();
+  await expect(page.getByRole('main')).toHaveText(
+    /Only a company owner with recent verification/,
+  );
+  await expect(manage).toHaveCount(0);
+});
+
+test('membership workspace rejects non-owner sessions and invalid projections', async ({
+  page,
+}) => {
+  const tenantId = '9d2ea3ef-3938-42d0-84f9-d2248f692f67';
+  let roles = ['hr_admin'];
+  let selectedTenantId: string | null = tenantId;
+  let sessionStatus = 200;
+  let listStatus = 200;
+  let list: unknown = { memberships: [] };
+  let reads = 0;
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({
+      status: sessionStatus,
+      json: {
+        csrfToken: 'b'.repeat(43),
+        selectedTenantId,
+        tenants: [{ id: tenantId, name: 'Synthetic Company', roles }],
+      },
+    }),
+  );
+  await page.route(`**/api/v1/tenants/${tenantId}/memberships`, (route) => {
+    reads += 1;
+    return route.fulfill({ status: listStatus, json: list });
+  });
+  for (const deniedRoles of [
+    ['hr_admin'],
+    ['employee'],
+    ['payroll_preparer'],
+    ['payroll_approver'],
+  ]) {
+    roles = deniedRoles;
+    await page.goto('/members');
+    await expect(page.getByRole('main')).toHaveText(
+      /Only a company owner with recent verification/,
+    );
+  }
+  expect(reads).toBe(0);
+  selectedTenantId = null;
+  await page.reload();
+  await expect(page.getByRole('main')).toHaveText(
+    'Choose a company workspace before managing access.',
+  );
+  sessionStatus = 401;
+  await page.reload();
+  await expect(page.getByRole('main')).toHaveText(
+    'Sign in to manage company access.',
+  );
+  sessionStatus = 200;
+  roles = ['owner'];
+  selectedTenantId = tenantId;
+  await page.reload();
+  await expect(page.getByText('No memberships are available.')).toBeVisible();
+  list = { memberships: [{ email: 'private@example.com' }] };
+  await page.reload();
+  await expect(page.getByRole('main')).toHaveText(
+    'Membership administration is unavailable. Refresh and try again.',
+  );
+  await expect(page.getByText('private@example.com')).toHaveCount(0);
+  listStatus = 403;
+  await page.reload();
+  await expect(page.getByRole('main')).toHaveText(
+    /Only a company owner with recent verification/,
+  );
+});
