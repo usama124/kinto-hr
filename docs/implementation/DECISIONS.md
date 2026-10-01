@@ -50,6 +50,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 1 October 2026 — operator entitlement workspace
+
+Engineering added an operator-only effective-state/history projection and a responsive preview/create/revoke screen over existing entitlement commands. Migration 44 exposes only effective commercial metadata and the latest 100 controls with explicit truncation. Input changes invalidate previews; revocations retain optimistic versions and reasons. Since creation is not idempotent, uncertain outcomes block resubmission and require reconciliation rather than blind retry. No invoice, payment or role grant is added. See [evidence](../evidence/phase-01/platform-entitlement-workspace.md). Persistent creation idempotency/reconciliation remains a hardening follow-up, and production acceptance gates remain open.
+
 ### 1 October 2026 — read-only platform company directory
 
 Engineering added `/platform` and bounded `/platform/tenants` listing for active recent-MFA operators. Migration 43 exposes only company and current base subscription/provisioning metadata through a constrained security-definer function; owner email and all employee data remain excluded. Literal name search, UUID keyset pages and strict result parsing support responsive browsing with revoked-access removal. Base capacity is explicitly not effective grant-adjusted capacity, and manual-paid classification is not payment evidence. See [evidence](../evidence/phase-01/platform-company-directory.md). Operator entitlement controls UI remains separate; production operational gates remain open.

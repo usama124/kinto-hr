@@ -31,6 +31,7 @@ const limit = vi.fn().mockResolvedValue(undefined);
 const getSession = vi.fn().mockResolvedValue(session);
 const platformAccess = vi.fn();
 const platformCompanies = vi.fn();
+const platformEntitlementState = vi.fn();
 const previewEntitlementChange = vi.fn();
 const createEntitlementChange = vi.fn();
 const revokeEntitlementChange = vi.fn();
@@ -62,6 +63,7 @@ beforeAll(async () => {
         useValue: {
           platformAccess,
           platformCompanies,
+          platformEntitlementState,
           previewEntitlementChange,
           createEntitlementChange,
           revokeEntitlementChange,
@@ -98,6 +100,24 @@ it('reads minimal platform access using session authority and recent MFA', async
     mfaVerified: false,
   });
   await request(app.getHttpServer()).get('/api/v1/platform/access').expect(401);
+});
+it('reads operator entitlements only with a session-derived actor and typed tenant', async () => {
+  platformEntitlementState.mockResolvedValue({ tenantId });
+  await request(app.getHttpServer())
+    .get(`/api/v1/platform/tenants/${tenantId}/entitlements`)
+    .set('Cookie', `__Host-kinto-session=${token}`)
+    .expect(200);
+  expect(platformEntitlementState).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+  );
+  await request(app.getHttpServer())
+    .get('/api/v1/platform/tenants/invalid/entitlements')
+    .set('Cookie', `__Host-kinto-session=${token}`)
+    .expect(400);
+  await request(app.getHttpServer())
+    .get(`/api/v1/platform/tenants/${tenantId}/entitlements`)
+    .expect(401);
 });
 it('lists bounded companies with strict query input and server session authority', async () => {
   platformCompanies.mockResolvedValue({ companies: [], nextCursor: null });

@@ -2814,3 +2814,217 @@ test('platform directory fails closed for malformed metadata and signed-out sess
   );
   expect(reads).toBe(1);
 });
+
+function operatorEntitlementFixture(tenantId: string) {
+  return {
+    tenantId,
+    companyName: 'Synthetic Controlled Company',
+    evaluatedAt: '2026-10-01T09:00:00.000Z',
+    historyTruncated: false,
+    effective: {
+      plan: { code: 'free', version: 1 },
+      billingMode: 'free',
+      employeeLimit: 5,
+      activeEmployees: 0,
+      availableEmployeeSeats: 5,
+      capabilities: { companySetup: true },
+      entitlementVersion: 1,
+      effectiveFrom: '2026-09-01T00:00:00.000Z',
+    },
+    controls: [] as Record<string, unknown>[],
+  };
+}
+test('operator previews, applies and revokes a dated capacity control', async ({
+  page,
+}) => {
+  const tenantId = '9d2ea3ef-3938-42d0-84f9-d2248f692f67';
+  const controlId = '44c4bf77-58bb-42ea-9886-5db47c1c3de5';
+  const fixture = operatorEntitlementFixture(tenantId);
+  const before = structuredClone(fixture.effective);
+  let denied = false;
+  let previews = 0;
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({
+      json: { csrfToken: 'b'.repeat(43), selectedTenantId: null, tenants: [] },
+    }),
+  );
+  await page.route(
+    `**/api/v1/platform/tenants/${tenantId}/entitlements`,
+    (route) => route.fulfill({ status: denied ? 403 : 200, json: fixture }),
+  );
+  await page.route(
+    `**/api/v1/platform/tenants/${tenantId}/entitlement-changes**`,
+    (route) => {
+      const request = route.request();
+      expect(request.headers()['x-csrf-token']).toBe('b'.repeat(43));
+      const input = request.postDataJSON();
+      if (request.url().endsWith('/preview')) {
+        previews++;
+        return route.fulfill({
+          json: {
+            at: input.startsAt,
+            before,
+            after: {
+              ...before,
+              employeeLimit: 5 + input.seatDelta,
+              availableEmployeeSeats: 5 + input.seatDelta,
+              entitlementVersion: 2,
+            },
+            changes: { employeeLimit: true, billingMode: false },
+          },
+        });
+      }
+      if (request.url().endsWith('/revocation')) {
+        expect(input).toEqual({
+          expectedVersion: 1,
+          reason: 'Approved grant cancellation',
+        });
+        expect(request.url()).toContain(`/grant/${controlId}/revocation`);
+        Object.assign(fixture.controls[0], {
+          status: 'revoked',
+          version: 2,
+          revokedReason: input.reason,
+        });
+        fixture.effective = { ...before, entitlementVersion: 3 };
+      } else {
+        expect(input).toEqual({
+          changeType: 'capacity_addon',
+          seatDelta: 6,
+          startsAt: '2026-12-01T09:00:00+05:00',
+          endsAt: '2027-01-01T09:00:00+05:00',
+          reason: 'Approved temporary seats',
+        });
+        fixture.controls.push({
+          id: controlId,
+          kind: 'grant',
+          ...input,
+          employeeLimit: null,
+          status: 'active',
+          version: 1,
+          revokedReason: null,
+        });
+        fixture.effective = {
+          ...before,
+          employeeLimit: 11,
+          availableEmployeeSeats: 11,
+          entitlementVersion: 2,
+        };
+      }
+      return route.fulfill({
+        status: 200,
+        json: {
+          id: controlId,
+          version: fixture.controls[0].version,
+          entitlementVersion: fixture.effective.entitlementVersion,
+        },
+      });
+    },
+  );
+  await page.goto(`/platform/companies/${tenantId}/entitlements`);
+  await expect(
+    page.getByRole('heading', { name: 'Synthetic Controlled Company' }),
+  ).toBeVisible();
+  await page.getByLabel('Starts at').fill('2026-12-01T09:00:00+05:00');
+  await page.getByLabel('Ends at').fill('2027-01-01T09:00:00+05:00');
+  await page.getByLabel('Control reason').fill('Approved temporary seats');
+  await page.getByRole('button', { name: 'Preview control' }).click();
+  await expect(
+    page.getByRole('button', { name: 'Apply previewed control' }),
+  ).toBeVisible();
+  await page.getByLabel('Capacity value').fill('6');
+  await expect(
+    page.getByRole('button', { name: 'Apply previewed control' }),
+  ).toHaveCount(0);
+  await page.getByRole('button', { name: 'Preview control' }).click();
+  await page.getByRole('button', { name: 'Apply previewed control' }).click();
+  await expect(page.getByRole('status')).toHaveText(
+    'Entitlement control created with audit evidence.',
+  );
+  expect(previews).toBe(2);
+  await expect(page.getByText(/version 1 · scheduled/)).toBeVisible();
+  await page
+    .getByLabel(`Revocation reason ${controlId}`)
+    .fill('Approved grant cancellation');
+  page.once('dialog', (dialog) => dialog.accept());
+  await page
+    .getByRole('button', { name: `Revoke control ${controlId}` })
+    .click();
+  await expect(page.getByRole('status')).toHaveText(
+    'Control revoked with audit evidence.',
+  );
+  await expect(
+    page.getByText('Revocation: Approved grant cancellation'),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  denied = true;
+  await page
+    .getByRole('button', { name: 'Refresh entitlement history' })
+    .click();
+  await expect(page.getByRole('main')).toHaveText(
+    /Only an active platform operator/,
+  );
+});
+
+test('operator entitlement uncertainty blocks retries and history fails closed', async ({
+  page,
+}) => {
+  const tenantId = '9d2ea3ef-3938-42d0-84f9-d2248f692f67';
+  const fixture = operatorEntitlementFixture(tenantId);
+  let mutationStatus = 409;
+  let creates = 0;
+  let stateStatus = 200;
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({ json: { csrfToken: 'b'.repeat(43) } }),
+  );
+  await page.route(
+    `**/api/v1/platform/tenants/${tenantId}/entitlements`,
+    (route) => route.fulfill({ status: stateStatus, json: fixture }),
+  );
+  await page.route(
+    `**/api/v1/platform/tenants/${tenantId}/entitlement-changes**`,
+    (route) => {
+      if (route.request().url().endsWith('/preview'))
+        return route.fulfill({
+          json: {
+            at: '2026-12-01T09:00:00.000Z',
+            before: fixture.effective,
+            after: fixture.effective,
+            changes: { employeeLimit: false, billingMode: false },
+          },
+        });
+      creates++;
+      return route.fulfill({ status: mutationStatus, json: {} });
+    },
+  );
+  await page.goto(`/platform/companies/${tenantId}/entitlements`);
+  await page.getByLabel('Starts at').fill('2026-12-01T09:00:00Z');
+  await page.getByLabel('Ends at').fill('2027-01-01T09:00:00Z');
+  await page.getByLabel('Control reason').fill('Approved capacity review');
+  await page.getByRole('button', { name: 'Preview control' }).click();
+  await page.getByRole('button', { name: 'Apply previewed control' }).click();
+  await expect(page.getByRole('status')).toHaveText(/Change refused or stale/);
+  mutationStatus = 503;
+  await page.getByRole('button', { name: 'Preview control' }).click();
+  await page.getByRole('button', { name: 'Apply previewed control' }).click();
+  await expect(page.getByRole('status')).toHaveText(
+    /Further mutations are blocked/,
+  );
+  await page
+    .getByRole('button', { name: 'Refresh entitlement history' })
+    .click();
+  await expect(
+    page.getByRole('button', { name: 'Preview control' }),
+  ).toBeDisabled();
+  expect(creates).toBe(2);
+  stateStatus = 404;
+  await page
+    .getByRole('button', { name: 'Refresh entitlement history' })
+    .click();
+  await expect(page.getByRole('main')).toHaveText(
+    'An active company with a current subscription is required.',
+  );
+});
