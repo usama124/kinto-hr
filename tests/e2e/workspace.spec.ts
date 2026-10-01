@@ -2345,3 +2345,202 @@ test('membership workspace rejects non-owner sessions and invalid projections', 
     /Only a company owner with recent verification/,
   );
 });
+
+test('owner retries an exact administrator invitation through uncertain delivery and activation', async ({
+  page,
+}) => {
+  const tenantId = '9d2ea3ef-3938-42d0-84f9-d2248f692f67';
+  const requestId = '44c4bf77-58bb-42ea-9886-5db47c1c3de5';
+  const csrf = 'b'.repeat(43);
+  let attempt = 0;
+  let originalKey = '';
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({
+      json: {
+        csrfToken: csrf,
+        selectedTenantId: tenantId,
+        tenants: [
+          { id: tenantId, name: 'Synthetic Company', roles: ['owner'] },
+        ],
+      },
+    }),
+  );
+  await page.route(`**/api/v1/tenants/${tenantId}/memberships`, (route) =>
+    route.fulfill({
+      json: {
+        memberships: [
+          {
+            id: requestId,
+            identityId: requestId,
+            roles: ['owner'],
+            status: 'active',
+            employeeId: null,
+            version: 1,
+            createdAt: '2026-10-01T09:00:00.000Z',
+          },
+        ],
+      },
+    }),
+  );
+  await page.route(
+    `**/api/v1/tenants/${tenantId}/administrator-invitations`,
+    (route) => {
+      const request = route.request();
+      expect(request.method()).toBe('POST');
+      expect(request.headers()['x-csrf-token']).toBe(csrf);
+      expect(request.postDataJSON()).toEqual({
+        email: 'admin@example.com',
+        roles: ['hr_admin', 'payroll_approver'],
+        reason: 'Approved administrator setup',
+      });
+      const key = request.headers()['idempotency-key'];
+      expect(key).toMatch(/^[0-9a-f-]{36}$/);
+      attempt += 1;
+      if (attempt === 1) {
+        originalKey = key;
+        return route.fulfill({ status: 503, json: {} });
+      }
+      expect(key).toBe(originalKey);
+      return route.fulfill({
+        status: 202,
+        json: {
+          accountRequestId: requestId,
+          status:
+            attempt === 2
+              ? 'pending_identity_provider'
+              : attempt === 3
+                ? 'pending_delivery'
+                : 'pending_activation',
+          replayed: true,
+        },
+      });
+    },
+  );
+  await page.goto('/members');
+  await page
+    .getByRole('button', { name: 'Invite administrator', exact: true })
+    .click();
+  const form = page.getByRole('region', { name: 'Administrator invitation' });
+  await form.getByLabel('Administrator email').fill('Admin@Example.COM');
+  await form.getByRole('checkbox', { name: 'payroll approver' }).check();
+  await form.getByRole('checkbox', { name: 'hr admin' }).check();
+  await expect(
+    form.getByRole('checkbox', { name: 'employee', exact: true }),
+  ).toHaveCount(0);
+  await form
+    .getByLabel('Invitation reason')
+    .fill('Approved administrator setup');
+  await form
+    .getByRole('button', { name: 'Submit administrator invitation' })
+    .click();
+  await expect(form.getByRole('status')).toHaveText(
+    /outcome could not be confirmed/,
+  );
+  await expect(form.getByLabel('Administrator email')).toBeDisabled();
+  // Editing existing membership must not unmount and lose the pending invitation.
+  await page
+    .getByRole('button', { name: `Manage membership ${requestId}` })
+    .click();
+  await expect(
+    form.getByRole('button', { name: 'Retry same invitation' }),
+  ).toBeDisabled();
+  await page.getByRole('button', { name: 'Cancel editing' }).click();
+  await form.getByRole('button', { name: 'Retry same invitation' }).click();
+  await expect(form.getByRole('status')).toHaveText(
+    /Request recorded.*No access is granted/,
+  );
+  await expect(form.getByText(/Existing request replayed/)).toBeVisible();
+  await form.getByRole('button', { name: 'Retry same invitation' }).click();
+  await expect(form.getByRole('status')).toHaveText(
+    /Delivery is pending.*No access is granted/,
+  );
+  await form.getByRole('button', { name: 'Retry same invitation' }).click();
+  await expect(form.getByRole('status')).toHaveText(
+    /Access stays pending.*verified activation/,
+  );
+  await expect(
+    form.getByRole('button', { name: 'Retry same invitation' }),
+  ).toHaveCount(0);
+  expect(attempt).toBe(4);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  await form.getByRole('button', { name: 'New invitation' }).click();
+  await expect(form.getByLabel('Administrator email')).toHaveValue('');
+  await expect(
+    form.getByRole('checkbox', { name: 'hr admin' }),
+  ).not.toBeChecked();
+});
+
+test('administrator invitation handles conflicts, malformed replies and lost authority', async ({
+  page,
+}) => {
+  const tenantId = '9d2ea3ef-3938-42d0-84f9-d2248f692f67';
+  let attempt = 0;
+  const keys: string[] = [];
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({
+      json: {
+        csrfToken: 'b'.repeat(43),
+        selectedTenantId: tenantId,
+        tenants: [
+          { id: tenantId, name: 'Synthetic Company', roles: ['owner'] },
+        ],
+      },
+    }),
+  );
+  await page.route(`**/api/v1/tenants/${tenantId}/memberships`, (route) =>
+    route.fulfill({ json: { memberships: [] } }),
+  );
+  await page.route(
+    `**/api/v1/tenants/${tenantId}/administrator-invitations`,
+    (route) => {
+      keys.push(route.request().headers()['idempotency-key']);
+      attempt += 1;
+      if (attempt === 1) return route.fulfill({ status: 409, json: {} });
+      if (attempt === 2)
+        return route.fulfill({
+          status: 202,
+          json: { status: 'made_up', email: 'private@example.com' },
+        });
+      return route.fulfill({ status: 403, json: {} });
+    },
+  );
+  await page.goto('/members');
+  await page
+    .getByRole('button', { name: 'Invite administrator', exact: true })
+    .click();
+  const form = page.getByRole('region', { name: 'Administrator invitation' });
+  await expect(
+    form.getByRole('button', { name: 'Submit administrator invitation' }),
+  ).toBeDisabled();
+  await form.getByLabel('Administrator email').fill('admin@example.com');
+  await form.getByRole('checkbox', { name: 'owner', exact: true }).check();
+  await form.getByLabel('Invitation reason').fill('Approved additional owner');
+  await form
+    .getByRole('button', { name: 'Submit administrator invitation' })
+    .click();
+  await expect(form.getByRole('status')).toHaveText(/Invitation refused/);
+  await expect(form.getByLabel('Administrator email')).toBeEnabled();
+  await form.getByLabel('Administrator email').fill('another@example.com');
+  await form
+    .getByRole('button', { name: 'Submit administrator invitation' })
+    .click();
+  await expect(form.getByRole('status')).toHaveText(
+    /outcome could not be confirmed/,
+  );
+  expect(keys[1]).not.toBe(keys[0]);
+  await expect(
+    page.getByText('private@example.com', { exact: true }),
+  ).toHaveCount(0);
+  await form.getByRole('button', { name: 'Retry same invitation' }).click();
+  expect(keys[2]).toBe(keys[1]);
+  await expect(page.getByRole('main')).toHaveText(
+    /Only a company owner with recent verification/,
+  );
+  await expect(
+    page.getByRole('region', { name: 'Administrator invitation' }),
+  ).toHaveCount(0);
+});
