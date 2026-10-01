@@ -50,6 +50,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 1 October 2026 — owner administrator invitation workspace
+
+Engineering added owner-created administrator setup to `/members` over the existing provisioning API. Canonical approved roles, normalized email and reason are submitted with session CSRF and one memory-only UUID retry key. Unknown/lost responses and provider outages preserve the exact immutable request; definitive refusal permits correction with a new key. Strict result parsing distinguishes request/delivery/activation status without claiming immediate access. Pending requests survive membership editing but not page closure, which is explicitly disclosed. No public signup, employee-role invitation or background reconciliation is added. See [evidence](../evidence/phase-01/administrator-invitation-workspace.md). Next is platform company provisioning UI; production identity and operational gates remain open.
+
 ### 1 October 2026 — owner membership access workspace
 
 Engineering added `/members` for selected-company owners to list memberships, replace existing administrative roles and revoke access through the existing recent-MFA, CSRF-protected, versioned and audited APIs. Strict response contracts reject private or malformed metadata. Employee-linked/employee-role records and revoked access have no edit controls. Conflicts refresh the list; uncertain mutation outcomes block further edits until refreshed. PostgreSQL retains final-owner and employee-link protection. Invitations and administrator display names are separate work, and production operational gates remain open. See [evidence](../evidence/phase-01/membership-access-workspace.md).

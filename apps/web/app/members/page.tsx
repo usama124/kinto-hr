@@ -1,6 +1,7 @@
 'use client';
 
 import { FormEvent, useEffect, useState } from 'react';
+import AdministratorInvitationForm from './administrator-invitation';
 import {
   administrativeTenantRoleSchema,
   membershipAdministrationListSchema,
@@ -294,6 +295,17 @@ export default function Members() {
           </ul>
         )}
       </section>
+      <AdministratorInvitationForm
+        tenantId={tenantId}
+        csrf={csrf}
+        disabled={busy || needsRefresh || editing !== null}
+        onBusyChange={setBusy}
+        onAccessDenied={(status) => {
+          setMembers([]);
+          setEditing(null);
+          setState(status === 401 ? 'signed-out' : 'denied');
+        }}
+      />
       {editing && (
         <section
           className="settings-card"

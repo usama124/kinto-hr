@@ -1179,6 +1179,21 @@ export const administratorInvitationSchema = z.strictObject({
 export type AdministratorInvitation = z.infer<
   typeof administratorInvitationSchema
 >;
+export const administratorInvitationResultSchema = z.strictObject({
+  accountRequestId: tenantIdSchema,
+  status: z.enum([
+    'pending_identity_provider',
+    'pending_delivery',
+    'pending_activation',
+    'active',
+    'failed',
+    'revoked',
+  ]),
+  replayed: z.boolean(),
+});
+export type AdministratorInvitationResult = z.infer<
+  typeof administratorInvitationResultSchema
+>;
 
 export const companyProvisioningSchema = z
   .strictObject({

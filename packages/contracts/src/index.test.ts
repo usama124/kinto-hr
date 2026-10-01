@@ -16,6 +16,7 @@ import {
   membershipAdministrationListSchema,
   membershipAdministrationResultSchema,
   administratorInvitationSchema,
+  administratorInvitationResultSchema,
   securityAuditQuerySchema,
   legalEntityCreateSchema,
   legalEntityUpdateSchema,
@@ -418,6 +419,28 @@ it('requires an exact immutable employee import confirmation reference', () => {
   ).toBe(false);
 });
 it('accepts only explicit administrator invitation authority', () => {
+  const result = {
+    accountRequestId: crypto.randomUUID(),
+    status: 'pending_identity_provider',
+    replayed: false,
+  };
+  expect(administratorInvitationResultSchema.parse(result)).toEqual(result);
+  expect(
+    administratorInvitationResultSchema.parse({
+      ...result,
+      status: 'pending_delivery',
+    }).status,
+  ).toBe('pending_delivery');
+  for (const change of [
+    { accountRequestId: 'invalid' },
+    { status: 'delivered' },
+    { replayed: 'yes' },
+    { email: 'private@example.com' },
+  ])
+    expect(
+      administratorInvitationResultSchema.safeParse({ ...result, ...change })
+        .success,
+    ).toBe(false);
   expect(
     administratorInvitationSchema.parse({
       email: ' Admin@Example.COM ',
