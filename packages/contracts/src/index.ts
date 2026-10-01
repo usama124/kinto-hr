@@ -1217,6 +1217,24 @@ export const companyProvisioningSchema = z
       });
   });
 export type CompanyProvisioning = z.infer<typeof companyProvisioningSchema>;
+export const platformAccessSchema = z.strictObject({
+  canProvisionCompany: z.literal(true),
+});
+export const companyProvisioningResultSchema = z.strictObject({
+  tenantId: tenantIdSchema,
+  provisioningRequestId: tenantIdSchema,
+  status: z.enum([
+    'pending_identity_provider',
+    'pending_activation',
+    'active',
+    'failed',
+    'revoked',
+  ]),
+  replayed: z.boolean(),
+});
+export type CompanyProvisioningResult = z.infer<
+  typeof companyProvisioningResultSchema
+>;
 export const entitlementSnapshotSchema = z.strictObject({
   plan: z.strictObject({
     code: z.enum(['free', 'starter', 'growth', 'business', 'scale']),

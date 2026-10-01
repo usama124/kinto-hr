@@ -513,6 +513,17 @@ export async function inAuthorizedTenant<T>(
   });
 }
 
+export async function checkPlatformOperatorAccess(
+  db: PrismaClient,
+  actor: { identityId: string; mfaVerified: boolean },
+) {
+  tenantIdSchema.parse(actor.identityId);
+  const rows = await db.$queryRaw<{ allowed: boolean }[]>`
+    SELECT public.check_platform_operator_access(${actor.identityId}::uuid, ${actor.mfaVerified}) AS allowed`;
+  if (rows[0]?.allowed !== true) throw new DomainError('FORBIDDEN');
+  return { canProvisionCompany: true as const };
+}
+
 export async function requestCompanyProvisioning(
   db: PrismaClient,
   actor: { identityId: string; mfaVerified: boolean },

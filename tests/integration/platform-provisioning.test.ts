@@ -7,6 +7,7 @@ import {
   markCompanyOwnerInvitationDelivered,
   reconcileCompanyOwnerProvider,
   requestCompanyProvisioning,
+  checkPlatformOperatorAccess,
 } from '@kinto/database';
 
 if (existsSync('.env')) process.loadEnvFile('.env');
@@ -76,6 +77,78 @@ describe('platform-only company provisioning boundary', () => {
       },
     });
     await Promise.all([admin.$disconnect(), runtime.$disconnect()]);
+  });
+
+  it('checks operator access without disclosing records or changing state', async () => {
+    expect(
+      await checkPlatformOperatorAccess(runtime, {
+        identityId: operatorId,
+        mfaVerified: true,
+      }),
+    ).toEqual({ canProvisionCompany: true });
+    for (const actor of [
+      { identityId: ordinaryIdentityId, mfaVerified: true },
+      { identityId: operatorId, mfaVerified: false },
+    ])
+      await expect(checkPlatformOperatorAccess(runtime, actor)).rejects.toThrow(
+        'FORBIDDEN',
+      );
+    const nullMfa = await runtime.$queryRaw<
+      { allowed: boolean }[]
+    >`SELECT public.check_platform_operator_access(${operatorId}::uuid,NULL) AS allowed`;
+    expect(nullMfa[0].allowed).toBe(false);
+    try {
+      await admin.platformOperator.update({
+        where: { identityId: operatorId },
+        data: { status: 'revoked' },
+      });
+      await expect(
+        checkPlatformOperatorAccess(runtime, {
+          identityId: operatorId,
+          mfaVerified: true,
+        }),
+      ).rejects.toThrow('FORBIDDEN');
+      await admin.platformOperator.update({
+        where: { identityId: operatorId },
+        data: { status: 'active' },
+      });
+      await admin.identity.update({
+        where: { id: operatorId },
+        data: { status: 'disabled' },
+      });
+      await expect(
+        checkPlatformOperatorAccess(runtime, {
+          identityId: operatorId,
+          mfaVerified: true,
+        }),
+      ).rejects.toThrow('FORBIDDEN');
+    } finally {
+      await admin.platformOperator.update({
+        where: { identityId: operatorId },
+        data: { status: 'active' },
+      });
+      await admin.identity.update({
+        where: { id: operatorId },
+        data: { status: 'active' },
+      });
+    }
+    const [definition] = await admin.$queryRaw<
+      {
+        owner: string;
+        secured: boolean;
+        config: string[];
+        publicAccess: boolean;
+      }[]
+    >`
+      SELECT pg_get_userbyid(p.proowner) AS owner, p.prosecdef AS secured, p.proconfig AS config,
+        EXISTS (SELECT 1 FROM aclexplode(p.proacl) a WHERE a.grantee = 0 AND a.privilege_type = 'EXECUTE') AS "publicAccess"
+      FROM pg_proc p WHERE p.oid = 'public.check_platform_operator_access(uuid,boolean)'::regprocedure`;
+    expect(definition).toMatchObject({
+      owner: 'kinto_control_owner',
+      secured: true,
+      publicAccess: false,
+    });
+    expect(definition.config).toContain('search_path=pg_catalog, public');
   });
 
   it('denies ordinary identities, missing MFA, and all direct runtime writes', async () => {

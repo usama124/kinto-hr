@@ -8,6 +8,7 @@ import {
   createDatabase,
   findActiveIdentity,
   requestCompanyProvisioning,
+  checkPlatformOperatorAccess,
   reconcileCompanyOwnerProvider,
   markCompanyOwnerInvitationDelivered,
   requestEmployeeAccountProvisioning,
@@ -128,6 +129,9 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
   }
   discoverTenants(identityId: string) {
     return discoverIdentityTenants(this.db, identityId);
+  }
+  platformAccess(actor: { identityId: string; mfaVerified: boolean }) {
+    return checkPlatformOperatorAccess(this.db, actor);
   }
   provisionCompany(
     actor: { identityId: string; mfaVerified: boolean },

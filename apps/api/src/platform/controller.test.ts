@@ -29,6 +29,7 @@ const session = {
 };
 const limit = vi.fn().mockResolvedValue(undefined);
 const getSession = vi.fn().mockResolvedValue(session);
+const platformAccess = vi.fn();
 const previewEntitlementChange = vi.fn();
 const createEntitlementChange = vi.fn();
 const revokeEntitlementChange = vi.fn();
@@ -58,6 +59,7 @@ beforeAll(async () => {
       {
         provide: DatabaseService,
         useValue: {
+          platformAccess,
           previewEntitlementChange,
           createEntitlementChange,
           revokeEntitlementChange,
@@ -73,6 +75,28 @@ beforeAll(async () => {
 
 beforeEach(() => vi.clearAllMocks());
 afterAll(async () => app?.close());
+
+it('reads minimal platform access using session authority and recent MFA', async () => {
+  platformAccess.mockResolvedValue({ canProvisionCompany: true });
+  await request(app.getHttpServer())
+    .get('/api/v1/platform/access')
+    .set('Cookie', `__Host-kinto-session=${token}`)
+    .expect(200, { canProvisionCompany: true });
+  expect(platformAccess).toHaveBeenLastCalledWith({
+    identityId,
+    mfaVerified: true,
+  });
+  getSession.mockResolvedValueOnce({ ...session, authTime: now - 301 });
+  await request(app.getHttpServer())
+    .get('/api/v1/platform/access')
+    .set('Cookie', `__Host-kinto-session=${token}`)
+    .expect(200);
+  expect(platformAccess).toHaveBeenLastCalledWith({
+    identityId,
+    mfaVerified: false,
+  });
+  await request(app.getHttpServer()).get('/api/v1/platform/access').expect(401);
+});
 
 it('previews and creates strict entitlement changes with a recent-MFA actor', async () => {
   previewEntitlementChange.mockResolvedValueOnce({ changes: {} });

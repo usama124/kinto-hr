@@ -7,6 +7,8 @@ import {
   tenantIdSchema,
   tenantSelectionSchema,
   companyProvisioningSchema,
+  companyProvisioningResultSchema,
+  platformAccessSchema,
   entitlementSnapshotSchema,
   employeeAccountProvisioningSchema,
   employeeAccountReactivationSchema,
@@ -470,6 +472,35 @@ it('accepts only explicit administrator invitation authority', () => {
     expect(administratorInvitationSchema.safeParse(input).success).toBe(false);
 });
 it('normalizes only approved company provisioning fields', () => {
+  const result = {
+    tenantId: crypto.randomUUID(),
+    provisioningRequestId: crypto.randomUUID(),
+    status: 'pending_identity_provider',
+    replayed: false,
+  };
+  expect(companyProvisioningResultSchema.parse(result)).toEqual(result);
+  for (const change of [
+    { tenantId: 'invalid' },
+    { status: 'unknown' },
+    { initialOwnerEmail: 'private@example.com' },
+    { replayed: 'yes' },
+  ])
+    expect(
+      companyProvisioningResultSchema.safeParse({ ...result, ...change })
+        .success,
+    ).toBe(false);
+  expect(platformAccessSchema.parse({ canProvisionCompany: true })).toEqual({
+    canProvisionCompany: true,
+  });
+  expect(
+    platformAccessSchema.safeParse({ canProvisionCompany: false }).success,
+  ).toBe(false);
+  expect(
+    platformAccessSchema.safeParse({
+      canProvisionCompany: true,
+      roles: ['owner'],
+    }).success,
+  ).toBe(false);
   expect(
     companyProvisioningSchema.parse({
       companyName: ' Example Company ',

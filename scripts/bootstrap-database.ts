@@ -231,6 +231,12 @@ try {
     'GRANT INSERT ON outbox_events TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
+    'ALTER FUNCTION public.check_platform_operator_access(uuid, boolean) OWNER TO kinto_control_owner',
+  );
+  await database.$executeRawUnsafe(
+    'GRANT EXECUTE ON FUNCTION public.check_platform_operator_access(uuid, boolean) TO kinto_app',
+  );
+  await database.$executeRawUnsafe(
     'ALTER FUNCTION public.request_company_provisioning(uuid, boolean, uuid, uuid, uuid, uuid, uuid, varchar, integer, varchar, varchar) OWNER TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
