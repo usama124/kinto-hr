@@ -50,6 +50,14 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 1 October 2026 — read-only platform company directory
+
+Engineering added `/platform` and bounded `/platform/tenants` listing for active recent-MFA operators. Migration 43 exposes only company and current base subscription/provisioning metadata through a constrained security-definer function; owner email and all employee data remain excluded. Literal name search, UUID keyset pages and strict result parsing support responsive browsing with revoked-access removal. Base capacity is explicitly not effective grant-adjusted capacity, and manual-paid classification is not payment evidence. See [evidence](../evidence/phase-01/platform-company-directory.md). Operator entitlement controls UI remains separate; production operational gates remain open.
+
+### 1 October 2026 — platform company onboarding workspace
+
+Engineering added operator-led `/platform/companies` over the existing audited provisioning command. A separate read-only platform access check derives recent MFA from the session and verifies active identity/operator authority in PostgreSQL, exposing no private operator records. Strict free/complimentary/manual-paid packages and memory-only exact-request retries distinguish recorded company/owner setup from verified activation. Migration 42 and bootstrap add only the constrained function execution grant, not table access. Company self-signup and payment collection remain excluded. See [evidence](../evidence/phase-01/platform-company-workspace.md). Platform tenant listing/commercial overview is next; production operational gates remain open.
+
 ### 1 October 2026 — owner administrator invitation workspace
 
 Engineering added owner-created administrator setup to `/members` over the existing provisioning API. Canonical approved roles, normalized email and reason are submitted with session CSRF and one memory-only UUID retry key. Unknown/lost responses and provider outages preserve the exact immutable request; definitive refusal permits correction with a new key. Strict result parsing distinguishes request/delivery/activation status without claiming immediate access. Pending requests survive membership editing but not page closure, which is explicitly disclosed. No public signup, employee-role invitation or background reconciliation is added. See [evidence](../evidence/phase-01/administrator-invitation-workspace.md). Next is platform company provisioning UI; production identity and operational gates remain open.

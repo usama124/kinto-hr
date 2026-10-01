@@ -8,6 +8,9 @@ import {
   tenantRoleSchema,
   type AuthenticatedIdentity,
   companyProvisioningSchema,
+  platformCompanyQuerySchema,
+  platformCompanyListSchema,
+  type PlatformCompanyQuery,
   type CompanyProvisioning,
   employeeAccountProvisioningSchema,
   employeeAccountReactivationSchema,
@@ -511,6 +514,31 @@ export async function inAuthorizedTenant<T>(
       throw new DomainError('FORBIDDEN');
     return work(tx, { identityId: identity.id, membershipId: membership.id });
   });
+}
+
+export async function listPlatformCompanies(
+  db: PrismaClient,
+  actor: { identityId: string; mfaVerified: boolean },
+  query: PlatformCompanyQuery,
+) {
+  tenantIdSchema.parse(actor.identityId);
+  const input = platformCompanyQuerySchema.parse(query);
+  const rows = await db.$queryRaw<{ outcome: string; payload: unknown }[]>`
+    SELECT * FROM public.list_platform_companies(${actor.identityId}::uuid,${actor.mfaVerified},${input.limit}::integer,${input.after ?? null}::uuid,${input.search ?? null}::varchar)`;
+  if (rows[0]?.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (rows[0]?.outcome !== 'ok') throw new DomainError('CONFLICT');
+  return platformCompanyListSchema.parse(rows[0].payload);
+}
+
+export async function checkPlatformOperatorAccess(
+  db: PrismaClient,
+  actor: { identityId: string; mfaVerified: boolean },
+) {
+  tenantIdSchema.parse(actor.identityId);
+  const rows = await db.$queryRaw<{ allowed: boolean }[]>`
+    SELECT public.check_platform_operator_access(${actor.identityId}::uuid, ${actor.mfaVerified}) AS allowed`;
+  if (rows[0]?.allowed !== true) throw new DomainError('FORBIDDEN');
+  return { canProvisionCompany: true as const };
 }
 
 export async function requestCompanyProvisioning(

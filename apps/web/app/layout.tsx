@@ -72,6 +72,12 @@ export default function RootLayout({
               <Link className="nav-item" href="/members">
                 Members &amp; access <span>14</span>
               </Link>
+              <Link className="nav-item" href="/platform/companies">
+                Company onboarding <span>15</span>
+              </Link>
+              <Link className="nav-item" href="/platform">
+                Company directory <span>16</span>
+              </Link>
             </nav>
             <div className="upcoming">
               <span className="nav-heading">UPCOMING MODULES</span>

@@ -2544,3 +2544,273 @@ test('administrator invitation handles conflicts, malformed replies and lost aut
     page.getByRole('region', { name: 'Administrator invitation' }),
   ).toHaveCount(0);
 });
+
+test('platform operator creates a complimentary company with exact safe retries', async ({
+  page,
+}) => {
+  const tenantId = '9d2ea3ef-3938-42d0-84f9-d2248f692f67';
+  const requestId = '44c4bf77-58bb-42ea-9886-5db47c1c3de5';
+  let attempts = 0;
+  let key = '';
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({
+      json: { csrfToken: 'b'.repeat(43), selectedTenantId: null, tenants: [] },
+    }),
+  );
+  await page.route('**/api/v1/platform/access', (route) =>
+    route.fulfill({ json: { canProvisionCompany: true } }),
+  );
+  await page.route('**/api/v1/platform/tenants', (route) => {
+    const request = route.request();
+    expect(request.method()).toBe('POST');
+    expect(request.headers()['x-csrf-token']).toBe('b'.repeat(43));
+    expect(request.postDataJSON()).toEqual({
+      companyName: 'Synthetic Company',
+      initialOwnerEmail: 'owner@example.com',
+      employeeLimit: 50,
+      billingMode: 'complimentary',
+    });
+    attempts += 1;
+    const currentKey = request.headers()['idempotency-key'];
+    expect(currentKey).toMatch(/^[0-9a-f-]{36}$/);
+    if (attempts === 1) {
+      key = currentKey;
+      return route.fulfill({ status: 503, json: {} });
+    }
+    expect(currentKey).toBe(key);
+    return route.fulfill({
+      status: 202,
+      json: {
+        tenantId,
+        provisioningRequestId: requestId,
+        status:
+          attempts === 2 ? 'pending_identity_provider' : 'pending_activation',
+        replayed: true,
+      },
+    });
+  });
+  await page.goto('/platform/companies');
+  await expect(
+    page.getByRole('heading', { name: 'Create company account' }),
+  ).toBeVisible();
+  await expect(page.getByLabel('Employee package')).toBeDisabled();
+  await page
+    .getByLabel('Company name', { exact: true })
+    .fill(' Synthetic Company ');
+  await page.getByLabel('Initial owner email').fill('Owner@Example.COM');
+  await page.getByLabel('Access model').selectOption('complimentary');
+  await page.getByLabel('Employee package').selectOption('50');
+  await page
+    .getByRole('button', { name: 'Create company', exact: true })
+    .click();
+  await expect(page.getByRole('status')).toHaveText(/could not be confirmed/);
+  await expect(page.getByLabel('Company name', { exact: true })).toBeDisabled();
+  await page
+    .getByRole('button', { name: 'Retry same company request' })
+    .click();
+  await expect(page.getByRole('status')).toHaveText(
+    /Company recorded.*No owner access is granted/,
+  );
+  await page
+    .getByRole('button', { name: 'Retry same company request' })
+    .click();
+  await expect(page.getByRole('status')).toHaveText(
+    /Access remains pending until verified activation/,
+  );
+  await expect(page.getByText(/Existing request replayed/)).toBeVisible();
+  expect(attempts).toBe(3);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  await page.getByRole('button', { name: 'Create another company' }).click();
+  await expect(page.getByLabel('Company name', { exact: true })).toHaveValue(
+    '',
+  );
+  await expect(page.getByLabel('Access model')).toHaveValue('free');
+});
+
+test('company onboarding denies nonoperators and handles conflicts and malformed replies', async ({
+  page,
+}) => {
+  let accessStatus = 403;
+  let accessBody: unknown = { canProvisionCompany: true };
+  let attempts = 0;
+  const keys: string[] = [];
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({
+      json: { csrfToken: 'b'.repeat(43), selectedTenantId: null, tenants: [] },
+    }),
+  );
+  await page.route('**/api/v1/platform/access', (route) =>
+    route.fulfill({ status: accessStatus, json: accessBody }),
+  );
+  await page.route('**/api/v1/platform/tenants', (route) => {
+    attempts += 1;
+    keys.push(route.request().headers()['idempotency-key']);
+    expect(route.request().postDataJSON()).toMatchObject({
+      employeeLimit: 5,
+      billingMode: 'free',
+    });
+    return route.fulfill({
+      status: attempts === 1 ? 409 : attempts === 2 ? 202 : 401,
+      json:
+        attempts === 2
+          ? { status: 'unknown', initialOwnerEmail: 'hidden@example.com' }
+          : {},
+    });
+  });
+  await page.goto('/platform/companies');
+  await expect(page.getByRole('main')).toHaveText(
+    /Only an active platform operator/,
+  );
+  await expect(
+    page.getByRole('button', { name: 'Create company', exact: true }),
+  ).toHaveCount(0);
+  expect(attempts).toBe(0);
+  accessStatus = 200;
+  accessBody = { canProvisionCompany: true, providerSecret: 'invalid' };
+  await page.reload();
+  await expect(page.getByRole('main')).toHaveText(
+    'Platform access is unavailable. Refresh and try again.',
+  );
+  accessBody = { canProvisionCompany: true };
+  await page.reload();
+  await page
+    .getByLabel('Company name', { exact: true })
+    .fill('Synthetic Free Company');
+  await page.getByLabel('Initial owner email').fill('owner@example.com');
+  await page.getByLabel('Access model').selectOption('manual_paid');
+  await page.getByLabel('Employee package').selectOption('100');
+  await page.getByLabel('Access model').selectOption('free');
+  await expect(page.getByLabel('Employee package')).toHaveValue('5');
+  await page
+    .getByRole('button', { name: 'Create company', exact: true })
+    .click();
+  await expect(page.getByRole('status')).toHaveText(/Company creation refused/);
+  await page
+    .getByRole('button', { name: 'Create company', exact: true })
+    .click();
+  await expect(page.getByRole('status')).toHaveText(/could not be confirmed/);
+  expect(keys[1]).not.toBe(keys[0]);
+  await expect(page.getByText('hidden@example.com')).toHaveCount(0);
+  await page
+    .getByRole('button', { name: 'Retry same company request' })
+    .click();
+  expect(keys[2]).toBe(keys[1]);
+  await expect(page.getByRole('main')).toHaveText(
+    'Sign in to create a company account.',
+  );
+});
+
+test('platform company directory paginates, filters and removes results after access loss', async ({
+  page,
+}) => {
+  const firstId = '00000000-0000-4000-8000-000000000001';
+  const secondId = '00000000-0000-4000-8000-000000000002';
+  let denied = false;
+  const first = {
+    id: firstId,
+    name: 'Synthetic Alpha',
+    status: 'active',
+    createdAt: '2026-10-01T09:00:00.000Z',
+    ownerSetupStatus: 'pending_activation',
+    baseSubscription: {
+      plan: 'growth',
+      planVersion: 1,
+      billingMode: 'complimentary',
+      employeeLimit: 50,
+    },
+  };
+  const second = {
+    ...first,
+    id: secondId,
+    name: 'Synthetic Beta',
+    status: 'suspended',
+    ownerSetupStatus: null,
+    baseSubscription: null,
+  };
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({ json: { selectedTenantId: null, tenants: [] } }),
+  );
+  await page.route('**/api/v1/platform/tenants?**', (route) => {
+    if (denied) return route.fulfill({ status: 403, json: {} });
+    const query = new URL(route.request().url()).searchParams;
+    expect(query.get('limit')).toBe('25');
+    if (query.get('search') === 'No match')
+      return route.fulfill({ json: { companies: [], nextCursor: null } });
+    return route.fulfill({
+      json: {
+        companies: [query.has('after') ? second : first],
+        nextCursor: query.has('after') ? null : firstId,
+      },
+    });
+  });
+  await page.goto('/platform');
+  await expect(
+    page.getByText('Synthetic Alpha', { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/Base plan: growth v1.*50 employees.*complimentary/),
+  ).toBeVisible();
+  await page.getByRole('button', { name: 'Next page' }).click();
+  await expect(page.getByText('Synthetic Beta', { exact: true })).toBeVisible();
+  await expect(page.getByText('No current base subscription')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Next page' })).toBeDisabled();
+  await page.getByRole('button', { name: 'Previous page' }).click();
+  await expect(
+    page.getByText('Synthetic Alpha', { exact: true }),
+  ).toBeVisible();
+  await page.getByLabel('Company name filter').fill('No match');
+  await page.getByRole('button', { name: 'Apply filter' }).click();
+  await expect(page.getByText('No companies match this filter.')).toBeVisible();
+  await page.getByLabel('Company name filter').fill('');
+  await page.getByRole('button', { name: 'Apply filter' }).click();
+  await expect(
+    page.getByText('Synthetic Alpha', { exact: true }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  denied = true;
+  await page.getByRole('button', { name: 'Refresh companies' }).click();
+  await expect(page.getByRole('main')).toHaveText(
+    /Only an active platform operator/,
+  );
+  await expect(page.getByText('Synthetic Alpha', { exact: true })).toHaveCount(
+    0,
+  );
+});
+
+test('platform directory fails closed for malformed metadata and signed-out sessions', async ({
+  page,
+}) => {
+  let status = 200;
+  let reads = 0;
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({ status, json: {} }),
+  );
+  await page.route('**/api/v1/platform/tenants?**', (route) => {
+    reads += 1;
+    return route.fulfill({
+      json: {
+        companies: [{ name: 'Private metadata', email: 'private@example.com' }],
+        nextCursor: null,
+      },
+    });
+  });
+  await page.goto('/platform');
+  await expect(page.getByRole('main')).toHaveText(
+    'Company directory is unavailable. Refresh and try again.',
+  );
+  await expect(page.getByText('private@example.com')).toHaveCount(0);
+  status = 401;
+  await page.reload();
+  await expect(page.getByRole('main')).toHaveText(
+    'Sign in to review platform companies.',
+  );
+  expect(reads).toBe(1);
+});

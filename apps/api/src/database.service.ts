@@ -8,6 +8,8 @@ import {
   createDatabase,
   findActiveIdentity,
   requestCompanyProvisioning,
+  checkPlatformOperatorAccess,
+  listPlatformCompanies,
   reconcileCompanyOwnerProvider,
   markCompanyOwnerInvitationDelivered,
   requestEmployeeAccountProvisioning,
@@ -76,6 +78,7 @@ import {
 import {
   type AuthenticatedIdentity,
   type CompanyProvisioning,
+  type PlatformCompanyQuery,
   type EmployeeAccountProvisioning,
   type EmployeeAccountReactivation,
   type MembershipRoleUpdate,
@@ -128,6 +131,15 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
   }
   discoverTenants(identityId: string) {
     return discoverIdentityTenants(this.db, identityId);
+  }
+  platformAccess(actor: { identityId: string; mfaVerified: boolean }) {
+    return checkPlatformOperatorAccess(this.db, actor);
+  }
+  platformCompanies(
+    actor: { identityId: string; mfaVerified: boolean },
+    query: PlatformCompanyQuery,
+  ) {
+    return listPlatformCompanies(this.db, actor, query);
   }
   provisionCompany(
     actor: { identityId: string; mfaVerified: boolean },

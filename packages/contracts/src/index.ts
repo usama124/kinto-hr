@@ -1217,6 +1217,61 @@ export const companyProvisioningSchema = z
       });
   });
 export type CompanyProvisioning = z.infer<typeof companyProvisioningSchema>;
+export const platformAccessSchema = z.strictObject({
+  canProvisionCompany: z.literal(true),
+});
+export const platformCompanyQuerySchema = z.strictObject({
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+  after: tenantIdSchema.optional(),
+  search: z.string().trim().min(1).max(160).optional(),
+});
+export type PlatformCompanyQuery = z.infer<typeof platformCompanyQuerySchema>;
+export const platformCompanyListSchema = z.strictObject({
+  companies: z
+    .array(
+      z.strictObject({
+        id: tenantIdSchema,
+        name: z.string().min(1).max(160),
+        status: z.enum(['active', 'suspended']),
+        createdAt: z.iso.datetime({ offset: true }),
+        ownerSetupStatus: z
+          .enum([
+            'pending_identity_provider',
+            'pending_activation',
+            'active',
+            'failed',
+            'revoked',
+          ])
+          .nullable(),
+        baseSubscription: z
+          .strictObject({
+            plan: z.enum(['free', 'starter', 'growth', 'business', 'scale']),
+            planVersion: z.number().int().positive(),
+            billingMode: z.enum(['free', 'complimentary', 'manual_paid']),
+            employeeLimit: z.number().int().min(0).max(250),
+          })
+          .nullable(),
+      }),
+    )
+    .max(100),
+  nextCursor: tenantIdSchema.nullable(),
+});
+export type PlatformCompanyList = z.infer<typeof platformCompanyListSchema>;
+export const companyProvisioningResultSchema = z.strictObject({
+  tenantId: tenantIdSchema,
+  provisioningRequestId: tenantIdSchema,
+  status: z.enum([
+    'pending_identity_provider',
+    'pending_activation',
+    'active',
+    'failed',
+    'revoked',
+  ]),
+  replayed: z.boolean(),
+});
+export type CompanyProvisioningResult = z.infer<
+  typeof companyProvisioningResultSchema
+>;
 export const entitlementSnapshotSchema = z.strictObject({
   plan: z.strictObject({
     code: z.enum(['free', 'starter', 'growth', 'business', 'scale']),

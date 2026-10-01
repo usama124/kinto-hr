@@ -4,6 +4,8 @@ import {
   Controller,
   Headers,
   HttpCode,
+  Get,
+  Query,
   Inject,
   Param,
   Post,
@@ -12,6 +14,7 @@ import {
 } from '@nestjs/common';
 import {
   companyProvisioningSchema,
+  platformCompanyQuerySchema,
   entitlementChangeSchema,
   entitlementRevocationSchema,
   tenantIdSchema,
@@ -36,12 +39,12 @@ export class PlatformController {
     private readonly ownerProvisioning: OwnerProvisioningService,
   ) {}
 
-  private async mutationActor(req: AuthRequest) {
+  private async actor(req: AuthRequest, mutation: boolean) {
     await this.auth.limit(req.socket.remoteAddress ?? 'unknown');
     const token = readCookie(req, SESSION_COOKIE);
     if (!token) throw new UnauthorizedException();
     const session = await this.auth.session(token);
-    assertSessionMutation(req, this.auth.origin(), session.csrf);
+    if (mutation) assertSessionMutation(req, this.auth.origin(), session.csrf);
     const now = Math.floor(Date.now() / 1000);
     return {
       identityId: session.identityId,
@@ -50,6 +53,22 @@ export class PlatformController {
         session.authTime <= now &&
         now - session.authTime <= 300,
     };
+  }
+
+  private mutationActor(req: AuthRequest) {
+    return this.actor(req, true);
+  }
+
+  @Get('access')
+  async access(@Req() req: AuthRequest) {
+    return this.database.platformAccess(await this.actor(req, false));
+  }
+  @Get('tenants')
+  async companies(@Req() req: AuthRequest, @Query() query: unknown) {
+    const actor = await this.actor(req, false);
+    const input = platformCompanyQuerySchema.safeParse(query);
+    if (!input.success) throw new BadRequestException();
+    return this.database.platformCompanies(actor, input.data);
   }
 
   @Post('tenants')

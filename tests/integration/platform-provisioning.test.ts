@@ -7,6 +7,8 @@ import {
   markCompanyOwnerInvitationDelivered,
   reconcileCompanyOwnerProvider,
   requestCompanyProvisioning,
+  checkPlatformOperatorAccess,
+  listPlatformCompanies,
 } from '@kinto/database';
 
 if (existsSync('.env')) process.loadEnvFile('.env');
@@ -78,6 +80,78 @@ describe('platform-only company provisioning boundary', () => {
     await Promise.all([admin.$disconnect(), runtime.$disconnect()]);
   });
 
+  it('checks operator access without disclosing records or changing state', async () => {
+    expect(
+      await checkPlatformOperatorAccess(runtime, {
+        identityId: operatorId,
+        mfaVerified: true,
+      }),
+    ).toEqual({ canProvisionCompany: true });
+    for (const actor of [
+      { identityId: ordinaryIdentityId, mfaVerified: true },
+      { identityId: operatorId, mfaVerified: false },
+    ])
+      await expect(checkPlatformOperatorAccess(runtime, actor)).rejects.toThrow(
+        'FORBIDDEN',
+      );
+    const nullMfa = await runtime.$queryRaw<
+      { allowed: boolean }[]
+    >`SELECT public.check_platform_operator_access(${operatorId}::uuid,NULL) AS allowed`;
+    expect(nullMfa[0].allowed).toBe(false);
+    try {
+      await admin.platformOperator.update({
+        where: { identityId: operatorId },
+        data: { status: 'revoked' },
+      });
+      await expect(
+        checkPlatformOperatorAccess(runtime, {
+          identityId: operatorId,
+          mfaVerified: true,
+        }),
+      ).rejects.toThrow('FORBIDDEN');
+      await admin.platformOperator.update({
+        where: { identityId: operatorId },
+        data: { status: 'active' },
+      });
+      await admin.identity.update({
+        where: { id: operatorId },
+        data: { status: 'disabled' },
+      });
+      await expect(
+        checkPlatformOperatorAccess(runtime, {
+          identityId: operatorId,
+          mfaVerified: true,
+        }),
+      ).rejects.toThrow('FORBIDDEN');
+    } finally {
+      await admin.platformOperator.update({
+        where: { identityId: operatorId },
+        data: { status: 'active' },
+      });
+      await admin.identity.update({
+        where: { id: operatorId },
+        data: { status: 'active' },
+      });
+    }
+    const [definition] = await admin.$queryRaw<
+      {
+        owner: string;
+        secured: boolean;
+        config: string[];
+        publicAccess: boolean;
+      }[]
+    >`
+      SELECT pg_get_userbyid(p.proowner) AS owner, p.prosecdef AS secured, p.proconfig AS config,
+        EXISTS (SELECT 1 FROM aclexplode(p.proacl) a WHERE a.grantee = 0 AND a.privilege_type = 'EXECUTE') AS "publicAccess"
+      FROM pg_proc p WHERE p.oid = 'public.check_platform_operator_access(uuid,boolean)'::regprocedure`;
+    expect(definition).toMatchObject({
+      owner: 'kinto_control_owner',
+      secured: true,
+      publicAccess: false,
+    });
+    expect(definition.config).toContain('search_path=pg_catalog, public');
+  });
+
   it('denies ordinary identities, missing MFA, and all direct runtime writes', async () => {
     for (const actor of [
       { identityId: ordinaryIdentityId, mfaVerified: true },
@@ -122,6 +196,60 @@ describe('platform-only company provisioning boundary', () => {
       }),
     ).rejects.toThrow();
     await expect(runtime.ownerInvitation.findMany()).rejects.toThrow();
+  });
+
+  it('lists private-field-free company metadata with bounded stable pages and literal filters', async () => {
+    const marker = `Directory ${operatorId}`;
+    for (const suffix of [' A%', ' B']) {
+      const created = await requestCompanyProvisioning(
+        runtime,
+        { identityId: operatorId, mfaVerified: true },
+        randomUUID(),
+        { ...input, companyName: marker + suffix },
+      );
+      tenantIds.push(created.tenantId);
+    }
+    const actor = { identityId: operatorId, mfaVerified: true };
+    const first = await listPlatformCompanies(runtime, actor, {
+      limit: 1,
+      search: marker,
+    });
+    expect(first.companies).toHaveLength(1);
+    expect(first.nextCursor).toBe(first.companies[0].id);
+    const second = await listPlatformCompanies(runtime, actor, {
+      limit: 1,
+      search: marker,
+      after: first.nextCursor!,
+    });
+    expect(second.companies).toHaveLength(1);
+    expect(second.nextCursor).toBeNull();
+    expect(first.companies[0].id < second.companies[0].id).toBe(true);
+    expect(first.companies[0]).toMatchObject({
+      ownerSetupStatus: 'pending_identity_provider',
+      baseSubscription: {
+        plan: 'starter',
+        planVersion: 1,
+        billingMode: 'complimentary',
+        employeeLimit: 20,
+      },
+    });
+    expect(JSON.stringify(first)).not.toContain(input.initialOwnerEmail);
+    const literal = await listPlatformCompanies(runtime, actor, {
+      limit: 25,
+      search: marker + ' A%',
+    });
+    expect(literal.companies).toHaveLength(1);
+    for (const denied of [
+      { identityId: ordinaryIdentityId, mfaVerified: true },
+      { identityId: operatorId, mfaVerified: false },
+    ])
+      await expect(
+        listPlatformCompanies(runtime, denied, { limit: 25 }),
+      ).rejects.toThrow('FORBIDDEN');
+    const invalid = await runtime.$queryRaw<
+      { outcome: string }[]
+    >`SELECT outcome FROM public.list_platform_companies(${operatorId}::uuid,true,NULL,NULL,NULL)`;
+    expect(invalid[0].outcome).toBe('invalid');
   });
 
   it('atomically creates one denied-until-provider request and both audit records', async () => {

@@ -29,6 +29,8 @@ const session = {
 };
 const limit = vi.fn().mockResolvedValue(undefined);
 const getSession = vi.fn().mockResolvedValue(session);
+const platformAccess = vi.fn();
+const platformCompanies = vi.fn();
 const previewEntitlementChange = vi.fn();
 const createEntitlementChange = vi.fn();
 const revokeEntitlementChange = vi.fn();
@@ -58,6 +60,8 @@ beforeAll(async () => {
       {
         provide: DatabaseService,
         useValue: {
+          platformAccess,
+          platformCompanies,
           previewEntitlementChange,
           createEntitlementChange,
           revokeEntitlementChange,
@@ -73,6 +77,52 @@ beforeAll(async () => {
 
 beforeEach(() => vi.clearAllMocks());
 afterAll(async () => app?.close());
+
+it('reads minimal platform access using session authority and recent MFA', async () => {
+  platformAccess.mockResolvedValue({ canProvisionCompany: true });
+  await request(app.getHttpServer())
+    .get('/api/v1/platform/access')
+    .set('Cookie', `__Host-kinto-session=${token}`)
+    .expect(200, { canProvisionCompany: true });
+  expect(platformAccess).toHaveBeenLastCalledWith({
+    identityId,
+    mfaVerified: true,
+  });
+  getSession.mockResolvedValueOnce({ ...session, authTime: now - 301 });
+  await request(app.getHttpServer())
+    .get('/api/v1/platform/access')
+    .set('Cookie', `__Host-kinto-session=${token}`)
+    .expect(200);
+  expect(platformAccess).toHaveBeenLastCalledWith({
+    identityId,
+    mfaVerified: false,
+  });
+  await request(app.getHttpServer()).get('/api/v1/platform/access').expect(401);
+});
+it('lists bounded companies with strict query input and server session authority', async () => {
+  platformCompanies.mockResolvedValue({ companies: [], nextCursor: null });
+  await request(app.getHttpServer())
+    .get('/api/v1/platform/tenants?limit=10&search=Test')
+    .set('Cookie', `__Host-kinto-session=${token}`)
+    .expect(200);
+  expect(platformCompanies).toHaveBeenLastCalledWith(
+    { identityId, mfaVerified: true },
+    { limit: 10, search: 'Test' },
+  );
+  for (const query of [
+    'limit=101',
+    'after=invalid',
+    'email=private',
+    'limit=2&limit=3',
+  ])
+    await request(app.getHttpServer())
+      .get(`/api/v1/platform/tenants?${query}`)
+      .set('Cookie', `__Host-kinto-session=${token}`)
+      .expect(400);
+  await request(app.getHttpServer())
+    .get('/api/v1/platform/tenants')
+    .expect(401);
+});
 
 it('previews and creates strict entitlement changes with a recent-MFA actor', async () => {
   previewEntitlementChange.mockResolvedValueOnce({ changes: {} });
