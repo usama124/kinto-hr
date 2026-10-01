@@ -917,6 +917,8 @@ test('HR validates and atomically commits a fixed employee CSV', async ({
 test('HR creates, activates, separates, archives and rehires an employee', async ({
   page,
 }) => {
+  // Keep future termination fixtures independent of the real calendar date.
+  await page.clock.setFixedTime(new Date('2026-09-20T09:00:00.000Z'));
   const tenantId = '9d2ea3ef-3938-42d0-84f9-d2248f692f67';
   const employeeId = '44c4bf77-58bb-42ea-9886-5db47c1c3de5';
   const branchId = '82ffbc9e-febd-4a62-bdaf-fd8740ee6982';
@@ -1924,4 +1926,155 @@ test('employee role cannot open the company document manager', async ({
     'Only company owners and HR administrators can manage documents.',
   );
   expect(rosterRequests).toBe(0);
+});
+
+test('employee shared documents download and handle revoked access', async ({
+  page,
+}) => {
+  const tenantId = '9d2ea3ef-3938-42d0-84f9-d2248f692f67';
+  const documentId = 'c49ece51-c534-45c7-845e-643f8e010658';
+  let contentStatus = 200;
+  let hrRequests = 0;
+  await page.route('**/api/v1/tenants/*/employees**', (route) => {
+    hrRequests += 1;
+    return route.fulfill({ status: 403 });
+  });
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({
+      json: {
+        selectedTenantId: tenantId,
+        tenants: [
+          { id: tenantId, name: 'Synthetic Company', roles: ['employee'] },
+        ],
+      },
+    }),
+  );
+  await page.route(`**/api/v1/tenants/${tenantId}/me/documents`, (route) =>
+    route.fulfill({
+      json: {
+        documents: [
+          {
+            id: documentId,
+            employeeId: 'd00fdc0d-7773-4a45-ae0d-99a43b072401',
+            category: 'employment',
+            visibility: 'employee_visible',
+            fileName: 'shared-contract.pdf',
+            contentType: 'application/pdf',
+            sizeBytes: 10,
+            status: 'clean',
+            expiresOn: null,
+            replacementDocumentId: null,
+            createdAt: '2026-09-01T09:00:00.000Z',
+            scannedAt: '2026-09-01T09:01:00.000Z',
+            removedAt: null,
+            removalReason: null,
+            removalReplacementDocumentId: null,
+          },
+        ],
+      },
+    }),
+  );
+  await page.route(
+    `**/api/v1/tenants/${tenantId}/me/documents/${documentId}/content`,
+    (route) =>
+      route.fulfill({
+        status: contentStatus,
+        contentType: 'application/pdf',
+        body: '%PDF-test',
+      }),
+  );
+  await page.goto('/my-documents');
+  await expect(
+    page.getByRole('heading', { name: 'My documents' }),
+  ).toBeVisible();
+  const button = page.getByRole('button', {
+    name: 'Download shared-contract.pdf',
+  });
+  const download = page.waitForEvent('download');
+  await button.click();
+  expect((await download).suggestedFilename()).toBe(
+    `document-${documentId}.pdf`,
+  );
+  await expect(page.getByRole('status')).toHaveText(
+    'Authorized document download started.',
+  );
+  contentStatus = 503;
+  await button.click();
+  await expect(page.getByRole('status')).toHaveText(/storage is unavailable/);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  contentStatus = 403;
+  await button.click();
+  await expect(page.getByRole('main')).toHaveText(
+    /Employee document access is unavailable/,
+  );
+  await expect(
+    page.getByText('shared-contract.pdf', { exact: true }),
+  ).toHaveCount(0);
+  expect(hrRequests).toBe(0);
+});
+
+test('employee documents handle empty, invalid, unavailable and session states', async ({
+  page,
+}) => {
+  const tenantId = '9d2ea3ef-3938-42d0-84f9-d2248f692f67';
+  let sessionStatus = 200;
+  let selectedTenantId: string | null = tenantId;
+  let roles = ['employee'];
+  let listStatus = 200;
+  let listBody: unknown = { documents: [] };
+  let listRequests = 0;
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({
+      status: sessionStatus,
+      json: {
+        selectedTenantId,
+        tenants: [{ id: tenantId, name: 'Synthetic Company', roles }],
+      },
+    }),
+  );
+  await page.route(`**/api/v1/tenants/${tenantId}/me/documents`, (route) => {
+    listRequests += 1;
+    return route.fulfill({ status: listStatus, json: listBody });
+  });
+  await page.goto('/my-documents');
+  await expect(
+    page.getByText('No documents have been shared with you.'),
+  ).toBeVisible();
+  listBody = { documents: [{ fileName: 'invalid-private.pdf' }] };
+  await page.reload();
+  await expect(page.getByRole('main')).toHaveText(
+    'Your documents are unavailable. Refresh and try again.',
+  );
+  await expect(page.getByText('invalid-private.pdf')).toHaveCount(0);
+  listStatus = 503;
+  await page.reload();
+  await expect(page.getByRole('main')).toHaveText(
+    'Your documents are unavailable. Refresh and try again.',
+  );
+  listStatus = 403;
+  await page.reload();
+  await expect(page.getByRole('main')).toHaveText(
+    /Employee document access is unavailable/,
+  );
+  const priorRequests = listRequests;
+  roles = ['hr_admin'];
+  await page.reload();
+  await expect(page.getByRole('main')).toHaveText(
+    /Employee document access is unavailable/,
+  );
+  selectedTenantId = null;
+  await page.reload();
+  await expect(page.getByRole('main')).toHaveText(
+    'Choose a company workspace to view your documents.',
+  );
+  sessionStatus = 401;
+  await page.reload();
+  await expect(page.getByRole('main')).toHaveText(
+    'Sign in to view your documents.',
+  );
+  expect(listRequests).toBe(priorRequests);
 });
