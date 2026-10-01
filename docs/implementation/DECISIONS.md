@@ -50,6 +50,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 1 October 2026 — employee shared-document workspace
+
+Engineering added `/my-documents` over the existing identity-derived employee document APIs. Employee sessions can list and download their shared clean documents without choosing an employee ID or reading the company roster. Strict projections, no-store requests and fresh server authorization on each download preserve the existing visibility, expiry and replacement boundary. Denied downloads remove the visible list; storage failure remains retryable. No registration, upload, replacement or self-signup privilege is added. Desktop/mobile tests cover downloads, outage, revoked access, empty/invalid projections and session/role gates. Production storage, scanning, retention and recovery remain unresolved. See [evidence](../evidence/phase-01/employee-shared-document-workspace.md).
+
 ### 30 September 2026 — owner/HR employee document manager
 
 Engineering added a responsive selected-company document workspace for owners/HR. It strictly parses the employee/document projections, computes upload digests in-browser, uses memory-only idempotency, supports exact-file retry after scanner/storage outage, shows only authoritative clean downloads and requires a reason to activate replacements. PostgreSQL now independently rejects replacing a candidate that never became authoritative. Local storage remains prohibited in production, and physical purge remains blocked by E09. See [workspace evidence](../evidence/phase-01/employee-document-workspace.md).
