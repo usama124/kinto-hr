@@ -1123,6 +1123,28 @@ export const administrativeTenantRoleSchema = z.enum([
   'payroll_preparer',
   'payroll_approver',
 ]);
+export const membershipAdministrationResultSchema = z.strictObject({
+  id: tenantIdSchema,
+  status: z.enum(['active', 'revoked']),
+  roles: tenantRoleSchema
+    .array()
+    .min(1)
+    .max(5)
+    .refine((roles) => new Set(roles).size === roles.length),
+  version: z.number().int().positive(),
+});
+export const membershipAdministrationSchema =
+  membershipAdministrationResultSchema.extend({
+    identityId: tenantIdSchema,
+    employeeId: tenantIdSchema.nullable(),
+    createdAt: z.iso.datetime(),
+  });
+export const membershipAdministrationListSchema = z.strictObject({
+  memberships: membershipAdministrationSchema.array(),
+});
+export type MembershipAdministration = z.infer<
+  typeof membershipAdministrationSchema
+>;
 const administrativeRoleOrder = administrativeTenantRoleSchema.options;
 export const membershipRoleUpdateSchema = z.strictObject({
   expectedVersion: z.number().int().positive(),

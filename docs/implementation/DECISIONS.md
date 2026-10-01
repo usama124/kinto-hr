@@ -50,6 +50,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 1 October 2026 — owner membership access workspace
+
+Engineering added `/members` for selected-company owners to list memberships, replace existing administrative roles and revoke access through the existing recent-MFA, CSRF-protected, versioned and audited APIs. Strict response contracts reject private or malformed metadata. Employee-linked/employee-role records and revoked access have no edit controls. Conflicts refresh the list; uncertain mutation outcomes block further edits until refreshed. PostgreSQL retains final-owner and employee-link protection. Invitations and administrator display names are separate work, and production operational gates remain open. See [evidence](../evidence/phase-01/membership-access-workspace.md).
+
 ### 1 October 2026 — employee shared-document workspace
 
 Engineering added `/my-documents` over the existing identity-derived employee document APIs. Employee sessions can list and download their shared clean documents without choosing an employee ID or reading the company roster. Strict projections, no-store requests and fresh server authorization on each download preserve the existing visibility, expiry and replacement boundary. Denied downloads remove the visible list; storage failure remains retryable. No registration, upload, replacement or self-signup privilege is added. Desktop/mobile tests cover downloads, outage, revoked access, empty/invalid projections and session/role gates. Production storage, scanning, retention and recovery remain unresolved. See [evidence](../evidence/phase-01/employee-shared-document-workspace.md).

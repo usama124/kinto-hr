@@ -13,6 +13,8 @@ import {
   employeeAccountReactivationResultSchema,
   membershipRoleUpdateSchema,
   membershipRevocationSchema,
+  membershipAdministrationListSchema,
+  membershipAdministrationResultSchema,
   administratorInvitationSchema,
   securityAuditQuerySchema,
   legalEntityCreateSchema,
@@ -757,6 +759,36 @@ it('requires explicit authenticated identity claims without accepting supplied r
   expect(tenantRoleSchema.safeParse('platform_operator').success).toBe(false);
 });
 it('accepts only canonical administrative membership mutations', () => {
+  const result = {
+    id: crypto.randomUUID(),
+    status: 'active',
+    roles: ['owner'],
+    version: 1,
+  };
+  const member = {
+    ...result,
+    identityId: crypto.randomUUID(),
+    employeeId: null,
+    createdAt: '2026-10-01T09:00:00.000Z',
+  };
+  expect(membershipAdministrationResultSchema.parse(result)).toEqual(result);
+  expect(
+    membershipAdministrationListSchema.parse({ memberships: [member] }),
+  ).toEqual({ memberships: [member] });
+  for (const change of [
+    { status: 'pending' },
+    { roles: ['platform_operator'] },
+    { roles: ['owner', 'owner'] },
+    { version: 0 },
+    { employeeId: 'invalid' },
+    { createdAt: 'invalid' },
+    { email: 'private@example.com' },
+  ])
+    expect(
+      membershipAdministrationListSchema.safeParse({
+        memberships: [{ ...member, ...change }],
+      }).success,
+    ).toBe(false);
   expect(
     membershipRoleUpdateSchema.parse({
       expectedVersion: 2,
