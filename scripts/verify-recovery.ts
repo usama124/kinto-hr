@@ -18,6 +18,7 @@ import {
   createEmployeeDraft,
   createTenantEmployee,
   createEntitlementChange,
+  revokeEntitlementChange,
   inTenant,
   inAuthorizedTenant,
   requestCompanyProvisioning,
@@ -86,6 +87,7 @@ async function snapshot(db: PrismaClient) {
       'entitlement_creation_receipts',
       'entitlement_grants',
       'entitlement_overrides',
+      'entitlement_revocation_receipts',
       'identities',
       'job_deliveries',
       'legal_entities',
@@ -176,6 +178,14 @@ async function snapshot(db: PrismaClient) {
     tenantEntitlementStates: await db.tenantEntitlementState.findMany({
       orderBy: { tenantId: 'asc' },
     }),
+    entitlementRevocationReceipts:
+      await db.entitlementRevocationReceipt.findMany({
+        orderBy: [
+          { tenantId: 'asc' },
+          { actorId: 'asc' },
+          { requestId: 'asc' },
+        ],
+      }),
     entitlementCreationReceipts: await db.entitlementCreationReceipt.findMany({
       orderBy: [{ tenantId: 'asc' }, { actorId: 'asc' }, { requestId: 'asc' }],
     }),
@@ -835,6 +845,20 @@ async function main() {
       entitlementInput,
       entitlementRequestId,
     );
+    const revocationRequestId = randomUUID();
+    const revocationInput = {
+      expectedVersion: 1,
+      reason: 'Recovery fixture exact revocation',
+    };
+    const revocationReceipt = await revokeEntitlementChange(
+      sourceApp,
+      { identityId: operator.id, mfaVerified: true },
+      provisioning.tenantId,
+      'grant',
+      entitlementReceipt.id,
+      revocationInput,
+      revocationRequestId,
+    );
     const invitationExpiry = new Date(Date.now() + 48 * 60 * 60 * 1000);
     await reconcileCompanyOwnerProvider(
       sourceApp,
@@ -927,6 +951,20 @@ async function main() {
       entitlementReceipt,
     );
     assert.deepEqual(await snapshot(restored), expected);
+    stage = 'restored entitlement revocation retry';
+    assert.deepEqual(
+      await revokeEntitlementChange(
+        restoredApp,
+        { identityId: operator.id, mfaVerified: true },
+        provisioning.tenantId,
+        'grant',
+        entitlementReceipt.id,
+        revocationInput,
+        revocationRequestId,
+      ),
+      revocationReceipt,
+    );
+    assert.deepEqual(await snapshot(restored), expected);
     stage = 'restored runtime roles';
     await Promise.all([
       assertSafeRuntimeRole(restoredApp),
@@ -936,7 +974,7 @@ async function main() {
     const policies = await restored.$queryRaw<
       { enabled: boolean; forced: boolean }[]
     >`SELECT relrowsecurity AS enabled, relforcerowsecurity AS forced FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND relkind='r' AND relname <> '_prisma_migrations'`;
-    assert.equal(policies.length, 40);
+    assert.equal(policies.length, 41);
     assert.ok(policies.every((row) => row.enabled && row.forced));
     assert.deepEqual(await restoredApp.employee.findMany(), []);
     stage = 'restored tenant lifecycle visibility';
@@ -1094,6 +1132,7 @@ async function main() {
       entitlementCatalogAndSubscriptionPreserved: true,
       entitlementGrantAndVersionPreserved: true,
       entitlementCreationReceiptRetryPreserved: true,
+      entitlementRevocationReceiptRetryPreserved: true,
       pendingAdministratorInvitationPreserved: true,
     };
     await writeFile(

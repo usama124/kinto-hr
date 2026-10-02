@@ -2875,6 +2875,7 @@ test('operator previews, applies and revokes a dated capacity control', async ({
         });
       }
       if (request.url().endsWith('/revocation')) {
+        expect(request.headers()['idempotency-key']).toMatch(/^[0-9a-f-]{36}$/);
         expect(input).toEqual({
           expectedVersion: 1,
           reason: 'Approved grant cancellation',
@@ -3064,3 +3065,152 @@ test('operator entitlement uncertainty preserves exact retry and history fails c
     'An active company with a current subscription is required.',
   );
 });
+
+for (const finalStatus of [200, 409, 403]) {
+  test(`operator reconciles an uncertain revocation with exact request (${finalStatus})`, async ({
+    page,
+  }) => {
+    const tenantId = '9d2ea3ef-3938-42d0-84f9-d2248f692f67';
+    const controlId = '44c4bf77-58bb-42ea-9886-5db47c1c3de5';
+    const fixture = operatorEntitlementFixture(tenantId);
+    fixture.controls.push({
+      id: controlId,
+      kind: 'grant',
+      changeType: 'capacity_addon',
+      seatDelta: 5,
+      employeeLimit: null,
+      startsAt: '2026-09-01T00:00:00Z',
+      endsAt: '2027-01-01T00:00:00Z',
+      status: 'active',
+      version: 1,
+      reason: 'Synthetic capacity control',
+      revokedReason: null,
+    });
+    let status = 503;
+    let historyStatus = 200;
+    const attempts: { key: string; url: string; body: unknown }[] = [];
+    await page.route('**/api/v1/auth/session', (route) =>
+      route.fulfill({ json: { csrfToken: 'b'.repeat(43) } }),
+    );
+    await page.route(
+      `**/api/v1/platform/tenants/${tenantId}/entitlements`,
+      (route) => route.fulfill({ status: historyStatus, json: fixture }),
+    );
+    await page.route(
+      `**/api/v1/platform/tenants/${tenantId}/entitlement-changes/grant/${controlId}/revocation`,
+      (route) => {
+        const request = route.request();
+        expect(request.headers()['x-csrf-token']).toBe('b'.repeat(43));
+        expect(request.headers()['idempotency-key']).toMatch(/^[0-9a-f-]{36}$/);
+        expect(request.postDataJSON()).toEqual({
+          expectedVersion: 1,
+          reason: 'Approved cancellation with exact retry',
+        });
+        attempts.push({
+          key: request.headers()['idempotency-key'],
+          url: request.url(),
+          body: request.postDataJSON(),
+        });
+        Object.assign(fixture.controls[0], {
+          status: 'revoked',
+          version: 2,
+          revokedReason: 'Approved cancellation with exact retry',
+        });
+        fixture.effective.entitlementVersion = 3;
+        return route.fulfill({
+          status,
+          json:
+            status === 200
+              ? { id: controlId, version: 2, entitlementVersion: 3 }
+              : {},
+        });
+      },
+    );
+    await page.goto(`/platform/companies/${tenantId}/entitlements`);
+    await page
+      .getByLabel(`Revocation reason ${controlId}`)
+      .fill('Approved cancellation with exact retry');
+    page.once('dialog', (dialog) => dialog.dismiss());
+    await page
+      .getByRole('button', { name: `Revoke control ${controlId}` })
+      .click();
+    expect(attempts).toHaveLength(0);
+    page.once('dialog', (dialog) => dialog.accept());
+    await page
+      .getByRole('button', { name: `Revoke control ${controlId}` })
+      .click();
+    await expect(page.getByRole('status')).toHaveText(
+      /Further mutations are blocked/,
+    );
+    await expect(
+      page.getByRole('button', { name: 'Preview control' }),
+    ).toBeDisabled();
+    await page
+      .getByRole('button', { name: 'Refresh entitlement history' })
+      .click();
+    await expect(
+      page.getByText('Revocation: Approved cancellation with exact retry'),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: `Revoke control ${controlId}` }),
+    ).toHaveCount(0);
+    if (finalStatus === 200) {
+      historyStatus = 503;
+      await page
+        .getByRole('button', { name: 'Refresh entitlement history' })
+        .click();
+      await expect(
+        page.getByText(
+          'Entitlement controls are unavailable. Refresh and try again.',
+        ),
+      ).toBeVisible();
+      await expect(
+        page.getByRole('heading', { name: 'Synthetic Controlled Company' }),
+      ).toHaveCount(0);
+      await expect(
+        page.getByRole('button', { name: 'Retry exact revocation request' }),
+      ).toBeVisible();
+    }
+    await page
+      .getByRole('button', { name: 'Retry exact revocation request' })
+      .click();
+    await expect(page.getByRole('status')).toHaveText(
+      /Further mutations are blocked/,
+    );
+    expect(attempts[1]).toEqual(attempts[0]);
+    status = finalStatus;
+    historyStatus = 200;
+    await page
+      .getByRole('button', { name: 'Retry exact revocation request' })
+      .click();
+    if (finalStatus === 200) {
+      await expect(page.getByRole('status')).toHaveText(
+        'Revocation receipt confirmed. Review current history for effective status.',
+      );
+      await expect(
+        page.getByRole('button', { name: 'Preview control' }),
+      ).toBeEnabled();
+    } else if (finalStatus === 409) {
+      await expect(page.getByRole('status')).toHaveText(
+        /Change refused or stale/,
+      );
+      await expect(
+        page.getByRole('button', { name: 'Preview control' }),
+      ).toBeEnabled();
+    } else {
+      await expect(page.getByRole('main')).toHaveText(
+        /Only an active platform operator/,
+      );
+    }
+    await expect(
+      page.getByRole('button', { name: 'Retry exact revocation request' }),
+    ).toHaveCount(0);
+    expect(attempts).toHaveLength(3);
+    expect(attempts[2]).toEqual(attempts[0]);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+  });
+}

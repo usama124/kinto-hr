@@ -48,6 +48,7 @@ model Tenant {
   entitlementGrants            EntitlementGrant[]
   entitlementOverrides         EntitlementOverride[]
   entitlementCreationReceipts   EntitlementCreationReceipt[]
+  entitlementRevocationReceipts EntitlementRevocationReceipt[]
 
   @@map("tenants")
 }
@@ -60,6 +61,7 @@ model Identity {
   createdAt                    DateTime                      @default(now()) @map("created_at") @db.Timestamptz()
   memberships                  Membership[]
   entitlementCreationReceipts   EntitlementCreationReceipt[]
+  entitlementRevocationReceipts EntitlementRevocationReceipt[]
   platformOperator             PlatformOperator?
   companyProvisioningRequests  CompanyProvisioningRequest[]
   platformAuditEvents          PlatformAuditEvent[]
@@ -878,4 +880,18 @@ model EntitlementCreationReceipt {
 
   @@id([tenantId, actorId, requestId])
   @@map("entitlement_creation_receipts")
+}
+
+model EntitlementRevocationReceipt {
+  tenantId String @map("tenant_id") @db.Uuid
+  actorId String @map("actor_id") @db.Uuid
+  requestId String @map("request_id") @db.Uuid
+  input Json
+  result Json
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  actor Identity @relation(fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@id([tenantId, actorId, requestId])
+  @@map("entitlement_revocation_receipts")
 }

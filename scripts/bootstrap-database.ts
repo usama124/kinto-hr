@@ -141,6 +141,8 @@ try {
     'CREATE POLICY platform_control ON tenant_subscriptions FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON tenant_entitlement_states',
     'CREATE POLICY platform_control ON tenant_entitlement_states FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
+    'DROP POLICY IF EXISTS platform_control ON entitlement_revocation_receipts',
+    'CREATE POLICY platform_control ON entitlement_revocation_receipts FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON entitlement_creation_receipts',
     'CREATE POLICY platform_control ON entitlement_creation_receipts FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON entitlement_grants',
@@ -265,6 +267,15 @@ try {
   await database.$executeRawUnsafe(
     'REVOKE EXECUTE ON FUNCTION public.create_entitlement_change(uuid, boolean, uuid, uuid, varchar, timestamptz, timestamptz, integer, integer, varchar, uuid, uuid) FROM kinto_app',
   );
+  await database.$executeRawUnsafe(
+    'GRANT SELECT, INSERT ON entitlement_revocation_receipts TO kinto_control_owner',
+  );
+  await database.$executeRawUnsafe(
+    'ALTER FUNCTION public.revoke_entitlement_change(uuid, boolean, uuid, varchar, uuid, integer, varchar, uuid, uuid) OWNER TO kinto_control_owner',
+  );
+  await database.$executeRawUnsafe(
+    'REVOKE EXECUTE ON FUNCTION public.revoke_entitlement_change(uuid, boolean, uuid, varchar, uuid, integer, varchar, uuid, uuid) FROM kinto_app',
+  );
   for (const signature of [
     'public.reconcile_company_owner_provider(uuid, uuid, uuid, varchar, varchar, timestamptz, uuid, uuid)',
     'public.mark_company_owner_invitation_delivered(uuid, timestamptz, uuid, uuid)',
@@ -291,7 +302,7 @@ try {
     'public.read_tenant_entitlements(uuid, boolean, uuid)',
     'public.preview_entitlement_change(uuid, boolean, uuid, varchar, timestamptz, timestamptz, integer, integer)',
     'public.create_entitlement_change_idempotent(uuid, boolean, uuid, uuid, uuid, varchar, timestamptz, timestamptz, integer, integer, varchar, uuid, uuid)',
-    'public.revoke_entitlement_change(uuid, boolean, uuid, varchar, uuid, integer, varchar, uuid, uuid)',
+    'public.revoke_entitlement_change_idempotent(uuid, boolean, uuid, uuid, varchar, uuid, integer, varchar, uuid, uuid)',
     'public.read_tenant_employees(uuid, boolean, uuid, uuid)',
     'public.read_tenant_workforce_headcount_report(uuid, boolean, uuid, date, date, date)',
     'public.create_tenant_workforce_report_export(uuid, boolean, uuid, uuid, uuid, varchar, varchar, date, date, date, varchar, uuid, uuid)',

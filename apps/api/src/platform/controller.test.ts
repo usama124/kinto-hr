@@ -183,6 +183,7 @@ it('previews and creates strict entitlement changes with a recent-MFA actor', as
 
 it('revokes only a typed same-path grant or override version', async () => {
   const changeId = randomUUID();
+  const requestId = randomUUID();
   const input = { expectedVersion: 1, reason: 'Approval withdrawn' };
   revokeEntitlementChange.mockResolvedValueOnce({
     id: changeId,
@@ -194,6 +195,7 @@ it('revokes only a typed same-path grant or override version', async () => {
       `/api/v1/platform/tenants/${tenantId}/entitlement-changes/grant/${changeId}/revocation`,
     ),
   )
+    .set('Idempotency-Key', requestId)
     .send(input)
     .expect(200);
   expect(revokeEntitlementChange).toHaveBeenCalledWith(
@@ -202,6 +204,7 @@ it('revokes only a typed same-path grant or override version', async () => {
     'grant',
     changeId,
     input,
+    requestId,
   );
 });
 
@@ -259,4 +262,26 @@ it('requires a UUID creation idempotency key before invoking the database', asyn
       .expect(400);
   }
   expect(createEntitlementChange).not.toHaveBeenCalled();
+});
+
+it('requires a UUID revocation key and rejects extra revocation fields', async () => {
+  const url = `/api/v1/platform/tenants/${tenantId}/entitlement-changes/grant/${randomUUID()}/revocation`;
+  const input = { expectedVersion: 1, reason: 'Approved revocation' };
+  for (const key of ['', 'not-a-uuid']) {
+    await authorized(request(app.getHttpServer()).post(url))
+      .set('Idempotency-Key', key)
+      .send(input)
+      .expect(400);
+  }
+  await authorized(request(app.getHttpServer()).post(url))
+    .set('Idempotency-Key', randomUUID())
+    .send({ ...input, actorId: identityId })
+    .expect(400);
+  await request(app.getHttpServer())
+    .post(url)
+    .set('Cookie', `__Host-kinto-session=${token}`)
+    .set('Idempotency-Key', randomUUID())
+    .send(input)
+    .expect(403);
+  expect(revokeEntitlementChange).not.toHaveBeenCalled();
 });
