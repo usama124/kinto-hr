@@ -110,6 +110,194 @@ describe('dated entitlement grants and overrides', () => {
     Promise.all([admin.$disconnect(), runtime.$disconnect()]),
   );
 
+  it('atomically reconciles concurrent exact retries without duplicated controls, audits or versions', async () => {
+    const input = {
+      changeType: 'capacity_addon' as const,
+      seatDelta: 5,
+      ...interval(),
+      reason: 'Synthetic retry receipt',
+    };
+    const requestId = randomUUID();
+    const results = await Promise.all(
+      Array.from({ length: 4 }, () =>
+        createEntitlementChange(
+          runtime,
+          actor(operatorId),
+          tenantId,
+          input,
+          requestId,
+        ),
+      ),
+    );
+    expect(
+      results.every(
+        (result) => JSON.stringify(result) === JSON.stringify(results[0]),
+      ),
+    ).toBe(true);
+    const state = await readPlatformEntitlementState(
+      runtime,
+      actor(operatorId),
+      tenantId,
+    );
+    expect(state.controls).toHaveLength(1);
+    expect(state.effective.employeeLimit).toBe(10);
+    expect(state.effective.entitlementVersion).toBe(2);
+    expect(
+      await admin.auditEvent.count({
+        where: { tenantId, action: 'entitlement.change_created' },
+      }),
+    ).toBe(1);
+    expect(
+      await admin.platformAuditEvent.count({
+        where: { actorId: operatorId, action: 'entitlement.change_created' },
+      }),
+    ).toBe(1);
+    await expect(
+      createEntitlementChange(
+        runtime,
+        actor(operatorId),
+        tenantId,
+        { ...input, seatDelta: 6 },
+        requestId,
+      ),
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+    await expect(
+      createEntitlementChange(
+        runtime,
+        actor(operatorId, false),
+        tenantId,
+        input,
+        requestId,
+      ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(
+      createEntitlementChange(
+        runtime,
+        actor(ownerId),
+        tenantId,
+        input,
+        requestId,
+      ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await revokeEntitlementChange(
+      runtime,
+      actor(operatorId),
+      tenantId,
+      'grant',
+      results[0]!.id,
+      { expectedVersion: 1, reason: 'Synthetic revoke after creation' },
+    );
+    expect(
+      await createEntitlementChange(
+        runtime,
+        actor(operatorId),
+        tenantId,
+        input,
+        requestId,
+      ),
+    ).toEqual(results[0]);
+    expect(
+      (await readPlatformEntitlementState(runtime, actor(operatorId), tenantId))
+        .effective.employeeLimit,
+    ).toBe(5);
+    await expect(
+      runtime.$queryRaw`SELECT * FROM public.entitlement_creation_receipts`,
+    ).rejects.toThrow();
+    await expect(
+      runtime.$queryRaw`SELECT * FROM public.create_entitlement_change(${operatorId}::uuid,true,${tenantId}::uuid,${randomUUID()}::uuid,'capacity_addon'::varchar,now(),now()+interval '1 day',NULL::integer,5,'Bypass attempt'::varchar,${randomUUID()}::uuid,${randomUUID()}::uuid)`,
+    ).rejects.toThrow();
+  });
+
+  it('scopes receipts by company, rejects changed fields and does not reserve refused requests', async () => {
+    const requestId = randomUUID();
+    const input = {
+      changeType: 'complimentary' as const,
+      employeeLimit: 20 as const,
+      ...interval(),
+      reason: 'Scoped complimentary receipt',
+    };
+    const result = await createEntitlementChange(
+      runtime,
+      actor(operatorId),
+      tenantId,
+      input,
+      requestId,
+    );
+    const other = await createEntitlementChange(
+      runtime,
+      actor(operatorId),
+      otherTenantId,
+      input,
+      requestId,
+    );
+    expect(other.id).not.toBe(result.id);
+    for (const changed of [
+      { ...input, reason: 'Different reason' },
+      { ...input, employeeLimit: 50 as const },
+      { ...input, endsAt: new Date(Date.now() + 172800000).toISOString() },
+    ]) {
+      await expect(
+        createEntitlementChange(
+          runtime,
+          actor(operatorId),
+          tenantId,
+          changed,
+          requestId,
+        ),
+      ).rejects.toMatchObject({ code: 'CONFLICT' });
+    }
+    const key = randomUUID();
+    const expired = {
+      ...input,
+      startsAt: '2020-01-01T00:00:00Z',
+      endsAt: '2020-02-01T00:00:00Z',
+    };
+    await expect(
+      createEntitlementChange(
+        runtime,
+        actor(operatorId),
+        tenantId,
+        expired,
+        key,
+      ),
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+    const override = {
+      changeType: 'employee_limit_override' as const,
+      employeeLimit: 10,
+      ...interval(),
+      reason: 'Scoped override receipt',
+    };
+    const control = await createEntitlementChange(
+      runtime,
+      actor(operatorId),
+      tenantId,
+      override,
+      key,
+    );
+    expect(
+      await createEntitlementChange(
+        runtime,
+        actor(operatorId),
+        tenantId,
+        override,
+        key,
+      ),
+    ).toEqual(control);
+    await admin.platformOperator.update({
+      where: { identityId: operatorId },
+      data: { status: 'revoked' },
+    });
+    await expect(
+      createEntitlementChange(
+        runtime,
+        actor(operatorId),
+        tenantId,
+        input,
+        requestId,
+      ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
   it('projects operator-only effective state and control history without identity fields', async () => {
     const change = await createEntitlementChange(
       runtime,
@@ -121,6 +309,7 @@ describe('dated entitlement grants and overrides', () => {
         ...interval(),
         reason: 'Synthetic capacity grant',
       },
+      randomUUID(),
     );
     const result = await readPlatformEntitlementState(
       runtime,
@@ -211,6 +400,7 @@ describe('dated entitlement grants and overrides', () => {
       actor(operatorId),
       tenantId,
       input,
+      randomUUID(),
     );
     expect(created).toMatchObject({ version: 1, entitlementVersion: 2 });
     expect(
@@ -231,7 +421,13 @@ describe('dated entitlement grants and overrides', () => {
       ...interval(),
       reason: 'Approved pilot access',
     };
-    await createEntitlementChange(runtime, actor(operatorId), tenantId, input);
+    await createEntitlementChange(
+      runtime,
+      actor(operatorId),
+      tenantId,
+      input,
+      randomUUID(),
+    );
     await admin.employee.createMany({
       data: [1, 2, 3, 4, 5, 6].map((number) => ({
         tenantId,
@@ -266,7 +462,13 @@ describe('dated entitlement grants and overrides', () => {
       ...interval(),
       reason: 'Approved capacity add-on',
     };
-    await createEntitlementChange(runtime, actor(operatorId), tenantId, addon);
+    await createEntitlementChange(
+      runtime,
+      actor(operatorId),
+      tenantId,
+      addon,
+      randomUUID(),
+    );
     const override = {
       changeType: 'employee_limit_override' as const,
       employeeLimit: 3,
@@ -278,13 +480,20 @@ describe('dated entitlement grants and overrides', () => {
       actor(operatorId),
       tenantId,
       override,
+      randomUUID(),
     );
     expect(created.entitlementVersion).toBe(3);
     expect(
       await readTenantEntitlements(runtime, actor(ownerId), tenantId),
     ).toMatchObject({ employeeLimit: 3, entitlementVersion: 3 });
     await expect(
-      createEntitlementChange(runtime, actor(operatorId), tenantId, override),
+      createEntitlementChange(
+        runtime,
+        actor(operatorId),
+        tenantId,
+        override,
+        randomUUID(),
+      ),
     ).rejects.toThrow('CONFLICT');
     await expect(
       admin.entitlementOverride.create({
@@ -329,14 +538,20 @@ describe('dated entitlement grants and overrides', () => {
       actor(operatorId, false),
     ])
       await expect(
-        createEntitlementChange(runtime, caller, tenantId, input),
+        createEntitlementChange(runtime, caller, tenantId, input, randomUUID()),
       ).rejects.toThrow('FORBIDDEN');
     await admin.platformOperator.update({
       where: { identityId: operatorId },
       data: { status: 'revoked' },
     });
     await expect(
-      createEntitlementChange(runtime, actor(operatorId), tenantId, input),
+      createEntitlementChange(
+        runtime,
+        actor(operatorId),
+        tenantId,
+        input,
+        randomUUID(),
+      ),
     ).rejects.toThrow('FORBIDDEN');
     await admin.platformOperator.delete({ where: { identityId: operatorId } });
     await admin.platformOperator.create({ data: { identityId: operatorId } });
@@ -345,6 +560,7 @@ describe('dated entitlement grants and overrides', () => {
       actor(operatorId),
       tenantId,
       input,
+      randomUUID(),
     );
     await expect(
       revokeEntitlementChange(

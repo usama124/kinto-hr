@@ -145,6 +145,7 @@ it('lists bounded companies with strict query input and server session authority
 });
 
 it('previews and creates strict entitlement changes with a recent-MFA actor', async () => {
+  const requestId = randomUUID();
   previewEntitlementChange.mockResolvedValueOnce({ changes: {} });
   await authorized(
     request(app.getHttpServer()).post(
@@ -169,12 +170,14 @@ it('previews and creates strict entitlement changes with a recent-MFA actor', as
       `/api/v1/platform/tenants/${tenantId}/entitlement-changes`,
     ),
   )
+    .set('Idempotency-Key', requestId)
     .send(change)
     .expect(201);
   expect(createEntitlementChange).toHaveBeenCalledWith(
     { identityId, mfaVerified: true },
     tenantId,
     change,
+    requestId,
   );
 });
 
@@ -213,6 +216,7 @@ it('rejects missing mutation proof and mass-assigned or malformed controls', asy
       `/api/v1/platform/tenants/${tenantId}/entitlement-changes`,
     ),
   )
+    .set('Idempotency-Key', randomUUID())
     .send({ ...change, tenantId })
     .expect(400);
   await authorized(
@@ -241,4 +245,18 @@ it('does not treat stale provider MFA as recent', async () => {
     tenantId,
     change,
   );
+});
+
+it('requires a UUID creation idempotency key before invoking the database', async () => {
+  for (const key of ['', 'not-a-uuid']) {
+    await authorized(
+      request(app.getHttpServer()).post(
+        `/api/v1/platform/tenants/${tenantId}/entitlement-changes`,
+      ),
+    )
+      .set('Idempotency-Key', key)
+      .send(change)
+      .expect(400);
+  }
+  expect(createEntitlementChange).not.toHaveBeenCalled();
 });

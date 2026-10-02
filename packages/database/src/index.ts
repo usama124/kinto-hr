@@ -1201,19 +1201,21 @@ export async function createEntitlementChange(
   actor: EntitlementActor,
   tenantId: string,
   input: EntitlementChange,
+  requestId: string,
 ) {
   validateEntitlementActor(actor, tenantId);
+  tenantIdSchema.parse(requestId);
   const value = entitlementChangeSchema.parse(input);
   const parameters = entitlementParameters(value);
   const rows = await db.$queryRaw<
     {
-      outcome: 'created' | 'forbidden' | 'conflict';
+      outcome: 'created' | 'replayed' | 'forbidden' | 'conflict';
       change_id: string | null;
       change_version: number | null;
       entitlement_version: number | null;
     }[]
-  >`SELECT * FROM public.create_entitlement_change(
-    ${actor.identityId}::uuid, ${actor.mfaVerified}, ${tenantId}::uuid,
+  >`SELECT * FROM public.create_entitlement_change_idempotent(
+    ${actor.identityId}::uuid, ${actor.mfaVerified}, ${tenantId}::uuid, ${requestId}::uuid,
     ${randomUUID()}::uuid, ${value.changeType}::varchar,
     ${new Date(value.startsAt)}::timestamptz, ${new Date(value.endsAt)}::timestamptz,
     ${parameters.employeeLimit}::integer, ${parameters.seatDelta}::integer,
