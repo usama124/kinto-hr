@@ -128,15 +128,19 @@ export class PlatformController {
     @Req() req: AuthRequest,
     @Param('tenantId') tenantIdValue: unknown,
     @Body() body: unknown,
+    @Headers('idempotency-key') requestIdValue: unknown,
   ) {
     const actor = await this.mutationActor(req);
     const tenantId = tenantIdSchema.safeParse(tenantIdValue);
     const input = entitlementChangeSchema.safeParse(body);
-    if (!tenantId.success || !input.success) throw new BadRequestException();
+    const requestId = tenantIdSchema.safeParse(requestIdValue);
+    if (!tenantId.success || !input.success || !requestId.success)
+      throw new BadRequestException();
     return this.database.createEntitlementChange(
       actor,
       tenantId.data,
       input.data,
+      requestId.data,
     );
   }
 

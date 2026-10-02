@@ -376,8 +376,9 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     actor: { identityId: string; mfaVerified: boolean },
     tenantId: string,
     input: EntitlementChange,
+    requestId: string,
   ) {
-    return createEntitlementChange(this.db, actor, tenantId, input);
+    return createEntitlementChange(this.db, actor, tenantId, input, requestId);
   }
   revokeEntitlementChange(
     actor: { identityId: string; mfaVerified: boolean },

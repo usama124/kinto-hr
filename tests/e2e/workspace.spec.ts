@@ -2969,7 +2969,7 @@ test('operator previews, applies and revokes a dated capacity control', async ({
   );
 });
 
-test('operator entitlement uncertainty blocks retries and history fails closed', async ({
+test('operator entitlement uncertainty preserves exact retry and history fails closed', async ({
   page,
 }) => {
   const tenantId = '9d2ea3ef-3938-42d0-84f9-d2248f692f67';
@@ -2977,6 +2977,7 @@ test('operator entitlement uncertainty blocks retries and history fails closed',
   let mutationStatus = 409;
   let creates = 0;
   let stateStatus = 200;
+  const requests: { key: string; body: unknown }[] = [];
   await page.route('**/api/v1/auth/session', (route) =>
     route.fulfill({ json: { csrfToken: 'b'.repeat(43) } }),
   );
@@ -2997,7 +2998,20 @@ test('operator entitlement uncertainty blocks retries and history fails closed',
           },
         });
       creates++;
-      return route.fulfill({ status: mutationStatus, json: {} });
+      const key = route.request().headers()['idempotency-key'];
+      expect(key).toMatch(/^[0-9a-f-]{36}$/);
+      requests.push({ key, body: route.request().postDataJSON() });
+      return route.fulfill({
+        status: mutationStatus,
+        json:
+          mutationStatus === 201
+            ? {
+                id: '44c4bf77-58bb-42ea-9886-5db47c1c3de5',
+                version: 1,
+                entitlementVersion: 2,
+              }
+            : {},
+      });
     },
   );
   await page.goto(`/platform/companies/${tenantId}/entitlements`);
@@ -3020,6 +3034,28 @@ test('operator entitlement uncertainty blocks retries and history fails closed',
     page.getByRole('button', { name: 'Preview control' }),
   ).toBeDisabled();
   expect(creates).toBe(2);
+  await expect(
+    page.getByRole('button', { name: 'Retry exact creation request' }),
+  ).toBeVisible();
+  await page
+    .getByRole('button', { name: 'Retry exact creation request' })
+    .click();
+  expect(requests[2]).toEqual(requests[1]);
+  expect(requests[0].key).not.toBe(requests[1].key);
+  mutationStatus = 201;
+  await page
+    .getByRole('button', { name: 'Retry exact creation request' })
+    .click();
+  await expect(page.getByRole('status')).toHaveText(
+    'Creation receipt confirmed. Review current history for effective or revoked status.',
+  );
+  expect(requests[3]).toEqual(requests[1]);
+  await expect(
+    page.getByRole('button', { name: 'Retry exact creation request' }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole('button', { name: 'Preview control' }),
+  ).toBeEnabled();
   stateStatus = 404;
   await page
     .getByRole('button', { name: 'Refresh entitlement history' })

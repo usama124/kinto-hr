@@ -50,6 +50,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 2 October 2026 — entitlement creation receipts
+
+Engineering added persistent operator/company/UUID-scoped creation receipts, required HTTP idempotency keys and memory-only exact-request reconciliation in the operator workspace. Migration 45 serializes retries with existing entitlement mutations and commits receipt/control/audits/version together. Exact replay returns original versions even after revocation; changed input conflicts and revoked authority is denied. Bootstrap removes runtime execution of the former non-idempotent command and grants only the constrained wrapper, with no receipt-table access. This completes the creation-hardening follow-up; the alternative of blind retries remains unsafe when responses are lost. See [evidence](../evidence/phase-01/entitlement-creation-idempotency.md). Revocation retry reconciliation is next. Product scope and production approvals are unchanged; engineering implementation is not owner staging acceptance.
+
 ### 1 October 2026 — operator entitlement workspace
 
 Engineering added an operator-only effective-state/history projection and a responsive preview/create/revoke screen over existing entitlement commands. Migration 44 exposes only effective commercial metadata and the latest 100 controls with explicit truncation. Input changes invalidate previews; revocations retain optimistic versions and reasons. Since creation is not idempotent, uncertain outcomes block resubmission and require reconciliation rather than blind retry. No invoice, payment or role grant is added. See [evidence](../evidence/phase-01/platform-entitlement-workspace.md). Persistent creation idempotency/reconciliation remains a hardening follow-up, and production acceptance gates remain open.

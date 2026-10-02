@@ -1,5 +1,5 @@
 'use client';
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import {
   entitlementChangeSchema,
@@ -13,11 +13,14 @@ import {
 type View =
   'loading' | 'ready' | 'signed-out' | 'denied' | 'unavailable' | 'error';
 type Approval = {
+  requestId: string;
   input: EntitlementChange;
   preview: ReturnType<typeof entitlementPreviewSchema.parse>;
 };
 export default function EntitlementControls() {
   const { tenantId } = useParams<{ tenantId: string }>();
+  const activeTenant = useRef(tenantId);
+  activeTenant.current = tenantId;
   const [view, setView] = useState<View>('loading');
   const [csrf, setCsrf] = useState('');
   const [state, setState] = useState<PlatformEntitlementState | null>(null);
@@ -28,6 +31,7 @@ export default function EntitlementControls() {
   const [endsAt, setEndsAt] = useState('');
   const [reason, setReason] = useState('');
   const [approval, setApproval] = useState<Approval | null>(null);
+  const [pending, setPending] = useState<Approval | null>(null);
   const [reasons, setReasons] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [blocked, setBlocked] = useState(false);
@@ -36,6 +40,7 @@ export default function EntitlementControls() {
   function denied(status: number) {
     if (![401, 403, 404].includes(status)) return false;
     setState(null);
+    setPending(null);
     setApproval(null);
     setView(
       status === 401 ? 'signed-out' : status === 403 ? 'denied' : 'unavailable',
@@ -47,9 +52,11 @@ export default function EntitlementControls() {
       cache: 'no-store',
       signal,
     });
+    if (activeTenant.current !== tenantId) return false;
     if (denied(response.status)) return false;
     if (!response.ok) throw new Error('Unavailable');
     const parsed = platformEntitlementStateSchema.parse(await response.json());
+    if (activeTenant.current !== tenantId) return false;
     if (parsed.tenantId !== tenantId) throw new Error('Wrong company');
     setState(parsed);
     setView('ready');
@@ -57,8 +64,11 @@ export default function EntitlementControls() {
   }
   useEffect(() => {
     const controller = new AbortController();
+    setPending(null);
+    setBusy(false);
     setView('loading');
     setState(null);
+    setPending(null);
     setApproval(null);
     setReasons({});
     setMessage('');
@@ -86,6 +96,7 @@ export default function EntitlementControls() {
           typeof session.csrfToken !== 'string'
         )
           throw new Error('Invalid session');
+        if (controller.signal.aborted) return;
         setCsrf(session.csrfToken);
         await load(controller.signal);
       } catch {
@@ -121,22 +132,30 @@ export default function EntitlementControls() {
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
         body: JSON.stringify(input.data),
       });
+      if (activeTenant.current !== tenantId) return;
       if (denied(response.status)) return;
       if (!response.ok) throw new Error('Refused');
+      const projected = entitlementPreviewSchema.parse(await response.json());
+      if (activeTenant.current !== tenantId) return;
       setApproval({
+        requestId: crypto.randomUUID(),
         input: input.data,
-        preview: entitlementPreviewSchema.parse(await response.json()),
+        preview: projected,
       });
     } catch {
+      if (activeTenant.current !== tenantId) return;
       setMessage('Preview unavailable or refused. No change was applied.');
     } finally {
-      setBusy(false);
+      if (activeTenant.current === tenantId) setBusy(false);
     }
   }
   async function mutate(
     control?: PlatformEntitlementState['controls'][number],
+    retry = false,
   ) {
-    if (blocked || busy || (!control && !approval)) return;
+    const creation = retry ? pending : approval;
+    if (busy || (blocked && !retry) || (!control && !creation)) return;
+    if (!control) setPending(creation);
     const revokeReason = control ? reasons[control.id]?.trim() : '';
     if (
       control &&
@@ -159,16 +178,23 @@ export default function EntitlementControls() {
           : `${base}/entitlement-changes`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': csrf,
+            ...(!control ? { 'Idempotency-Key': creation!.requestId } : {}),
+          },
           body: JSON.stringify(
             control
               ? { expectedVersion: control.version, reason: revokeReason }
-              : approval!.input,
+              : creation!.input,
           ),
         },
       );
+      if (activeTenant.current !== tenantId) return;
       if (denied(response.status)) return;
       if (response.status === 400 || response.status === 409) {
+        setPending(null);
+        setBlocked(false);
         setApproval(null);
         if (await load())
           setMessage(
@@ -178,22 +204,28 @@ export default function EntitlementControls() {
       }
       if (!response.ok) throw new Error('Uncertain');
       entitlementChangeResultSchema.parse(await response.json());
+      if (activeTenant.current !== tenantId) return;
+      setPending(null);
+      setBlocked(false);
       setApproval(null);
       setReasons({});
       if (await load())
         setMessage(
           control
             ? 'Control revoked with audit evidence.'
-            : 'Entitlement control created with audit evidence.',
+            : retry
+              ? 'Creation receipt confirmed. Review current history for effective or revoked status.'
+              : 'Entitlement control created with audit evidence.',
         );
     } catch {
+      if (activeTenant.current !== tenantId) return;
       setApproval(null);
       setBlocked(true);
       setMessage(
-        'Outcome could not be confirmed. Further mutations are blocked. Refresh history and reconcile with the operator before reloading or submitting another change; creating again can duplicate a grant.',
+        'Outcome could not be confirmed. Further mutations are blocked. If a creation request is retained, retry that exact request to reconcile safely. Keep this page open: reloading loses its request ID. Revocation uncertainty still requires history review.',
       );
     } finally {
-      setBusy(false);
+      if (activeTenant.current === tenantId) setBusy(false);
     }
   }
   async function refresh() {
@@ -202,10 +234,11 @@ export default function EntitlementControls() {
     try {
       await load();
     } catch {
+      if (activeTenant.current !== tenantId) return;
       setState(null);
       setView('error');
     } finally {
-      setBusy(false);
+      if (activeTenant.current === tenantId) setBusy(false);
     }
   }
   if (view !== 'ready' || !state || state.tenantId !== tenantId)
@@ -228,6 +261,22 @@ export default function EntitlementControls() {
     );
   return (
     <>
+      {blocked && pending && (
+        <div className="notice">
+          <p>
+            Unconfirmed creation request: {pending.requestId}. Retry returns the
+            original creation receipt if already committed; it does not restore
+            a revoked control.
+          </p>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void mutate(undefined, true)}
+          >
+            Retry exact creation request
+          </button>
+        </div>
+      )}
       <div className="page-heading">
         <div>
           <p className="eyebrow">OPERATOR ENTITLEMENTS</p>

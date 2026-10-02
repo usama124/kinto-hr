@@ -83,6 +83,7 @@ async function snapshot(db: PrismaClient) {
       'employee_profile_change_requests',
       'employees',
       'employment_periods',
+      'entitlement_creation_receipts',
       'entitlement_grants',
       'entitlement_overrides',
       'identities',
@@ -174,6 +175,9 @@ async function snapshot(db: PrismaClient) {
     }),
     tenantEntitlementStates: await db.tenantEntitlementState.findMany({
       orderBy: { tenantId: 'asc' },
+    }),
+    entitlementCreationReceipts: await db.entitlementCreationReceipt.findMany({
+      orderBy: [{ tenantId: 'asc' }, { actorId: 'asc' }, { requestId: 'asc' }],
     }),
     entitlementGrants: await db.entitlementGrant.findMany({
       orderBy: { id: 'asc' },
@@ -816,17 +820,20 @@ async function main() {
       },
     );
     assert.equal(provisioning.status, 'pending_identity_provider');
-    await createEntitlementChange(
+    const entitlementRequestId = randomUUID();
+    const entitlementInput = {
+      changeType: 'capacity_addon' as const,
+      seatDelta: 10,
+      startsAt: new Date().toISOString(),
+      endsAt: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),
+      reason: 'Recovery fixture capacity grant',
+    };
+    const entitlementReceipt = await createEntitlementChange(
       sourceApp,
       { identityId: operator.id, mfaVerified: true },
       provisioning.tenantId,
-      {
-        changeType: 'capacity_addon',
-        seatDelta: 10,
-        startsAt: new Date().toISOString(),
-        endsAt: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),
-        reason: 'Recovery fixture capacity grant',
-      },
+      entitlementInput,
+      entitlementRequestId,
     );
     const invitationExpiry = new Date(Date.now() + 48 * 60 * 60 * 1000);
     await reconcileCompanyOwnerProvider(
@@ -908,6 +915,18 @@ async function main() {
     const restoreMs = Math.round(performance.now() - restoreStarted);
     stage = 'restored snapshot equality';
     assert.deepEqual(await snapshot(restored), expected);
+    stage = 'restored entitlement creation retry';
+    assert.deepEqual(
+      await createEntitlementChange(
+        restoredApp,
+        { identityId: operator.id, mfaVerified: true },
+        provisioning.tenantId,
+        entitlementInput,
+        entitlementRequestId,
+      ),
+      entitlementReceipt,
+    );
+    assert.deepEqual(await snapshot(restored), expected);
     stage = 'restored runtime roles';
     await Promise.all([
       assertSafeRuntimeRole(restoredApp),
@@ -917,7 +936,7 @@ async function main() {
     const policies = await restored.$queryRaw<
       { enabled: boolean; forced: boolean }[]
     >`SELECT relrowsecurity AS enabled, relforcerowsecurity AS forced FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND relkind='r' AND relname <> '_prisma_migrations'`;
-    assert.equal(policies.length, 39);
+    assert.equal(policies.length, 40);
     assert.ok(policies.every((row) => row.enabled && row.forced));
     assert.deepEqual(await restoredApp.employee.findMany(), []);
     stage = 'restored tenant lifecycle visibility';
@@ -1074,6 +1093,7 @@ async function main() {
       rehiredEmployeeHistoryPreserved: true,
       entitlementCatalogAndSubscriptionPreserved: true,
       entitlementGrantAndVersionPreserved: true,
+      entitlementCreationReceiptRetryPreserved: true,
       pendingAdministratorInvitationPreserved: true,
     };
     await writeFile(
