@@ -13,9 +13,16 @@ import {
 type View =
   'loading' | 'ready' | 'signed-out' | 'denied' | 'unavailable' | 'error';
 type Approval = {
+  tenantId: string;
   requestId: string;
   input: EntitlementChange;
   preview: ReturnType<typeof entitlementPreviewSchema.parse>;
+};
+type RevocationAttempt = {
+  tenantId: string;
+  requestId: string;
+  control: PlatformEntitlementState['controls'][number];
+  reason: string;
 };
 export default function EntitlementControls() {
   const { tenantId } = useParams<{ tenantId: string }>();
@@ -32,6 +39,8 @@ export default function EntitlementControls() {
   const [reason, setReason] = useState('');
   const [approval, setApproval] = useState<Approval | null>(null);
   const [pending, setPending] = useState<Approval | null>(null);
+  const [pendingRevocation, setPendingRevocation] =
+    useState<RevocationAttempt | null>(null);
   const [reasons, setReasons] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [blocked, setBlocked] = useState(false);
@@ -41,6 +50,7 @@ export default function EntitlementControls() {
     if (![401, 403, 404].includes(status)) return false;
     setState(null);
     setPending(null);
+    setPendingRevocation(null);
     setApproval(null);
     setView(
       status === 401 ? 'signed-out' : status === 403 ? 'denied' : 'unavailable',
@@ -64,11 +74,11 @@ export default function EntitlementControls() {
   }
   useEffect(() => {
     const controller = new AbortController();
-    setPending(null);
     setBusy(false);
     setView('loading');
     setState(null);
     setPending(null);
+    setPendingRevocation(null);
     setApproval(null);
     setReasons({});
     setMessage('');
@@ -138,6 +148,7 @@ export default function EntitlementControls() {
       const projected = entitlementPreviewSchema.parse(await response.json());
       if (activeTenant.current !== tenantId) return;
       setApproval({
+        tenantId,
         requestId: crypto.randomUUID(),
         input: input.data,
         preview: projected,
@@ -153,10 +164,22 @@ export default function EntitlementControls() {
     control?: PlatformEntitlementState['controls'][number],
     retry = false,
   ) {
+    if (activeTenant.current !== tenantId) return;
+    if (retry && pendingRevocation) {
+      if (pendingRevocation.tenantId !== tenantId) return;
+      control = pendingRevocation.control;
+    }
     const creation = retry ? pending : approval;
     if (busy || (blocked && !retry) || (!control && !creation)) return;
-    if (!control) setPending(creation);
-    const revokeReason = control ? reasons[control.id]?.trim() : '';
+    if (!control) {
+      if (creation!.tenantId !== tenantId) return;
+      setPending(creation);
+    }
+    const revokeReason = control
+      ? retry
+        ? pendingRevocation?.reason
+        : reasons[control.id]?.trim()
+      : '';
     if (
       control &&
       (!revokeReason || revokeReason.length < 3 || revokeReason.length > 240)
@@ -164,11 +187,24 @@ export default function EntitlementControls() {
       return;
     if (
       control &&
+      !retry &&
       !window.confirm(
         'Revoke this control? Effective capacity or complimentary access may change.',
       )
     )
       return;
+    const requestId = control
+      ? retry
+        ? pendingRevocation!.requestId
+        : crypto.randomUUID()
+      : creation!.requestId;
+    if (control)
+      setPendingRevocation({
+        tenantId,
+        requestId,
+        control,
+        reason: revokeReason!,
+      });
     setBusy(true);
     setMessage('');
     try {
@@ -181,7 +217,7 @@ export default function EntitlementControls() {
           headers: {
             'Content-Type': 'application/json',
             'X-CSRF-Token': csrf,
-            ...(!control ? { 'Idempotency-Key': creation!.requestId } : {}),
+            'Idempotency-Key': requestId,
           },
           body: JSON.stringify(
             control
@@ -194,6 +230,7 @@ export default function EntitlementControls() {
       if (denied(response.status)) return;
       if (response.status === 400 || response.status === 409) {
         setPending(null);
+        setPendingRevocation(null);
         setBlocked(false);
         setApproval(null);
         if (await load())
@@ -206,13 +243,16 @@ export default function EntitlementControls() {
       entitlementChangeResultSchema.parse(await response.json());
       if (activeTenant.current !== tenantId) return;
       setPending(null);
+      setPendingRevocation(null);
       setBlocked(false);
       setApproval(null);
       setReasons({});
       if (await load())
         setMessage(
           control
-            ? 'Control revoked with audit evidence.'
+            ? retry
+              ? 'Revocation receipt confirmed. Review current history for effective status.'
+              : 'Control revoked with audit evidence.'
             : retry
               ? 'Creation receipt confirmed. Review current history for effective or revoked status.'
               : 'Entitlement control created with audit evidence.',
@@ -222,7 +262,7 @@ export default function EntitlementControls() {
       setApproval(null);
       setBlocked(true);
       setMessage(
-        'Outcome could not be confirmed. Further mutations are blocked. If a creation request is retained, retry that exact request to reconcile safely. Keep this page open: reloading loses its request ID. Revocation uncertainty still requires history review.',
+        'Outcome could not be confirmed. Further mutations are blocked. Retry the retained exact request to reconcile safely. Keep this page open: reloading loses its request ID. Refreshing history does not replace the retained request.',
       );
     } finally {
       if (activeTenant.current === tenantId) setBusy(false);
@@ -241,27 +281,27 @@ export default function EntitlementControls() {
       if (activeTenant.current === tenantId) setBusy(false);
     }
   }
-  if (view !== 'ready' || !state || state.tenantId !== tenantId)
-    return (
-      <p className="notice">
-        {
-          {
-            loading: 'Loading operator entitlement controls…',
-            ready: '',
-            'signed-out': 'Sign in to manage company entitlements.',
-            denied:
-              'Only an active platform operator with recent verification can manage entitlements.',
-            unavailable:
-              'An active company with a current subscription is required.',
-            error:
-              'Entitlement controls are unavailable. Refresh and try again.',
-          }[view]
-        }
-      </p>
-    );
-  return (
+  const reconciliation = (
     <>
-      {blocked && pending && (
+      {blocked && pendingRevocation?.tenantId === tenantId && (
+        <div className="notice">
+          <p>
+            Unconfirmed revocation request: {pendingRevocation.requestId}. Exact
+            retry keeps control {pendingRevocation.control.id}, expected version{' '}
+            {pendingRevocation.control.version} and the original reason. A
+            receipt confirms the original revocation without changing later
+            controls.
+          </p>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void mutate(undefined, true)}
+          >
+            Retry exact revocation request
+          </button>
+        </div>
+      )}
+      {blocked && pending?.tenantId === tenantId && (
         <div className="notice">
           <p>
             Unconfirmed creation request: {pending.requestId}. Retry returns the
@@ -277,6 +317,33 @@ export default function EntitlementControls() {
           </button>
         </div>
       )}
+    </>
+  );
+  if (view !== 'ready' || !state || state.tenantId !== tenantId)
+    return (
+      <>
+        <p className="notice">
+          {
+            {
+              loading: 'Loading operator entitlement controls…',
+              ready: '',
+              'signed-out': 'Sign in to manage company entitlements.',
+              denied:
+                'Only an active platform operator with recent verification can manage entitlements.',
+              unavailable:
+                'An active company with a current subscription is required.',
+              error:
+                'Entitlement controls are unavailable. Refresh and try again.',
+            }[view]
+          }
+        </p>
+        {view === 'error' && reconciliation}
+        {view === 'error' && message && <p role="status">{message}</p>}
+      </>
+    );
+  return (
+    <>
+      {reconciliation}
       <div className="page-heading">
         <div>
           <p className="eyebrow">OPERATOR ENTITLEMENTS</p>

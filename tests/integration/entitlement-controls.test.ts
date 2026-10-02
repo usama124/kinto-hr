@@ -186,6 +186,7 @@ describe('dated entitlement grants and overrides', () => {
       'grant',
       results[0]!.id,
       { expectedVersion: 1, reason: 'Synthetic revoke after creation' },
+      randomUUID(),
     );
     expect(
       await createEntitlementChange(
@@ -298,6 +299,372 @@ describe('dated entitlement grants and overrides', () => {
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 
+  it.each([
+    'capacity_addon',
+    'complimentary',
+    'employee_limit_override',
+  ] as const)(
+    'reconciles concurrent %s revocations with one immutable receipt and audit pair',
+    async (changeType) => {
+      const dates = interval();
+      const input =
+        changeType === 'capacity_addon'
+          ? {
+              changeType,
+              seatDelta: 5,
+              ...dates,
+              reason: 'Synthetic revocation target',
+            }
+          : changeType === 'complimentary'
+            ? {
+                changeType,
+                employeeLimit: 20 as const,
+                ...dates,
+                reason: 'Synthetic revocation target',
+              }
+            : {
+                changeType,
+                employeeLimit: 10,
+                ...dates,
+                reason: 'Synthetic revocation target',
+              };
+      const target = await createEntitlementChange(
+        runtime,
+        actor(operatorId),
+        tenantId,
+        input,
+        randomUUID(),
+      );
+      const kind =
+        changeType === 'employee_limit_override' ? 'override' : 'grant';
+      const requestId = randomUUID();
+      const revocation = {
+        expectedVersion: 1,
+        reason: 'Synthetic exact revocation',
+      };
+      const results = await Promise.all(
+        Array.from({ length: 4 }, () =>
+          revokeEntitlementChange(
+            runtime,
+            actor(operatorId),
+            tenantId,
+            kind,
+            target.id,
+            revocation,
+            requestId,
+          ),
+        ),
+      );
+      expect(
+        results.every(
+          (result) => JSON.stringify(result) === JSON.stringify(results[0]),
+        ),
+      ).toBe(true);
+      expect(results[0]).toEqual({
+        id: target.id,
+        version: 2,
+        entitlementVersion: 3,
+      });
+      const state = await readPlatformEntitlementState(
+        runtime,
+        actor(operatorId),
+        tenantId,
+      );
+      expect(state.controls).toHaveLength(1);
+      expect(state.controls[0]).toMatchObject({
+        status: 'revoked',
+        version: 2,
+        revokedReason: revocation.reason,
+      });
+      expect(state.effective.employeeLimit).toBe(5);
+      expect(
+        await admin.auditEvent.count({
+          where: { tenantId, action: 'entitlement.change_revoked' },
+        }),
+      ).toBe(1);
+      expect(
+        await admin.platformAuditEvent.count({
+          where: { actorId: operatorId, action: 'entitlement.change_revoked' },
+        }),
+      ).toBe(1);
+      for (const changed of [
+        { ...revocation, reason: 'Changed reason' },
+        { ...revocation, expectedVersion: 2 },
+      ]) {
+        await expect(
+          revokeEntitlementChange(
+            runtime,
+            actor(operatorId),
+            tenantId,
+            kind,
+            target.id,
+            changed,
+            requestId,
+          ),
+        ).rejects.toMatchObject({ code: 'CONFLICT' });
+      }
+      await expect(
+        revokeEntitlementChange(
+          runtime,
+          actor(operatorId),
+          tenantId,
+          kind,
+          randomUUID(),
+          revocation,
+          requestId,
+        ),
+      ).rejects.toMatchObject({ code: 'CONFLICT' });
+      await expect(
+        revokeEntitlementChange(
+          runtime,
+          actor(operatorId),
+          tenantId,
+          kind === 'grant' ? 'override' : 'grant',
+          target.id,
+          revocation,
+          requestId,
+        ),
+      ).rejects.toMatchObject({ code: 'CONFLICT' });
+      await expect(
+        revokeEntitlementChange(
+          runtime,
+          actor(operatorId),
+          tenantId,
+          kind,
+          target.id,
+          revocation,
+          randomUUID(),
+        ),
+      ).rejects.toMatchObject({ code: 'STALE_VERSION' });
+      await createEntitlementChange(
+        runtime,
+        actor(operatorId),
+        tenantId,
+        {
+          changeType: 'capacity_addon',
+          seatDelta: 3,
+          ...interval(),
+          reason: 'Later independent control',
+        },
+        randomUUID(),
+      );
+      expect(
+        await revokeEntitlementChange(
+          runtime,
+          actor(operatorId),
+          tenantId,
+          kind,
+          target.id,
+          revocation,
+          requestId,
+        ),
+      ).toEqual(results[0]);
+      expect(
+        (
+          await readPlatformEntitlementState(
+            runtime,
+            actor(operatorId),
+            tenantId,
+          )
+        ).effective,
+      ).toMatchObject({ employeeLimit: 8, entitlementVersion: 4 });
+    },
+  );
+
+  it('scopes revocation receipts by company and actor, and rechecks authority on replay', async () => {
+    const input = {
+      changeType: 'capacity_addon' as const,
+      seatDelta: 5,
+      ...interval(),
+      reason: 'Scoped revocation target',
+    };
+    const first = await createEntitlementChange(
+      runtime,
+      actor(operatorId),
+      tenantId,
+      input,
+      randomUUID(),
+    );
+    const second = await createEntitlementChange(
+      runtime,
+      actor(operatorId),
+      otherTenantId,
+      input,
+      randomUUID(),
+    );
+    const key = randomUUID();
+    const body = { expectedVersion: 1, reason: 'Scoped revocation reason' };
+    await revokeEntitlementChange(
+      runtime,
+      actor(operatorId),
+      tenantId,
+      'grant',
+      first.id,
+      body,
+      key,
+    );
+    expect(
+      (
+        await revokeEntitlementChange(
+          runtime,
+          actor(operatorId),
+          otherTenantId,
+          'grant',
+          second.id,
+          body,
+          key,
+        )
+      ).id,
+    ).toBe(second.id);
+    await admin.platformOperator.create({
+      data: { identityId: nonOperatorId },
+    });
+    await expect(
+      revokeEntitlementChange(
+        runtime,
+        actor(nonOperatorId),
+        tenantId,
+        'grant',
+        first.id,
+        body,
+        key,
+      ),
+    ).rejects.toMatchObject({ code: 'STALE_VERSION' });
+    await expect(
+      revokeEntitlementChange(
+        runtime,
+        actor(ownerId),
+        tenantId,
+        'grant',
+        first.id,
+        body,
+        key,
+      ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(
+      revokeEntitlementChange(
+        runtime,
+        actor(operatorId, false),
+        tenantId,
+        'grant',
+        first.id,
+        body,
+        key,
+      ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await admin.tenant.update({
+      where: { id: tenantId },
+      data: { status: 'suspended' },
+    });
+    await expect(
+      revokeEntitlementChange(
+        runtime,
+        actor(operatorId),
+        tenantId,
+        'grant',
+        first.id,
+        body,
+        key,
+      ),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await admin.tenant.update({
+      where: { id: tenantId },
+      data: { status: 'active' },
+    });
+    await admin.platformOperator.update({
+      where: { identityId: operatorId },
+      data: { status: 'revoked' },
+    });
+    await expect(
+      revokeEntitlementChange(
+        runtime,
+        actor(operatorId),
+        tenantId,
+        'grant',
+        first.id,
+        body,
+        key,
+      ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(
+      runtime.$queryRaw`SELECT * FROM public.entitlement_revocation_receipts`,
+    ).rejects.toThrow();
+    await expect(
+      runtime.$queryRaw`SELECT * FROM public.revoke_entitlement_change(${operatorId}::uuid,true,${tenantId}::uuid,'grant'::varchar,${first.id}::uuid,1,'Bypass revocation'::varchar,${randomUUID()}::uuid,${randomUUID()}::uuid)`,
+    ).rejects.toThrow();
+  });
+
+  it('rolls back revocation with audit failure and does not reserve refused request keys', async () => {
+    const target = await createEntitlementChange(
+      runtime,
+      actor(operatorId),
+      tenantId,
+      {
+        changeType: 'capacity_addon',
+        seatDelta: 5,
+        ...interval(),
+        reason: 'Atomic revocation target',
+      },
+      randomUUID(),
+    );
+    const body = { expectedVersion: 1, reason: 'Atomic revocation reason' };
+    const key = randomUUID();
+    await expect(
+      revokeEntitlementChange(
+        runtime,
+        actor(operatorId),
+        tenantId,
+        'grant',
+        target.id,
+        { ...body, expectedVersion: 2 },
+        key,
+      ),
+    ).rejects.toMatchObject({ code: 'STALE_VERSION' });
+    await expect(
+      revokeEntitlementChange(
+        runtime,
+        actor(operatorId),
+        tenantId,
+        'grant',
+        randomUUID(),
+        body,
+        key,
+      ),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    const priorAudit = await admin.auditEvent.findFirstOrThrow({
+      where: { tenantId, action: 'entitlement.change_created' },
+    });
+    await expect(
+      runtime.$queryRaw`SELECT * FROM public.revoke_entitlement_change_idempotent(${operatorId}::uuid,true,${tenantId}::uuid,${key}::uuid,'grant'::varchar,${target.id}::uuid,1,${body.reason}::varchar,${priorAudit.id}::uuid,${randomUUID()}::uuid)`,
+    ).rejects.toThrow();
+    const state = await readPlatformEntitlementState(
+      runtime,
+      actor(operatorId),
+      tenantId,
+    );
+    expect(state.controls[0]).toMatchObject({ status: 'active', version: 1 });
+    expect(state.effective.entitlementVersion).toBe(2);
+    expect(
+      await admin.entitlementRevocationReceipt.count({ where: { tenantId } }),
+    ).toBe(0);
+    expect(
+      await admin.auditEvent.count({
+        where: { tenantId, action: 'entitlement.change_revoked' },
+      }),
+    ).toBe(0);
+    expect(
+      await revokeEntitlementChange(
+        runtime,
+        actor(operatorId),
+        tenantId,
+        'grant',
+        target.id,
+        body,
+        key,
+      ),
+    ).toEqual({ id: target.id, version: 2, entitlementVersion: 3 });
+  });
+
   it('projects operator-only effective state and control history without identity fields', async () => {
     const change = await createEntitlementChange(
       runtime,
@@ -354,6 +721,7 @@ describe('dated entitlement grants and overrides', () => {
       'grant',
       change.id,
       { expectedVersion: 1, reason: 'Synthetic grant cancellation' },
+      randomUUID(),
     );
     expect(
       (await readPlatformEntitlementState(runtime, actor(operatorId), tenantId))
@@ -570,6 +938,7 @@ describe('dated entitlement grants and overrides', () => {
         'grant',
         created.id,
         { expectedVersion: 1, reason: 'Wrong tenant attempt' },
+        randomUUID(),
       ),
     ).rejects.toThrow('NOT_FOUND');
     await expect(
@@ -580,6 +949,7 @@ describe('dated entitlement grants and overrides', () => {
         'grant',
         created.id,
         { expectedVersion: 2, reason: 'Stale operator view' },
+        randomUUID(),
       ),
     ).rejects.toThrow('STALE_VERSION');
     const revoked = await revokeEntitlementChange(
@@ -589,6 +959,7 @@ describe('dated entitlement grants and overrides', () => {
       'grant',
       created.id,
       { expectedVersion: 1, reason: 'Seasonal approval withdrawn' },
+      randomUUID(),
     );
     expect(revoked).toEqual({
       id: created.id,

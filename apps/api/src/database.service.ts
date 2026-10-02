@@ -386,6 +386,7 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     kind: 'grant' | 'override',
     changeId: string,
     input: EntitlementRevocation,
+    requestId: string,
   ) {
     return revokeEntitlementChange(
       this.db,
@@ -394,6 +395,7 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       kind,
       changeId,
       input,
+      requestId,
     );
   }
   createEmployeeImportPreview(

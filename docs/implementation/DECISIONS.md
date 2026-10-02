@@ -50,6 +50,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 2 October 2026 — entitlement revocation receipts
+
+Engineering added persistent company/operator/UUID-scoped revocation receipts and exact-request browser reconciliation. Migration 46 commits receipt, status/version and audit pair together under the entitlement lock. Exact replay returns original revocation evidence without changing later commercial state; changed target/version/reason conflicts. Every replay requires active operator authority and recent MFA, and inactive companies are unavailable. Runtime execution of the former non-idempotent function is removed through restricted bootstrap; the receipt table is inaccessible to the application. The alternative of updating the saved expected version on retry would change the approved request, so the workspace retains its original snapshot even after history refresh or refresh failure. See [evidence](../evidence/phase-01/entitlement-revocation-idempotency.md). Foundation acceptance gap review and remaining operational gates are next; no production approval or commercial scope change is implied.
+
 ### 2 October 2026 — entitlement creation receipts
 
 Engineering added persistent operator/company/UUID-scoped creation receipts, required HTTP idempotency keys and memory-only exact-request reconciliation in the operator workspace. Migration 45 serializes retries with existing entitlement mutations and commits receipt/control/audits/version together. Exact replay returns original versions even after revocation; changed input conflicts and revoked authority is denied. Bootstrap removes runtime execution of the former non-idempotent command and grants only the constrained wrapper, with no receipt-table access. This completes the creation-hardening follow-up; the alternative of blind retries remains unsafe when responses are lost. See [evidence](../evidence/phase-01/entitlement-creation-idempotency.md). Revocation retry reconciliation is next. Product scope and production approvals are unchanged; engineering implementation is not owner staging acceptance.

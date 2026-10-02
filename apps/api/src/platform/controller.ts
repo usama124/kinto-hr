@@ -152,8 +152,10 @@ export class PlatformController {
     @Param('kind') kindValue: unknown,
     @Param('changeId') changeIdValue: unknown,
     @Body() body: unknown,
+    @Headers('idempotency-key') requestIdValue: unknown,
   ) {
     const actor = await this.mutationActor(req);
+    const requestId = tenantIdSchema.safeParse(requestIdValue);
     const tenantId = tenantIdSchema.safeParse(tenantIdValue);
     const changeId = tenantIdSchema.safeParse(changeIdValue);
     const kind = z.enum(['grant', 'override']).safeParse(kindValue);
@@ -162,7 +164,8 @@ export class PlatformController {
       !tenantId.success ||
       !changeId.success ||
       !kind.success ||
-      !input.success
+      !input.success ||
+      !requestId.success
     )
       throw new BadRequestException();
     return this.database.revokeEntitlementChange(
@@ -171,6 +174,7 @@ export class PlatformController {
       kind.data,
       changeId.data,
       input.data,
+      requestId.data,
     );
   }
 }

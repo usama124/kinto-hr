@@ -1238,19 +1238,27 @@ export async function revokeEntitlementChange(
   kind: 'grant' | 'override',
   changeId: string,
   input: EntitlementRevocation,
+  requestId: string,
 ) {
   validateEntitlementActor(actor, tenantId);
   tenantIdSchema.parse(changeId);
+  tenantIdSchema.parse(requestId);
   const value = entitlementRevocationSchema.parse(input);
   const rows = await db.$queryRaw<
     {
-      outcome: 'revoked' | 'forbidden' | 'not_found' | 'stale' | 'conflict';
+      outcome:
+        | 'revoked'
+        | 'replayed'
+        | 'forbidden'
+        | 'not_found'
+        | 'stale'
+        | 'conflict';
       change_id: string | null;
       change_version: number | null;
       entitlement_version: number | null;
     }[]
-  >`SELECT * FROM public.revoke_entitlement_change(
-    ${actor.identityId}::uuid, ${actor.mfaVerified}, ${tenantId}::uuid,
+  >`SELECT * FROM public.revoke_entitlement_change_idempotent(
+    ${actor.identityId}::uuid, ${actor.mfaVerified}, ${tenantId}::uuid, ${requestId}::uuid,
     ${kind}::varchar, ${changeId}::uuid, ${value.expectedVersion}::integer,
     ${value.reason}::varchar, ${randomUUID()}::uuid, ${randomUUID()}::uuid
   )`;
