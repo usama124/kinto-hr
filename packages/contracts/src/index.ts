@@ -1381,6 +1381,21 @@ export const employeeAccountProvisioningSchema = z.strictObject({
 export type EmployeeAccountProvisioning = z.infer<
   typeof employeeAccountProvisioningSchema
 >;
+export const employeeAccountProvisioningResultSchema = z.strictObject({
+  accountRequestId: tenantIdSchema,
+  status: z.enum([
+    'pending_identity_provider',
+    'pending_delivery',
+    'pending_activation',
+    'active',
+    'failed',
+    'revoked',
+  ]),
+  replayed: z.boolean(),
+});
+export type EmployeeAccountProvisioningResult = z.infer<
+  typeof employeeAccountProvisioningResultSchema
+>;
 export const employeeAccountReactivationSchema = z.strictObject({
   expectedMembershipVersion: z.number().int().positive(),
   reason: z.string().trim().min(3).max(240),
