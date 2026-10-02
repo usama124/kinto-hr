@@ -14,6 +14,7 @@ import {
   platformCompanyListSchema,
   entitlementSnapshotSchema,
   employeeAccountProvisioningSchema,
+  employeeAccountProvisioningResultSchema,
   employeeAccountReactivationSchema,
   employeeAccountReactivationResultSchema,
   membershipRoleUpdateSchema,
@@ -1087,4 +1088,23 @@ it('parses only bounded operator entitlement state without actor fields', () => 
       controls: [{ status: 'unknown' }],
     }).success,
   ).toBe(false);
+});
+
+it('validates employee setup receipts without exposing provider identities or accepting unknown statuses', () => {
+  const result = {
+    accountRequestId: '9d2ea3ef-3938-42d0-84f9-d2248f692f67',
+    status: 'pending_activation',
+    replayed: true,
+  };
+  expect(employeeAccountProvisioningResultSchema.parse(result)).toEqual(result);
+  for (const invalid of [
+    { ...result, identityId: result.accountRequestId },
+    { ...result, status: 'accepted' },
+    { ...result, accountRequestId: 'wrong' },
+    { ...result, replayed: 'true' },
+  ]) {
+    expect(
+      employeeAccountProvisioningResultSchema.safeParse(invalid).success,
+    ).toBe(false);
+  }
 });

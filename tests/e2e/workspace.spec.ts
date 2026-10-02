@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 test('workspace reflects actual service readiness and fits the viewport', async ({
   page,
 }) => {
@@ -3212,5 +3212,281 @@ for (const finalStatus of [200, 409, 403]) {
         () => document.documentElement.scrollWidth <= window.innerWidth,
       ),
     ).toBe(true);
+  });
+}
+
+async function employeeAccountWorkspaceFixture(
+  page: Page,
+  roles = ['hr_admin'],
+) {
+  const tenantId = '9d2ea3ef-3938-42d0-84f9-d2248f692f67';
+  const employeeId = '44c4bf77-58bb-42ea-9886-5db47c1c3de5';
+  const employee = {
+    id: employeeId,
+    employeeNumber: 'LOGIN-001',
+    name: 'Synthetic Invitee',
+    legalName: null,
+    status: 'draft',
+    version: 1,
+    joiningDate: '2026-09-08',
+    employmentType: 'monthly_salaried',
+    payrollSetup: 'incomplete',
+    accountAccess: {
+      status: 'not_provisioned',
+      membershipVersion: null as number | null,
+    },
+    finalWorkingDate: null,
+    archivedAt: null,
+    employmentHistory: [],
+    currentAssignment: null,
+    assignmentHistory: [],
+  };
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({
+      json: {
+        csrfToken: 'b'.repeat(43),
+        identityId: '18e19e63-bb7d-4b2d-87e8-2117f065951a',
+        selectedTenantId: tenantId,
+        tenants: [{ id: tenantId, name: 'Synthetic Company', roles }],
+      },
+    }),
+  );
+  await page.route(`**/api/v1/tenants/${tenantId}/employees`, (route) =>
+    route.fulfill({ json: { employees: [employee] } }),
+  );
+  await page.route(`**/api/v1/tenants/${tenantId}/organization`, (route) =>
+    route.fulfill({
+      json: {
+        legalEntity: null,
+        branches: [],
+        departments: [],
+        designations: [],
+        latestPublishedVersion: 0,
+        publishedPolicy: null,
+        policyDrafts: [],
+      },
+    }),
+  );
+  return { tenantId, employeeId, employee };
+}
+
+test('HR provisions employee login with exact retries and verified activation status', async ({
+  page,
+}) => {
+  const { tenantId, employeeId, employee } =
+    await employeeAccountWorkspaceFixture(page);
+  const accountRequestId = '1e0308ce-05c5-4b96-adb9-f838efbc2b5a';
+  const attempts: { key: string; body: unknown }[] = [];
+  let status = 'pending_identity_provider';
+  let httpStatus = 503;
+  await page.route(
+    `**/api/v1/tenants/${tenantId}/employees/${employeeId}/account-invitations`,
+    (route) => {
+      const request = route.request();
+      expect(request.headers()['x-csrf-token']).toBe('b'.repeat(43));
+      expect(request.headers()['idempotency-key']).toMatch(/^[0-9a-f-]{36}$/);
+      expect(request.postDataJSON()).toEqual({ email: 'staff@example.com' });
+      attempts.push({
+        key: request.headers()['idempotency-key'],
+        body: request.postDataJSON(),
+      });
+      return route.fulfill({
+        status: httpStatus,
+        json:
+          httpStatus === 202
+            ? { accountRequestId, status, replayed: attempts.length > 1 }
+            : {},
+      });
+    },
+  );
+  await page.goto('/employees');
+  await page
+    .getByRole('button', {
+      name: 'Set up employee login for Synthetic Invitee',
+    })
+    .click();
+  const form = page.getByRole('region', {
+    name: 'Employee login setup for Synthetic Invitee',
+  });
+  await expect(form.getByRole('checkbox')).toHaveCount(0);
+  await page
+    .getByLabel('Employee login email for Synthetic Invitee')
+    .fill('Staff@Example.COM');
+  await page.getByRole('button', { name: 'Send employee setup' }).click();
+  await expect(form.getByRole('status')).toHaveText(
+    /outcome could not be confirmed/,
+  );
+  await expect(
+    page.getByLabel('Employee login email for Synthetic Invitee'),
+  ).toBeDisabled();
+  httpStatus = 202;
+  for (const progress of [
+    'pending_identity_provider',
+    'pending_delivery',
+    'pending_activation',
+  ]) {
+    status = progress;
+    await page
+      .getByRole('button', { name: 'Retry exact employee setup' })
+      .click();
+    await expect(
+      form.getByText(new RegExp(progress.replaceAll('_', ' '))),
+    ).toBeVisible();
+  }
+  expect(attempts).toHaveLength(4);
+  expect(
+    attempts.every(
+      (attempt) => JSON.stringify(attempt) === JSON.stringify(attempts[0]),
+    ),
+  ).toBe(true);
+  await expect(
+    page.getByRole('button', { name: 'Retry exact employee setup' }),
+  ).toHaveCount(0);
+  await expect(form.getByRole('status')).toHaveText(/access remains pending/);
+  employee.accountAccess = { status: 'active', membershipVersion: 1 };
+  await page
+    .getByRole('button', {
+      name: 'Refresh employee access for Synthetic Invitee',
+    })
+    .click();
+  await expect(page.getByText('Login access: active')).toBeVisible();
+  await expect(form).toHaveCount(0);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+});
+
+test('employee setup conflicts allow correction while malformed results retain the request and lost authority removes it', async ({
+  page,
+}) => {
+  const { tenantId, employeeId } = await employeeAccountWorkspaceFixture(page, [
+    'owner',
+  ]);
+  let status = 409;
+  const attempts: { key: string; body: unknown }[] = [];
+  await page.route(
+    `**/api/v1/tenants/${tenantId}/employees/${employeeId}/account-invitations`,
+    (route) => {
+      attempts.push({
+        key: route.request().headers()['idempotency-key'],
+        body: route.request().postDataJSON(),
+      });
+      return route.fulfill({
+        status,
+        json: { accountRequestId: 'wrong', status: 'active', replayed: true },
+      });
+    },
+  );
+  await page.goto('/employees');
+  await page
+    .getByRole('button', {
+      name: 'Set up employee login for Synthetic Invitee',
+    })
+    .click();
+  await page
+    .getByLabel('Employee login email for Synthetic Invitee')
+    .fill('first@example.com');
+  await page.getByRole('button', { name: 'Send employee setup' }).click();
+  await expect(page.getByRole('status')).toHaveText(/Account setup refused/);
+  await expect(
+    page.getByLabel('Employee login email for Synthetic Invitee'),
+  ).toBeEnabled();
+  await page
+    .getByLabel('Employee login email for Synthetic Invitee')
+    .fill('second@example.com');
+  status = 202;
+  await page.getByRole('button', { name: 'Send employee setup' }).click();
+  await expect(page.getByRole('status')).toHaveText(
+    /outcome could not be confirmed/,
+  );
+  await expect(page.getByText('Request wrong')).toHaveCount(0);
+  expect(attempts[1].key).not.toBe(attempts[0].key);
+  status = 403;
+  await page
+    .getByRole('button', { name: 'Retry exact employee setup' })
+    .click();
+  await expect(page.getByRole('main')).toHaveText(
+    /HR access with recent multi-factor/,
+  );
+  await expect(
+    page.getByRole('button', { name: 'Retry exact employee setup' }),
+  ).toHaveCount(0);
+  expect(attempts[2]).toEqual(attempts[1]);
+});
+
+for (const scenario of [
+  'payroll-only',
+  'employee-only',
+  'revoked',
+  'terminated',
+] as const) {
+  test(`employee login setup is unavailable for ${scenario}`, async ({
+    page,
+  }) => {
+    const roles =
+      scenario === 'payroll-only'
+        ? ['payroll_preparer']
+        : scenario === 'employee-only'
+          ? ['employee']
+          : ['hr_admin'];
+    const { employee } = await employeeAccountWorkspaceFixture(page, roles);
+    if (scenario === 'revoked')
+      employee.accountAccess = { status: 'revoked', membershipVersion: 2 };
+    if (scenario === 'terminated') employee.status = 'terminated';
+    await page.goto('/employees');
+    await expect(
+      page.getByText('Login access:', { exact: false }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('button', {
+        name: 'Set up employee login for Synthetic Invitee',
+      }),
+    ).toHaveCount(0);
+  });
+}
+
+for (const status of ['failed', 'revoked']) {
+  test(`employee setup terminal ${status} result never offers a repair or new request`, async ({
+    page,
+  }) => {
+    const { tenantId, employeeId } =
+      await employeeAccountWorkspaceFixture(page);
+    let requests = 0;
+    await page.route(
+      `**/api/v1/tenants/${tenantId}/employees/${employeeId}/account-invitations`,
+      (route) => {
+        requests++;
+        return route.fulfill({
+          status: 202,
+          json: {
+            accountRequestId: '1e0308ce-05c5-4b96-adb9-f838efbc2b5a',
+            status,
+            replayed: true,
+          },
+        });
+      },
+    );
+    await page.goto('/employees');
+    await page
+      .getByRole('button', {
+        name: 'Set up employee login for Synthetic Invitee',
+      })
+      .click();
+    await page
+      .getByLabel('Employee login email for Synthetic Invitee')
+      .fill('staff@example.com');
+    await page.getByRole('button', { name: 'Send employee setup' }).click();
+    await expect(page.getByRole('status')).toHaveText(
+      status === 'failed' ? /marked failed/ : /request is revoked/,
+    );
+    await expect(
+      page.getByRole('button', { name: 'Retry exact employee setup' }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole('button', { name: 'Send employee setup' }),
+    ).toHaveCount(0);
+    expect(requests).toBe(1);
   });
 }

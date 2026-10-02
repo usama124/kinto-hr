@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import EmployeeAccountInvitation from './account-invitation';
 import { FormEvent, useEffect, useState } from 'react';
 import {
   employeeRosterSchema,
@@ -735,6 +736,34 @@ export default function Employees() {
                     Login access:{' '}
                     {employee.accountAccess.status.replace('_', ' ')}
                   </p>
+                  {tenantRoles.some(
+                    (role) => role === 'owner' || role === 'hr_admin',
+                  ) &&
+                    ['draft', 'active'].includes(employee.status) &&
+                    employee.accountAccess.status === 'not_provisioned' && (
+                      <EmployeeAccountInvitation
+                        key={`${tenantId}:${employee.id}`}
+                        tenantId={tenantId}
+                        employeeId={employee.id}
+                        employeeName={employee.name}
+                        csrf={csrf}
+                        disabled={busy}
+                        onAccessDenied={(status) =>
+                          setState(status === 401 ? 'signed-out' : 'denied')
+                        }
+                        onBusyChange={setBusy}
+                        onRefresh={async () => {
+                          setBusy(true);
+                          try {
+                            await load(tenantId);
+                          } catch {
+                            setState('error');
+                          } finally {
+                            setBusy(false);
+                          }
+                        }}
+                      />
+                    )}
                   {!checklists[employee.id] ? (
                     <button
                       className="secondary-button"

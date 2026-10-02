@@ -50,6 +50,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 2 October 2026 — employee account workspace and foundation review
+
+Engineering reviewed Phase 1 acceptance against merged main and found the employee-account API lacked its required HR-facing setup form. The new employee-record workspace submits only normalized email and a UUID exact-request key, with a fixed Employee role, pending delivery/activation states and no public signup. Strict shared receipts prevent malformed provider state from being treated as activation; terminal recorded requests skip unnecessary provider delivery. No schema, pricing, payroll or role permission change is introduced. See [workspace evidence](../evidence/phase-01/employee-account-workspace.md) and [acceptance gaps](../evidence/phase-01/foundation-acceptance-gaps.md). Explicit table scope/test classification is the next local foundation step; production approvals remain outstanding. Engineering review is not owner/security staging acceptance.
+
 ### 2 October 2026 — entitlement revocation receipts
 
 Engineering added persistent company/operator/UUID-scoped revocation receipts and exact-request browser reconciliation. Migration 46 commits receipt, status/version and audit pair together under the entitlement lock. Exact replay returns original revocation evidence without changing later commercial state; changed target/version/reason conflicts. Every replay requires active operator authority and recent MFA, and inactive companies are unavailable. Runtime execution of the former non-idempotent function is removed through restricted bootstrap; the receipt table is inaccessible to the application. The alternative of updating the saved expected version on retry would change the approved request, so the workspace retains its original snapshot even after history refresh or refresh failure. See [evidence](../evidence/phase-01/entitlement-revocation-idempotency.md). Foundation acceptance gap review and remaining operational gates are next; no production approval or commercial scope change is implied.

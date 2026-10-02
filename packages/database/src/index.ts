@@ -14,6 +14,7 @@ import {
   type PlatformCompanyQuery,
   type CompanyProvisioning,
   employeeAccountProvisioningSchema,
+  employeeAccountProvisioningResultSchema,
   employeeAccountReactivationSchema,
   employeeAccountReactivationResultSchema,
   type EmployeeAccountProvisioning,
@@ -622,11 +623,11 @@ export async function requestEmployeeAccountProvisioning(
   if (row.outcome === 'conflict') throw new DomainError('CONFLICT');
   if (!row.account_request_id || !row.provisioning_status)
     throw new Error('Invalid employee account provisioning result');
-  return {
+  return employeeAccountProvisioningResultSchema.parse({
     accountRequestId: row.account_request_id,
     status: row.provisioning_status,
     replayed: row.outcome === 'existing',
-  };
+  });
 }
 
 type MembershipAdministrationActor = {

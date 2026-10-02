@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import {
   employeeAccountProvisioningSchema,
+  employeeAccountProvisioningResultSchema,
   tenantIdSchema,
 } from '@kinto/contracts';
 import { AuthService } from '../auth/service';
@@ -74,10 +75,14 @@ export class EmployeeAccountsController {
       parsedKey.data,
       input.data,
     );
+    if (['active', 'failed', 'revoked'].includes(provisioned.status))
+      return employeeAccountProvisioningResultSchema.parse(provisioned);
     const employee = await this.accountProvisioning.attemptEmployee(
       provisioned.accountRequestId,
       input.data.email,
     );
-    return employee ? { ...provisioned, status: employee.status } : provisioned;
+    return employeeAccountProvisioningResultSchema.parse(
+      employee ? { ...provisioned, status: employee.status } : provisioned,
+    );
   }
 }

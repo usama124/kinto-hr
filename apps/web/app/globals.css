@@ -469,6 +469,9 @@ button {
   align-items: end;
   gap: 10px;
 }
+.employee-account-setup p {
+  overflow-wrap: anywhere;
+}
 .employee-schedule {
   margin: 0;
   color: var(--muted);
