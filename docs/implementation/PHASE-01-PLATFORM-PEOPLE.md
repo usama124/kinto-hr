@@ -130,3 +130,7 @@ Release internally in staging. If identity/isolation fails, disable tenant acces
 ### Optional restricted bank details — 3 October 2026
 
 The [bank-details increment](../evidence/phase-01/employee-bank-details.md) implements optional account capture, optimistic versioning and explicit clearing behind separate recent-MFA payroll permissions. Preparers read/write; approvers read only. Owner/HR alone never gain financial access. Ordinary roster/contact/audit/outbox projections remain free of bank values. Payments, account verification and payroll remain outside this increment. Next local step is foundation release-readiness evidence consolidation; production deployment, security/privacy approval, storage/scanning, alert delivery and file/PITR recovery remain open.
+
+### Foundation release-readiness review inventory — 3 October 2026
+
+The [review inventory](foundation-readiness.json) and [readiness diagnostic](../evidence/phase-01/foundation-release-readiness.md) now separate historical local evidence from nine foundation review areas and four later-phase dependencies. `pnpm foundation:readiness:verify` checks integrity within CI; `pnpm foundation:readiness` reports revision/dirty state and exits review-required without running tests or approving deployment. No production acceptance or phase-completion claim is inferred. Next: review any remaining local contract gaps and prepare the approved staging/release exercise; safe synthetic Phase 2 work remains possible while hardware/payroll evidence is gated.

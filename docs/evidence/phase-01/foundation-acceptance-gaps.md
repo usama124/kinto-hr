@@ -32,10 +32,14 @@ The [bank-details boundary](employee-bank-details.md) captures optional bank nam
 
 ## Next bounded local step
 
-Consolidate foundation release-readiness evidence and unresolved deployment gates for review; this must not manufacture production approval. Salary transfers remain outside Kinto. Production storage/scanning, approved retention and deployment acceptance are still external gates. Deployed alert delivery, provider retry/availability policy, consistent API configuration and staging/security acceptance still require separate operational approval.
+The [release-readiness inventory and command](foundation-release-readiness.md) now consolidate local records and unresolved gates without manufacturing approval. Next, review any remaining local contract gaps and prepare the authorized staging/release exercise. Salary transfers remain outside Kinto. Production storage/scanning, approved retention and deployment acceptance are still external gates. Deployed alert delivery, provider retry/availability policy, consistent API configuration and staging/security acceptance still require separate operational approval.
 
 ## External and deployment gates remain
 
 Product/engineering approval must resolve pilot scope, deployment/vendor/budget and privacy/retention decisions before live customers or personal records are used. Operations must verify staging identity/provider reconciliation, disable synchronization, alert routing, backup/PITR/file recovery and remote release evidence. Approved production storage/scanning and file access must replace the off-by-default local document adapter before live documents are accepted. Human staging/security acceptance is still required.
 
 Real K50 connectivity/firmware/SDK distribution and independently reviewed Pakistan payroll rules/fixtures remain Phase 0 dependencies for later attendance/payroll acceptance. Local connector fixtures or calculated examples cannot satisfy those gates. No full Phase 0 or Phase 1 completion, device compatibility, legal compliance or production readiness is asserted by this review.
+
+## Release-readiness inventory slice — 3 October 2026
+
+A committed, CI-validated review inventory separates historical local evidence, foundation review gates and later hardware/payroll/billing dependencies. The diagnostic command reports exact revision/dirty state, requires review and cannot grant production acceptance. See [evidence](foundation-release-readiness.md).

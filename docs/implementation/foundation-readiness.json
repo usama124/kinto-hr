@@ -1,0 +1,183 @@
+{
+  "schemaVersion": 1,
+  "scope": "foundation_review_inventory",
+  "localEvidence": [
+    {
+      "id": "verification",
+      "command": "pnpm verify",
+      "record": "docs/evidence/phase-01/foundation.md",
+      "meaning": "historical_local_evidence_not_current_test_result"
+    },
+    {
+      "id": "isolation",
+      "command": "pnpm test:schema-isolation",
+      "record": "docs/evidence/phase-01/schema-isolation-classification.md",
+      "meaning": "historical_local_evidence_not_current_test_result"
+    },
+    {
+      "id": "integration",
+      "command": "pnpm test:integration",
+      "record": "docs/evidence/phase-01/employee-bank-details.md",
+      "meaning": "historical_local_evidence_not_current_test_result"
+    },
+    {
+      "id": "migrations",
+      "command": "pnpm test:migrations",
+      "record": "docs/evidence/phase-01/employee-bank-details.md",
+      "meaning": "historical_local_evidence_not_current_test_result"
+    },
+    {
+      "id": "recovery",
+      "command": "pnpm test:recovery",
+      "record": "docs/evidence/phase-01/employee-bank-details.md",
+      "meaning": "historical_local_evidence_not_current_test_result"
+    },
+    {
+      "id": "build",
+      "command": "pnpm build",
+      "record": "docs/evidence/phase-01/employee-bank-details.md",
+      "meaning": "historical_local_evidence_not_current_test_result"
+    },
+    {
+      "id": "worker",
+      "command": "pnpm test:worker:runtime",
+      "record": "docs/evidence/phase-01/employee-bank-details.md",
+      "meaning": "historical_local_evidence_not_current_test_result"
+    },
+    {
+      "id": "browser",
+      "command": "pnpm test:e2e",
+      "record": "docs/evidence/phase-01/employee-bank-details.md",
+      "meaning": "historical_local_evidence_not_current_test_result"
+    },
+    {
+      "id": "provider",
+      "command": "pnpm test:keycloak",
+      "record": "docs/evidence/phase-01/durable-provider-logout.md",
+      "meaning": "historical_local_evidence_not_current_test_result"
+    }
+  ],
+  "foundationGates": [
+    {
+      "id": "pilot_scope",
+      "owner": "Product owner",
+      "status": "review_required",
+      "requiredEvidence": "Approve employer/province scope, pilot workflow and responsible reviewers.",
+      "references": [
+        "docs/implementation/PHASE-00-VALIDATION.md"
+      ]
+    },
+    {
+      "id": "hosting",
+      "owner": "Product and operations",
+      "status": "review_required",
+      "requiredEvidence": "Approve vendor, budget, region, private infrastructure and deployment credentials before provisioning.",
+      "references": [
+        "docs/implementation/DECISIONS.md"
+      ]
+    },
+    {
+      "id": "privacy_security",
+      "owner": "Privacy and security reviewers",
+      "status": "review_required",
+      "requiredEvidence": "Approve live personal/bank/document data use, encryption/key management, access review and incident response.",
+      "references": [
+        "docs/implementation/SYSTEM-SPEC.md",
+        "docs/evidence/phase-01/employee-bank-details.md"
+      ]
+    },
+    {
+      "id": "provider_operations",
+      "owner": "Identity and operations owners",
+      "status": "review_required",
+      "requiredEvidence": "Prove deployed callback delivery/retry, consistent durable mode, identity-disable enforcement and outage recovery.",
+      "references": [
+        "docs/operations/authentication.md",
+        "docs/evidence/phase-01/provider-logout-monitoring.md"
+      ]
+    },
+    {
+      "id": "storage_scanning",
+      "owner": "Storage and security owners",
+      "status": "review_required",
+      "requiredEvidence": "Replace the local-test adapter with approved object transfer/scanning and authorized download handling.",
+      "references": [
+        "docs/operations/document-upload.md"
+      ]
+    },
+    {
+      "id": "recovery",
+      "owner": "Operations owner",
+      "status": "review_required",
+      "requiredEvidence": "Prove deployed backup/PITR and file/object recovery with approved RPO/RTO; local same-cluster restore is insufficient.",
+      "references": [
+        "docs/operations/foundation.md"
+      ]
+    },
+    {
+      "id": "retention_support",
+      "owner": "Product, legal and operations",
+      "status": "review_required",
+      "requiredEvidence": "Approve retention/export/suspension/backup expiry and support terms; no automatic purge yet.",
+      "references": [
+        "docs/implementation/DECISIONS.md"
+      ]
+    },
+    {
+      "id": "staging_acceptance",
+      "owner": "Product, security and operations reviewers",
+      "status": "review_required",
+      "requiredEvidence": "Perform approved staging acceptance, synthetic outage/alert delivery checks and rollback exercises.",
+      "references": [
+        "docs/evidence/phase-01/foundation-acceptance-gaps.md"
+      ]
+    },
+    {
+      "id": "release_ci",
+      "owner": "Release owner",
+      "status": "review_required",
+      "requiredEvidence": "Attach passing remote CI and release evidence for the exact candidate revision, not an older local run.",
+      "references": [
+        "docs/implementation/README.md"
+      ]
+    }
+  ],
+  "laterPhaseGates": [
+    {
+      "id": "k50_hardware",
+      "owner": "Engineering and authorized device owner",
+      "status": "review_required",
+      "requiredEvidence": "Prove read-only collection, timestamp interpretation and duplicate/recovery behavior on actual K50 firmware.",
+      "references": [
+        "docs/implementation/PHASE-00-VALIDATION.md"
+      ]
+    },
+    {
+      "id": "connector_distribution",
+      "owner": "Engineering and vendor contact",
+      "status": "review_required",
+      "requiredEvidence": "Approve SDK use/redistribution, supported OS/architecture, signing and connector installer updates.",
+      "references": [
+        "docs/implementation/DECISIONS.md"
+      ]
+    },
+    {
+      "id": "payroll_review",
+      "owner": "Employer and Pakistan payroll specialist",
+      "status": "review_required",
+      "requiredEvidence": "Approve independently calculated fixtures and applicable effective statutory/employer rules before real payroll.",
+      "references": [
+        "docs/implementation/PHASE-00-VALIDATION.md"
+      ]
+    },
+    {
+      "id": "commercial_billing",
+      "owner": "Product and finance",
+      "status": "review_required",
+      "requiredEvidence": "Approve seller/prices/invoicing/settlement and manual or automatic collection policy before paid launch.",
+      "references": [
+        "docs/implementation/DECISIONS.md"
+      ]
+    }
+  ]
+}
