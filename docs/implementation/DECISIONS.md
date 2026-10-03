@@ -50,6 +50,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 3 October 2026 — explicit schema isolation classification gate
+
+Engineering added a reviewed per-table inventory covering tenant, private tenant control-plane, global identity, platform control and plan catalog boundaries. CI now rejects unknown/missing tables, missing domain regression references, policy drift, unsafe roles and unexpected effective table/column privileges. Isolated migration upgrades and database recovery use the same verifier while retaining independent restore coverage. Synthetic weakening tests roll back every catalog change. No policy, grant, migration or API permission changed. See [evidence](../evidence/phase-01/schema-isolation-classification.md). Next is provider identity-disable synchronization contract/synthetic verification; production provider, deployment and human acceptance gates remain open.
+
 ### 2 October 2026 — employee account workspace and foundation review
 
 Engineering reviewed Phase 1 acceptance against merged main and found the employee-account API lacked its required HR-facing setup form. The new employee-record workspace submits only normalized email and a UUID exact-request key, with a fixed Employee role, pending delivery/activation states and no public signup. Strict shared receipts prevent malformed provider state from being treated as activation; terminal recorded requests skip unnecessary provider delivery. No schema, pricing, payroll or role permission change is introduced. See [workspace evidence](../evidence/phase-01/employee-account-workspace.md) and [acceptance gaps](../evidence/phase-01/foundation-acceptance-gaps.md). Explicit table scope/test classification is the next local foundation step; production approvals remain outstanding. Engineering review is not owner/security staging acceptance.

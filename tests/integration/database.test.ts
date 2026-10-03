@@ -16,6 +16,11 @@ import {
   createEmployeeDraft,
   inTenant,
 } from '@kinto/database';
+import {
+  schemaIsolationInventory,
+  verifySchemaIsolation,
+  validateIsolationInventory,
+} from '../../scripts/schema-isolation';
 if (existsSync('.env')) process.loadEnvFile('.env');
 const adminUrl = process.env.MIGRATION_DATABASE_URL;
 const appUrl = process.env.DATABASE_URL;
@@ -72,21 +77,137 @@ describe('PostgreSQL tenant and transactional boundary', () => {
       'Unsafe runtime database role',
     );
   });
-  it('requires RLS and FORCE RLS for every business table', async () => {
-    const rows = await admin.$queryRaw<
-      {
-        relname: string;
-        relrowsecurity: boolean;
-        relforcerowsecurity: boolean;
-      }[]
-    >`SELECT relname, relrowsecurity, relforcerowsecurity FROM pg_class JOIN pg_namespace n ON n.oid=relnamespace WHERE n.nspname='public' AND relkind='r' AND relname <> '_prisma_migrations'`;
-    expect(rows.length).toBeGreaterThanOrEqual(4);
-    for (const row of rows)
-      expect({
-        table: row.relname,
-        enabled: row.relrowsecurity,
-        forced: row.relforcerowsecurity,
-      }).toEqual({ table: row.relname, enabled: true, forced: true });
+  it('classifies every business table with exact policies, grants and regression evidence', async () => {
+    expect(await verifySchemaIsolation(admin)).toBe(
+      schemaIsolationInventory.length,
+    );
+  });
+  it('rejects missing test evidence, duplicate entries and missing scope columns', async () => {
+    const employee = schemaIsolationInventory.find(
+      ({ name }) => name === 'employees',
+    )!;
+    await expect(
+      validateIsolationInventory([employee, employee]),
+    ).rejects.toThrow('Duplicate table classification');
+    await expect(
+      validateIsolationInventory([{ ...employee, tenantColumn: null }]),
+    ).rejects.toThrow('Missing tenant classification: employees');
+    await expect(
+      validateIsolationInventory([
+        {
+          ...employee,
+          regression: {
+            ...employee.regression,
+            scenario: 'synthetic nonexistent regression',
+          },
+        },
+      ]),
+    ).rejects.toThrow('Missing regression scenario: employees');
+  });
+  it.each([
+    [
+      'unclassified table',
+      'CREATE TABLE public.synthetic_unclassified (id uuid)',
+      'Unclassified or missing business table',
+    ],
+    [
+      'renamed table with unchanged table count',
+      'ALTER TABLE public.employee_account_requests RENAME TO synthetic_missing_classification',
+      'Unclassified or missing business table',
+    ],
+    [
+      'disabled RLS',
+      'ALTER TABLE public.employees DISABLE ROW LEVEL SECURITY',
+      'RLS boundary mismatch: employees',
+    ],
+    [
+      'missing FORCE RLS',
+      'ALTER TABLE public.employees NO FORCE ROW LEVEL SECURITY',
+      'RLS boundary mismatch: employees',
+    ],
+    [
+      'permissive tenant read',
+      'ALTER POLICY tenant_scope ON public.employees USING (true)',
+      'Policy boundary mismatch: employees',
+    ],
+    [
+      'permissive tenant write',
+      'ALTER POLICY tenant_scope ON public.employees WITH CHECK (true)',
+      'Policy boundary mismatch: employees',
+    ],
+    [
+      'additional public policy',
+      'CREATE POLICY synthetic_public_access ON public.employee_account_requests USING (true)',
+      'Policy boundary mismatch: employee_account_requests',
+    ],
+    [
+      'broadened control owner role',
+      'ALTER POLICY platform_control ON public.employee_account_requests TO PUBLIC',
+      'Policy boundary mismatch: employee_account_requests',
+    ],
+    [
+      'public table grant',
+      'GRANT SELECT ON public.employee_private_details TO PUBLIC',
+      'Table privilege mismatch: employee_private_details',
+    ],
+    [
+      'column-only grant',
+      'GRANT SELECT (email) ON public.employee_account_requests TO kinto_app',
+      'Column privilege mismatch: employee_account_requests',
+    ],
+    [
+      'broadened worker column grant',
+      'GRANT UPDATE (tenant_id) ON public.job_deliveries TO kinto_worker',
+      'Column privilege mismatch: job_deliveries',
+    ],
+    [
+      'unsafe runtime role',
+      'ALTER ROLE kinto_app BYPASSRLS',
+      'Unsafe isolation role: kinto_app',
+    ],
+    [
+      'login-enabled function owner',
+      'ALTER ROLE kinto_control_owner LOGIN',
+      'Unsafe isolation role: kinto_control_owner',
+    ],
+    [
+      'missing tenant policy',
+      'DROP POLICY tenant_scope ON public.employees',
+      'Policy boundary mismatch: employees',
+    ],
+    [
+      'nullable tenant column',
+      'ALTER TABLE public.employees ALTER COLUMN tenant_id DROP NOT NULL',
+      'Nullable tenant column: employees',
+    ],
+  ])(
+    'rejects %s and rolls back synthetic catalog changes',
+    async (_label, sql, message) => {
+      const rollback = new Error('synthetic catalog rollback');
+      await expect(
+        admin.$transaction(
+          async (tx) => {
+            await tx.$executeRawUnsafe(sql);
+            await expect(verifySchemaIsolation(tx)).rejects.toThrow(message);
+            throw rollback;
+          },
+          { timeout: 15000 },
+        ),
+      ).rejects.toBe(rollback);
+      await verifySchemaIsolation(admin);
+    },
+  );
+  it('denies unscoped runtime reads across the entire classified inventory', async () => {
+    for (const table of schemaIsolationInventory) {
+      // Names come only from the reviewed inventory, never an API or operator input.
+      expect(table.name).toMatch(/^[a-z_]+$/);
+      const query = app.$queryRawUnsafe(
+        `SELECT 1 FROM public."${table.name}" LIMIT 1`,
+      );
+      if (table.grants.kinto_app?.includes('SELECT'))
+        expect(await query).toEqual([]);
+      else await expect(query).rejects.toThrow(/permission denied/);
+    }
   });
   it('fails closed without tenant context', async () => {
     await createEmployeeDraft(

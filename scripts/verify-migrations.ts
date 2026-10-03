@@ -7,6 +7,8 @@ import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { createDatabase, inTenant } from '@kinto/database';
 
+import { verifySchemaIsolation } from './schema-isolation';
+
 if (existsSync('.env')) process.loadEnvFile('.env');
 
 let stage = 'validating configuration';
@@ -97,6 +99,8 @@ async function main() {
     run(['db:bootstrap:operator']);
     stage = 'replaying migrations';
     run(['db:migrate']);
+    stage = 'verifying upgraded schema isolation classifications';
+    await verifySchemaIsolation(target);
     stage = 'verifying upgraded data and tenant isolation';
     assert.equal(await target.platformOperator.count(), 1);
     assert.equal(

@@ -46,6 +46,8 @@ import {
 } from '@kinto/database';
 import { processEvent } from '../apps/worker/src/processor';
 
+import { verifySchemaIsolation } from './schema-isolation';
+
 if (existsSync('.env')) process.loadEnvFile('.env');
 const digest = (bytes: Buffer) =>
   createHash('sha256').update(bytes).digest('hex');
@@ -54,6 +56,7 @@ function verifyArchive(bytes: Buffer, checksum: string) {
 }
 
 async function snapshot(db: PrismaClient) {
+  await verifySchemaIsolation(db);
   // Adding a business table requires extending the restore assertion, not silently skipping it.
   const tables = await db.$queryRaw<
     { name: string }[]
