@@ -46,12 +46,12 @@ Billing work in Phase 4 can be developed alongside payroll after Phase 1 contrac
 
 - **P00 — in progress (partial architecture spike); 2–3 estimated weeks.** Exit: approved supported-scope record, K50 evidence, selected integration/auth/deployment approach and independent payroll fixtures. Allowed deployment: local/staging validation only.
 - **P01 — in progress (foundation only); 3–5 estimated weeks.** Exit: tenant-isolated platform and employee workflows, server-side capability/capacity controls, basic recovery evidence. Allowed deployment: internal staging; no public release.
-- **P02 — not started; 4–6 estimated weeks.** Exit: reconciled attendance and leave with tested real K50 recovery. Allowed deployment: expressly agreed attendance-only pilot after applicable security/privacy gates; payroll remains unavailable.
+- **P02 — synthetic contracts/preflight started; 4–6 estimated weeks.** Exit: reconciled attendance and leave with tested real K50 recovery. Allowed deployment: expressly agreed attendance-only pilot after applicable security/privacy gates; payroll remains unavailable.
 - **P03 — not started; 4–6 estimated weeks.** Exit: independently reconciled payroll engine and approved rule packages. Allowed deployment: supervised shadow payroll; existing payroll remains authoritative.
 - **P04 — not started; 3–5 estimated engineering weeks.** Exit: two consecutive live payroll cycles reconciled, collection/grace behavior tested, operational/security sign-off. Allowed deployment: controlled commercial production.
 - **P05 — not started; 4–6 additional estimated weeks.** Exit: expense and asset gates, phased rollout and rollback evidence. Allowed deployment: opt-in production modules.
 
-Updated delivery boundaries: P01 employee compensation entry/history is locally implemented without calculation; P02 implements the local connector; P03 adds automatic monthly generation and draft/final report downloads. P04 subscriptions are Kinto service fees, not employee salary transfers. P02–P04 additions remain planned.
+Updated delivery boundaries: P01 employee compensation entry/history is locally implemented without calculation; P02 implements the local connector; P03 adds automatic monthly generation and draft/final report downloads. P04 subscriptions are Kinto service fees, not employee salary transfers. P02 contracts/preflight are preparatory only; remaining P02–P04 additions remain planned.
 
 Leave/payroll clarification: P02 includes per-type annual entitlements and hard monthly usage caps, with reservations and atomic over-limit rejection. P02 settles reviewed uncovered absence using the company choice of salary deduction or available paid Annual leave first; P03 deducts only residual unpaid absence and separately approved unpaid leave from the closed period, showing leave/absence units, salary, itemized deductions and net payable in reports. Pending leave and uncertain attendance remain blockers; no guessed absence deductions. Company-wide settings include leave limits, absence fallback and check-in/out plus full/half-day target/minimum hours. See C08–C10/D09–D10 in the decision register. No implementation status changes are implied.
 
@@ -95,3 +95,7 @@ The [bank-details increment](../evidence/phase-01/employee-bank-details.md) impl
 ### Foundation release-readiness review inventory — 3 October 2026
 
 The [review inventory](foundation-readiness.json) and [readiness diagnostic](../evidence/phase-01/foundation-release-readiness.md) now separate historical local evidence from nine foundation review areas and four later-phase dependencies. `pnpm foundation:readiness:verify` checks integrity within CI; `pnpm foundation:readiness` reports revision/dirty state and exits review-required without running tests or approving deployment. No production acceptance or phase-completion claim is inferred. Next: review any remaining local contract gaps and prepare the approved staging/release exercise; safe synthetic Phase 2 work remains possible while hardware/payroll evidence is gated.
+
+### Synthetic attendance preparation — 4 October 2026
+
+[Strict ingestion contracts and pure preflight](../evidence/phase-02/attendance-ingestion-contracts.md) begin safe P02 preparation. No device registry, machine authentication, ingestion route, durable receipt or attendance effect exists yet. Next local slice is tenant-scoped device registry/provisioning authority; real K50 compatibility and production acceptance remain gated.

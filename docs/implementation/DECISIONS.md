@@ -302,3 +302,7 @@ These sources were consulted for the planning package on 28 August 2026. They su
 - [FBR Income Tax Ordinance collection](https://www.fbr.gov.pk/Categ/Income-Tax-Ordinance/326/1000): starting point for authoritative legislation. No current tax brackets or universal employer obligations are asserted in this package. Obtain the relevant effective instrument and other applicable authorities during P00/P03 review.
 
 No package/version compatibility, live tax rates, payment-provider eligibility or K50 hardware test result is claimed merely because a source URL is listed.
+
+### 4 October 2026 — synthetic attendance ingestion boundary
+
+Engineering begins P02-01/P02-02 preparation with strict allowlisted batch/receipt schemas and pure preflight, not a mounted machine endpoint. Local timestamps accept seconds with optional 1–3 fractional digits; no offset or caller timezone is accepted. UUID case is canonicalized, while source IDs retain leading zeros. The bounds are 500 records/1,000,000 serialized UTF8 bytes; actual raw-body limits remain mandatory for the future route. Unverified source identities never become canonical counted events. The vendor-ID strategy is internal future configuration requiring actual hardware/reset evidence; no K50 identity behavior or SDK capability is assumed. Retry/source hashes do not prove durable storage or authentication. See [evidence](../evidence/phase-02/attendance-ingestion-contracts.md). Next: tenant-scoped device registry and provisioning authority before machine enrollment and transactional ingestion.

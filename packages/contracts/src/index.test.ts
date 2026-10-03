@@ -1,5 +1,10 @@
 import { expect, it } from 'vitest';
 import {
+  attendanceSourceEventSchema,
+  attendanceBatchEnvelopeSchema,
+  attendanceBatchReceiptSchema,
+} from './attendance';
+import {
   authenticatedIdentitySchema,
   tenantRoleSchema,
   employeeDraftSchema,
@@ -91,6 +96,99 @@ it('accepts strict workforce export creation and status projections', () => {
       report: { employeeNames: ['Private'] },
     }).success,
   ).toBe(false);
+});
+
+it('allowlists synthetic attendance rows and preserves local timestamps and leading zeros', () => {
+  const row = {
+    connectorEventId: '00000000-0000-4000-8000-000000000001',
+    sourceUserId: '00007',
+    sourceLocalTimestamp: '2026-10-04T09:00:00.123',
+  };
+  expect(attendanceSourceEventSchema.parse(row)).toEqual(row);
+  for (const change of [
+    { sourceLocalTimestamp: '2026-02-30T09:00:00' },
+    { sourceLocalTimestamp: '2026-10-04T09:00:00Z' },
+    { sourceLocalTimestamp: '2026-10-04T09:00:00+05:00' },
+    { sourceLocalTimestamp: '2026-10-04T09:00' },
+    { sourceLocalTimestamp: '2026-10-04T09:00:00.1234' },
+    { sourceUserId: 7 },
+    { sourceUserId: ' 7 ' },
+    { direction: 'unknown' },
+    { workCode: 'bad code' },
+    { sourceEventId: '' },
+    { fingerprint: 'private' },
+    { photo: 'private' },
+    { cnic: 'private' },
+    { tenantId: 'caller' },
+  ])
+    expect(
+      attendanceSourceEventSchema.safeParse({ ...row, ...change }).success,
+    ).toBe(false);
+  const batch = {
+    batchId: row.connectorEventId,
+    deviceId: row.connectorEventId,
+    schemaVersion: 1,
+    adapterVersion: 'synthetic-1',
+    events: [null, row],
+  };
+  expect(attendanceBatchEnvelopeSchema.parse(batch)).toEqual(batch);
+  for (const change of [
+    { events: [] },
+    { events: Array(501).fill(row) },
+    { schemaVersion: 2 },
+    { adapterVersion: ' invalid' },
+    { timezone: 'Asia/Karachi' },
+  ])
+    expect(
+      attendanceBatchEnvelopeSchema.safeParse({ ...batch, ...change }).success,
+    ).toBe(false);
+});
+
+it('requires ordered strict per-record attendance receipts without treating schemas as durable acknowledgments', () => {
+  const id = '00000000-0000-4000-8000-000000000001';
+  const receipt = {
+    receiptId: id,
+    batchId: id,
+    deviceId: id,
+    schemaVersion: 1,
+    events: [
+      { index: 0, connectorEventId: id, disposition: 'stored' },
+      { index: 1, connectorEventId: id, disposition: 'duplicate' },
+      {
+        index: 2,
+        connectorEventId: id,
+        disposition: 'quarantined',
+        code: 'source_identity_unverified',
+      },
+      { index: 3, disposition: 'rejected_unstored', code: 'invalid_event' },
+    ],
+  };
+  expect(attendanceBatchReceiptSchema.parse(receipt)).toEqual(receipt);
+  for (const events of [
+    [],
+    [...receipt.events].reverse(),
+    receipt.events.map((row) => ({ ...row, index: 0 })),
+    [{ index: 0, disposition: 'stored' }],
+    [
+      {
+        index: 0,
+        connectorEventId: id,
+        disposition: 'quarantined',
+        code: 'arbitrary',
+      },
+    ],
+    [
+      {
+        index: 0,
+        disposition: 'rejected_unstored',
+        code: 'invalid_event',
+        raw: 'secret',
+      },
+    ],
+  ])
+    expect(
+      attendanceBatchReceiptSchema.safeParse({ ...receipt, events }).success,
+    ).toBe(false);
 });
 
 it('accepts only strict employee account reactivation commands and results', () => {
