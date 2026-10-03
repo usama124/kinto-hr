@@ -46,7 +46,7 @@ Billing work in Phase 4 can be developed alongside payroll after Phase 1 contrac
 
 - **P00 — in progress (partial architecture spike); 2–3 estimated weeks.** Exit: approved supported-scope record, K50 evidence, selected integration/auth/deployment approach and independent payroll fixtures. Allowed deployment: local/staging validation only.
 - **P01 — in progress (foundation only); 3–5 estimated weeks.** Exit: tenant-isolated platform and employee workflows, server-side capability/capacity controls, basic recovery evidence. Allowed deployment: internal staging; no public release.
-- **P02 — synthetic contracts/preflight started; 4–6 estimated weeks.** Exit: reconciled attendance and leave with tested real K50 recovery. Allowed deployment: expressly agreed attendance-only pilot after applicable security/privacy gates; payroll remains unavailable.
+- **P02 — draft inventory API and synthetic contracts/preflight started; 4–6 estimated weeks.** Exit: reconciled attendance and leave with tested real K50 recovery. Allowed deployment: expressly agreed attendance-only pilot after applicable security/privacy gates; payroll remains unavailable.
 - **P03 — not started; 4–6 estimated weeks.** Exit: independently reconciled payroll engine and approved rule packages. Allowed deployment: supervised shadow payroll; existing payroll remains authoritative.
 - **P04 — not started; 3–5 estimated engineering weeks.** Exit: two consecutive live payroll cycles reconciled, collection/grace behavior tested, operational/security sign-off. Allowed deployment: controlled commercial production.
 - **P05 — not started; 4–6 additional estimated weeks.** Exit: expense and asset gates, phased rollout and rollback evidence. Allowed deployment: opt-in production modules.
@@ -99,3 +99,7 @@ The [review inventory](foundation-readiness.json) and [readiness diagnostic](../
 ### Synthetic attendance preparation — 4 October 2026
 
 [Strict ingestion contracts and pure preflight](../evidence/phase-02/attendance-ingestion-contracts.md) begin safe P02 preparation. No device registry, machine authentication, ingestion route, durable receipt or attendance effect exists yet. Next local slice is tenant-scoped device registry/provisioning authority; real K50 compatibility and production acceptance remain gated.
+
+### Draft device inventory API — 4 October 2026
+
+[Tenant-scoped inventory](../evidence/phase-02/attendance-device-inventory.md) adds owner-only registration/versioned editing/retirement and owner/HR reads with recent MFA, audit/outbox writes, restricted PostgreSQL access and synthetic restore coverage. Draft records are never active or authenticated devices; adapter/source identity remain unverified. Next: the inventory workspace, then versioned device/connector entitlements and machine enrollment. Hardware, attendance processing, leave and production approvals remain pending.

@@ -105,6 +105,8 @@ try {
     'CREATE POLICY platform_control ON administrator_invitations FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON legal_entities',
     'CREATE POLICY platform_control ON legal_entities FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
+    'DROP POLICY IF EXISTS platform_control ON attendance_devices',
+    'CREATE POLICY platform_control ON attendance_devices FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON branches',
     'CREATE POLICY platform_control ON branches FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON departments',
@@ -194,7 +196,7 @@ try {
     'GRANT SELECT, INSERT, UPDATE ON administrator_account_requests, administrator_invitations TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
-    'GRANT SELECT, INSERT, UPDATE ON legal_entities, branches, departments, designations, company_policy_versions TO kinto_control_owner',
+    'GRANT SELECT, INSERT, UPDATE ON legal_entities, branches, departments, designations, company_policy_versions, attendance_devices TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
     'GRANT SELECT, INSERT, UPDATE ON employment_periods, employee_assignments TO kinto_control_owner',
@@ -302,6 +304,8 @@ try {
     'public.mark_administrator_invitation_delivered(uuid, timestamptz, uuid)',
     'public.discover_identity_tenants(uuid)',
     'public.list_tenant_security_audit(uuid, boolean, uuid, integer, varchar, timestamptz, timestamptz, uuid)',
+    'public.read_tenant_device_inventory(uuid,boolean,uuid,integer,uuid)',
+    'public.mutate_tenant_device_inventory(uuid,boolean,uuid,uuid,integer,uuid,varchar,varchar,varchar,varchar,varchar,varchar,varchar,uuid,uuid)',
     'public.read_tenant_organization(uuid, boolean, uuid)',
     'public.create_tenant_legal_entity(uuid, boolean, uuid, uuid, varchar, varchar, varchar, varchar, varchar, uuid, uuid)',
     'public.update_tenant_legal_entity(uuid, boolean, uuid, uuid, integer, varchar, varchar, varchar, varchar, varchar, uuid, uuid)',

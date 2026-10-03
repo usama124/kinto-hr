@@ -40,6 +40,7 @@ model Tenant {
   administratorAccountRequests AdministratorAccountRequest[]
   administratorInvitations     AdministratorInvitation[]
   legalEntity                  LegalEntity?
+  attendanceDevices            AttendanceDevice[]
   branches                     Branch[]
   departments                  Department[]
   designations                 Designation[]
@@ -130,6 +131,7 @@ model Branch {
   tenant        Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   legalEntity   LegalEntity @relation(fields: [tenantId, legalEntityId], references: [tenantId, id], onDelete: Restrict)
   employeeAssignments EmployeeAssignment[]
+  attendanceDevices AttendanceDevice[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, code])
@@ -931,4 +933,25 @@ model EmployeeBankDetail {
   @@unique([tenantId, id])
   @@unique([tenantId, employeeId])
   @@map("employee_bank_details")
+}
+
+model AttendanceDevice {
+  id             String   @id @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  branchId       String   @map("branch_id") @db.Uuid
+  code           String   @db.VarChar(20)
+  name           String   @db.VarChar(160)
+  model          String   @db.VarChar(20)
+  firmware       String?  @db.VarChar(64)
+  sourceTimezone String   @map("source_timezone") @db.VarChar(64)
+  status         String   @default("draft") @db.VarChar(20)
+  version        Int      @default(1)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  branch         Branch   @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, code])
+  @@map("attendance_devices")
 }

@@ -4,6 +4,9 @@ import {
   type OnModuleInit,
 } from '@nestjs/common';
 import {
+  readTenantDeviceInventory,
+  createTenantDeviceInventory,
+  updateTenantDeviceInventory,
   acceptProviderLogout,
   pendingProviderLogouts,
   completeProviderLogout,
@@ -85,6 +88,9 @@ import {
 } from '@kinto/database';
 import {
   type AuthenticatedIdentity,
+  type DeviceCreate,
+  type DeviceUpdate,
+  type DeviceListQuery,
   type CompanyProvisioning,
   type PlatformCompanyQuery,
   type EmployeeAccountProvisioning,
@@ -301,6 +307,34 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     query: SecurityAuditQuery,
   ) {
     return listTenantSecurityAudit(this.db, actor, tenantId, query);
+  }
+  readDevices(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    query: DeviceListQuery,
+  ) {
+    return readTenantDeviceInventory(this.db, actor, tenantId, query);
+  }
+  createDevice(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    input: DeviceCreate,
+  ) {
+    return createTenantDeviceInventory(this.db, actor, tenantId, input);
+  }
+  updateDevice(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    deviceId: string,
+    input: DeviceUpdate,
+  ) {
+    return updateTenantDeviceInventory(
+      this.db,
+      actor,
+      tenantId,
+      deviceId,
+      input,
+    );
   }
   readOrganization(
     actor: { identityId: string; mfaVerified: boolean },

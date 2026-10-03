@@ -1,6 +1,6 @@
 # Phase 2 — K50 attendance, shifts and leave
 
-Version 1.0 · 28 August 2026 · Status: synthetic contracts/preflight started · Estimate: 4–6 weeks
+Version 1.0 · 28 August 2026 · Status: draft inventory and synthetic preflight started · Estimate: 4–6 weeks
 
 Dependencies: [Phase 1](PHASE-01-PLATFORM-PEOPLE.md), P00 K50 evidence and [shared spec](SYSTEM-SPEC.md). Next: [Phase 3](PHASE-03-PAKISTAN-PAYROLL.md).
 
@@ -136,7 +136,7 @@ An attendance-only pilot requires approved data terms, functioning permissions/b
 
 ## Implementation record
 
-- Work packages: P02-01/P02-02 preparatory schemas and pure preflight locally implemented; registry, authentication and durable ingestion pending. P02-03 through P02-05 not started.
+- Work packages: P02-01/P02-02 preparatory schemas, pure preflight and tenant-scoped draft inventory API locally implemented; inventory UI, activation/entitlements, enrollment, mappings, authentication and durable ingestion pending. P02-03 through P02-05 not started.
 - Hardware/firmware/SDK evidence: pending, not replaced by a simulator.
-- Code and synthetic tests: [attendance ingestion contracts/preflight](../evidence/phase-02/attendance-ingestion-contracts.md). No mounted endpoint, durable acknowledgment, reconciliation or rollout evidence.
+- Code and synthetic tests: [attendance ingestion contracts/preflight](../evidence/phase-02/attendance-ingestion-contracts.md). Draft registry API: [device inventory evidence](../evidence/phase-02/attendance-device-inventory.md). No mounted ingestion endpoint, durable attendance acknowledgment, hardware reconciliation or rollout evidence.
 - Customer attendance-pilot approval: pending.

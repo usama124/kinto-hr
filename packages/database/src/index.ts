@@ -1,6 +1,14 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { PrismaClient, type Prisma } from '@prisma/client';
 import {
+  deviceCreateSchema,
+  deviceUpdateSchema,
+  deviceListQuerySchema,
+  deviceInventorySchema,
+  deviceInventoryItemSchema,
+  type DeviceCreate,
+  type DeviceUpdate,
+  type DeviceListQuery,
   employeeDraftSchema,
   tenantIdSchema,
   type EmployeeDraft,
@@ -2459,4 +2467,67 @@ export async function updateTenantEmployeeBankDetails(
   if (!row.details_id || !row.details_version)
     throw new Error('Invalid bank-details mutation result');
   return { id: row.details_id, version: row.details_version };
+}
+
+// Inventory only: these functions never grant connector authentication/ingestion authority.
+export async function readTenantDeviceInventory(
+  db: PrismaClient,
+  actor: OrganizationActor,
+  tenantId: string,
+  input: DeviceListQuery,
+) {
+  validateOrganizationActor(actor, tenantId);
+  const query = deviceListQuerySchema.parse(input);
+  const rows = await db.$queryRaw<
+    { outcome: string; snapshot: unknown }[]
+  >`SELECT * FROM public.read_tenant_device_inventory(${actor.identityId}::uuid,${actor.mfaVerified},${tenantId}::uuid,${query.limit}::integer,${query.afterId ?? null}::uuid)`;
+  const row = rows[0];
+  if (!row || row.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (row.outcome !== 'ok') throw new DomainError('INVALID_STATE');
+  const items = deviceInventoryItemSchema.array().max(51).parse(row.snapshot);
+  const page = items.slice(0, query.limit);
+  return deviceInventorySchema.parse({
+    items: page,
+    nextCursor: items.length > query.limit ? page.at(-1)!.id : null,
+  });
+}
+export async function createTenantDeviceInventory(
+  db: PrismaClient,
+  actor: OrganizationActor,
+  tenantId: string,
+  input: DeviceCreate,
+) {
+  validateOrganizationActor(actor, tenantId);
+  const value = deviceCreateSchema.parse(input);
+  const rows = await db.$queryRaw<
+    OrganizationMutationRow[]
+  >`SELECT * FROM public.mutate_tenant_device_inventory(
+ ${actor.identityId}::uuid,${actor.mfaVerified},${tenantId}::uuid,${randomUUID()}::uuid,NULL::integer,
+ ${value.branchId}::uuid,${value.code}::varchar,${value.name}::varchar,${value.model}::varchar,${value.firmware}::varchar,
+ ${value.sourceTimezone}::varchar,'draft'::varchar,${value.reason}::varchar,${randomUUID()}::uuid,${randomUUID()}::uuid)`;
+  const row = assertOrganizationMutation(rows[0]);
+  if (!row.resource_id || !row.resource_version)
+    throw new Error('Invalid device inventory result');
+  return { id: row.resource_id, version: row.resource_version };
+}
+export async function updateTenantDeviceInventory(
+  db: PrismaClient,
+  actor: OrganizationActor,
+  tenantId: string,
+  deviceId: string,
+  input: DeviceUpdate,
+) {
+  validateOrganizationActor(actor, tenantId);
+  tenantIdSchema.parse(deviceId);
+  const value = deviceUpdateSchema.parse(input);
+  const rows = await db.$queryRaw<
+    OrganizationMutationRow[]
+  >`SELECT * FROM public.mutate_tenant_device_inventory(
+ ${actor.identityId}::uuid,${actor.mfaVerified},${tenantId}::uuid,${deviceId}::uuid,${value.expectedVersion}::integer,
+ ${value.branchId}::uuid,NULL::varchar,${value.name}::varchar,${value.model}::varchar,${value.firmware}::varchar,
+ ${value.sourceTimezone}::varchar,${value.status}::varchar,${value.reason}::varchar,${randomUUID()}::uuid,${randomUUID()}::uuid)`;
+  const row = assertOrganizationMutation(rows[0]);
+  if (!row.resource_id || !row.resource_version)
+    throw new Error('Invalid device inventory result');
+  return { id: row.resource_id, version: row.resource_version };
 }
