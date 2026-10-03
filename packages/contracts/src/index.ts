@@ -1473,3 +1473,5 @@ export type EmployeeBankDetailsUpdate = z.infer<
 export type EmployeeBankDetailsResponse = z.infer<
   typeof employeeBankDetailsResponseSchema
 >;
+
+export * from './attendance';
