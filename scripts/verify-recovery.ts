@@ -67,6 +67,7 @@ async function snapshot(db: PrismaClient) {
       'administrator_account_requests',
       'administrator_invitations',
       'audit_events',
+      'auth_provider_logout_events',
       'branches',
       'checklist_tasks',
       'company_policy_versions',
@@ -108,6 +109,9 @@ async function snapshot(db: PrismaClient) {
     ],
   );
   return {
+    providerLogouts: await db.authProviderLogoutEvent.findMany({
+      orderBy: [{ namespace: 'asc' }, { eventKey: 'asc' }],
+    }),
     identities: await db.identity.findMany({ orderBy: { id: 'asc' } }),
     platformOperators: await db.platformOperator.findMany({
       orderBy: { identityId: 'asc' },
@@ -896,6 +900,25 @@ async function main() {
         tenantId: tenants[1],
       });
     }
+    await source.authProviderLogoutEvent.createMany({
+      data: [
+        {
+          namespace: digest(Buffer.from('synthetic-logout-recovery')),
+          eventKey: digest(Buffer.from('pending')),
+          targetKind: 'subject',
+          targetHash: digest(Buffer.from('synthetic-subject')),
+          issuedAt: 1n,
+        },
+        {
+          namespace: digest(Buffer.from('synthetic-logout-recovery')),
+          eventKey: digest(Buffer.from('completed')),
+          targetKind: 'session',
+          targetHash: digest(Buffer.from('synthetic-session')),
+          issuedAt: 2n,
+          completedAt: new Date('2026-10-03T00:00:00Z'),
+        },
+      ],
+    });
     const expected = await snapshot(source);
     stage = 'backup';
     await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -977,7 +1000,7 @@ async function main() {
     const policies = await restored.$queryRaw<
       { enabled: boolean; forced: boolean }[]
     >`SELECT relrowsecurity AS enabled, relforcerowsecurity AS forced FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND relkind='r' AND relname <> '_prisma_migrations'`;
-    assert.equal(policies.length, 41);
+    assert.equal(policies.length, 42);
     assert.ok(policies.every((row) => row.enabled && row.forced));
     assert.deepEqual(await restoredApp.employee.findMany(), []);
     stage = 'restored tenant lifecycle visibility';
@@ -1111,6 +1134,7 @@ async function main() {
       archiveSha256: checksum,
       tenants: 2,
       snapshotEmployees: 8,
+      providerLogoutReceiptsPreserved: true,
       completedReplayPreserved: true,
       pendingResumedOnce: true,
       deadPreserved: true,

@@ -25,6 +25,8 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
   private readonly identityStatus = this.identityStatusConfig
     ? new KeycloakIdentityStatus(this.identityStatusConfig)
     : undefined;
+  private reconciliation?: Promise<void>;
+  private reconciliationTimer?: ReturnType<typeof setInterval>;
   private store?: AuthStore;
   private provider?: OidcProvider;
   constructor(
@@ -39,18 +41,34 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     try {
       await this.store.connect();
       this.provider = await OidcProvider.connect(this.config);
+      if (this.config.logoutMode === 'durable') {
+        await this.reconcileProviderLogouts();
+        this.reconciliationTimer = setInterval(() => {
+          void this.reconcileProviderLogouts();
+        }, 5000);
+        this.reconciliationTimer.unref();
+      }
     } catch {
       this.store.close();
       throw new Error('Authentication dependencies unavailable');
     }
   }
-  onModuleDestroy() {
+  async onModuleDestroy() {
+    if (this.reconciliationTimer) clearInterval(this.reconciliationTimer);
+    await this.reconciliation;
     this.store?.close();
   }
   async ready() {
     if (this.config) {
       await this.resources().store.ready();
       await this.identityStatus?.ready();
+      if (this.config.logoutMode === 'durable')
+        await this.database.providerSessionRevoked(
+          this.logoutNamespace(),
+          digest('readiness-probe'),
+          undefined,
+          0,
+        );
     }
   }
   private resources() {
@@ -71,6 +89,61 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     const token = opaqueToken();
     await store.saveLogin(token, transaction);
     return { url, token };
+  }
+  private logoutNamespace() {
+    const { config } = this.resources();
+    return digest(`${config.issuer}|${config.clientId}|${config.origin}`);
+  }
+  async reconcileProviderLogouts() {
+    if (this.config?.logoutMode !== 'durable') return;
+    if (this.reconciliation) return this.reconciliation;
+    this.reconciliation = (async () => {
+      try {
+        const { store } = this.resources();
+        const namespace = this.logoutNamespace();
+        for (const event of await this.database.pendingProviderLogouts(
+          namespace,
+        )) {
+          try {
+            await store.applyProviderLogout(event);
+            await this.database.completeProviderLogout(
+              namespace,
+              event.eventKey,
+            );
+          } catch {
+            /* Leave the durable receipt pending; bounded pass retries. */
+          }
+        }
+      } catch {
+        /* Dependency outage leaves durable state unchanged. */
+      }
+    })();
+    try {
+      await this.reconciliation;
+    } finally {
+      this.reconciliation = undefined;
+    }
+  }
+  private async requireUnrevokedSession(session: {
+    principal: { issuer: string; subject: string };
+    providerSessionId?: string;
+    authTime: number;
+  }) {
+    if (this.config?.logoutMode !== 'durable') return;
+    let revoked: boolean;
+    try {
+      revoked = await this.database.providerSessionRevoked(
+        this.logoutNamespace(),
+        digest(`${session.principal.issuer}\0${session.principal.subject}`),
+        session.providerSessionId
+          ? digest(session.providerSessionId)
+          : undefined,
+        session.authTime,
+      );
+    } catch {
+      throw new ServiceUnavailableException('Session revocation unavailable');
+    }
+    if (revoked) throw new UnauthorizedException();
   }
   private async requireEnabledIdentity(principal: {
     issuer: string;
@@ -111,6 +184,7 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     } catch {
       throw new UnauthorizedException();
     }
+    await this.requireUnrevokedSession(verified);
     await this.requireEnabledIdentity(verified.principal);
     const identity = await this.database.findIdentity(verified.principal);
     if (!identity) throw new UnauthorizedException();
@@ -128,6 +202,7 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     const { store } = this.resources();
     let session = await store.readSession(token);
     if (!session) throw new UnauthorizedException();
+    await this.requireUnrevokedSession(session);
     await this.requireEnabledIdentity(session.principal);
     const identity = await this.database.findIdentity(session.principal);
     if (!identity || identity.id !== session.identityId) {
@@ -172,6 +247,28 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
       logout = await provider.verifyLogoutToken(token);
     } catch {
       throw new UnauthorizedException();
+    }
+    if (this.config?.logoutMode === 'durable') {
+      const event = {
+        eventKey: digest(logout.jti),
+        targetKind: logout.sid ? ('session' as const) : ('subject' as const),
+        targetHash: logout.sid
+          ? digest(logout.sid)
+          : digest(`${logout.iss}\0${logout.sub}`),
+        issuedAt: logout.iat,
+      };
+      try {
+        await this.database.acceptProviderLogout(this.logoutNamespace(), event);
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.message.includes('PROVIDER_LOGOUT_CONFLICT')
+        )
+          throw new UnauthorizedException();
+        throw new ServiceUnavailableException('Logout receipt unavailable');
+      }
+      void this.reconcileProviderLogouts();
+      return;
     }
     await store.revokeProviderSessions({
       jti: logout.jti,

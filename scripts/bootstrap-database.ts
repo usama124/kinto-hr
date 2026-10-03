@@ -74,6 +74,8 @@ try {
     'REVOKE ALL ON ALL TABLES IN SCHEMA public FROM kinto_control_owner',
   );
   for (const statement of [
+    'DROP POLICY IF EXISTS platform_control ON auth_provider_logout_events',
+    'CREATE POLICY platform_control ON auth_provider_logout_events FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control_select ON identities',
     'CREATE POLICY platform_control_select ON identities FOR SELECT TO kinto_control_owner USING (true)',
     'DROP POLICY IF EXISTS platform_control_insert ON identities',
@@ -159,6 +161,9 @@ try {
     'CREATE POLICY platform_control_insert ON platform_audit_events FOR INSERT TO kinto_control_owner WITH CHECK (true)',
   ])
     await database.$executeRawUnsafe(statement);
+  await database.$executeRawUnsafe(
+    'GRANT SELECT, INSERT, UPDATE ON auth_provider_logout_events TO kinto_control_owner',
+  );
   await database.$executeRawUnsafe(
     'GRANT SELECT, INSERT ON identities TO kinto_control_owner',
   );
@@ -277,6 +282,10 @@ try {
     'REVOKE EXECUTE ON FUNCTION public.revoke_entitlement_change(uuid, boolean, uuid, varchar, uuid, integer, varchar, uuid, uuid) FROM kinto_app',
   );
   for (const signature of [
+    'public.accept_provider_logout(text,text,text,text,bigint)',
+    'public.pending_provider_logouts(text)',
+    'public.complete_provider_logout(text,text)',
+    'public.provider_session_revoked(text,text,text,bigint)',
     'public.reconcile_company_owner_provider(uuid, uuid, uuid, varchar, varchar, timestamptz, uuid, uuid)',
     'public.mark_company_owner_invitation_delivered(uuid, timestamptz, uuid, uuid)',
     'public.resolve_login_identity(varchar, varchar, boolean, uuid, uuid, uuid, uuid, uuid)',

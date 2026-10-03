@@ -28,6 +28,13 @@ it('keeps authentication disabled unless explicitly configured', () => {
   expect(() => readAuthConfig({ AUTH_MODE: 'oidc' })).toThrow();
   expect(readAuthConfig(authEnv)?.origin).toBe('https://hr.example');
   expect(readAuthConfig(authEnv)?.mfaProfile).toBe('none');
+  expect(readAuthConfig(authEnv)?.logoutMode).toBe('synchronous');
+  expect(
+    readAuthConfig({ ...authEnv, AUTH_LOGOUT_MODE: 'durable' })?.logoutMode,
+  ).toBe('durable');
+  expect(() =>
+    readAuthConfig({ ...authEnv, AUTH_LOGOUT_MODE: 'untrusted' }),
+  ).toThrow();
   expect(
     readAuthConfig({ ...authEnv, OIDC_MFA_PROFILE: 'keycloak-loa2-v1' })
       ?.mfaProfile,

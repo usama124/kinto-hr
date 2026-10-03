@@ -18,9 +18,13 @@ The [schema isolation classification gate](schema-isolation-classification.md) n
 
 The [opt-in provider identity-status guard](provider-identity-status.md) checks exact provider state at login/session access. Confirmed disable revokes same-identity sessions, unconfirmed state temporarily denies access, and company-specific revocation never disables a shared provider identity. It leaves local identity status untouched and remains disabled by default. It is not durable event synchronization or deployed approval.
 
+## Durable accepted-logout slice — 3 October 2026
+
+The [durable provider logout inbox](durable-provider-logout.md) persists verified hashed receipts before acknowledgment. Pending and completed receipts deny affected sessions independently of Redis cleanup; bounded fair retries survive API restart and completion failure. The new control-plane table is included in isolation and restore verification. This does not recover provider callbacks that never reach Kinto or synchronize permanent identity status.
+
 ## Next bounded local step
 
-Define and implement bounded durable provider logout/reconciliation handling with synthetic outage, replay and restart coverage. Review provider event authority and delivery guarantees before accepting persistent status changes; membership revocation must remain company-scoped. Provider event delivery, monitoring and staging/security acceptance still need separate deployment approval.
+Implement private reconciliation/backlog health monitoring and synthetic failure/alert checks. Deployed alert delivery, provider retry/availability policy, consistent API configuration and staging/security acceptance still require separate operational approval.
 
 ## External and deployment gates remain
 

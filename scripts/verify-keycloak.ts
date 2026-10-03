@@ -305,6 +305,7 @@ try {
     API_PORT: String(apiPort),
     API_HOST: '127.0.0.1',
     AUTH_MODE: 'oidc',
+    AUTH_LOGOUT_MODE: 'durable',
     AUTH_ORIGIN: proxy.origin,
     AUTH_REDIS_URL: redisUrl,
     OIDC_ISSUER: issuer,
@@ -929,6 +930,25 @@ try {
       );
     },
   );
+  await scenario(
+    'durable logout receipt completes after the real signed reset callback',
+    async () => {
+      await until(async () => {
+        const events = await db.authProviderLogoutEvent.findMany({
+          where: { namespace: digest(`${issuer}|kinto-web|${proxy!.origin}`) },
+        });
+        return (
+          events.length > 0 &&
+          events.every((event) => event.completedAt !== null)
+        );
+      });
+      const events = await db.authProviderLogoutEvent.findMany({
+        where: { namespace: digest(`${issuer}|kinto-web|${proxy!.origin}`) },
+      });
+      assert(events.length > 0);
+      assert(events.every((event) => event.completedAt));
+    },
+  );
   await scenario('expired reset links cannot change a password', async () => {
     await context.clearCookies();
     const count = mail.messages.length;
@@ -990,6 +1010,9 @@ try {
   }
   process.exitCode = 1;
 } finally {
+  await db.authProviderLogoutEvent.deleteMany({
+    where: { namespace: digest(`${issuer}|kinto-web|${proxy?.origin}`) },
+  });
   await preResetContext?.close();
   await browser?.close();
   for (const child of children)

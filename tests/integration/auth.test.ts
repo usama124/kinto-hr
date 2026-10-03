@@ -6,7 +6,12 @@ import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { Test } from '@nestjs/testing';
 import { type INestApplication } from '@nestjs/common';
 import request from 'supertest';
-import { createDatabase, inAuthorizedTenant } from '@kinto/database';
+import {
+  createDatabase,
+  inAuthorizedTenant,
+  pendingProviderLogouts,
+  providerSessionRevoked,
+} from '@kinto/database';
 import { AppModule } from '../../apps/api/src/app.module';
 import { configureHttp } from '../../apps/api/src/http';
 import {
@@ -20,6 +25,8 @@ import {
   SESSION_COOKIE,
 } from '../../apps/api/src/auth/controller';
 import { OidcProvider } from '../../apps/api/src/auth/oidc';
+import { AuthService } from '../../apps/api/src/auth/service';
+import { DatabaseService } from '../../apps/api/src/database.service';
 import { readAuthConfig } from '../../apps/api/src/auth/config';
 
 if (existsSync('.env')) process.loadEnvFile('.env');
@@ -201,6 +208,7 @@ beforeAll(async () => {
       if (grant.mode === 'audience') claims.aud = 'another-client';
       if (grant.mode === 'nonce') claims.nonce = 'incorrect';
       if (grant.mode === 'expired') claims.exp = now - 60;
+      if (grant.mode === 'recent-before-logout') claims.auth_time = now - 30;
       if (grant.mode === 'stale-auth') claims.auth_time = now - 600;
       if (grant.mode === 'future-auth') claims.auth_time = now + 600;
       if (grant.mode === 'unknown') claims.sub = 'not-provisioned';
@@ -241,6 +249,7 @@ beforeAll(async () => {
   issuer = `http://127.0.0.1:${address.port}/realms/synthetic`;
   for (const [key, value] of Object.entries({
     IDENTITY_STATUS_MODE: 'disabled',
+    AUTH_LOGOUT_MODE: 'synchronous',
     AUTH_MODE: 'oidc',
     NODE_ENV: 'test',
     AUTH_ORIGIN: origin,
@@ -281,6 +290,9 @@ beforeAll(async () => {
   await app.init();
 });
 beforeEach(async () => {
+  await admin.authProviderLogoutEvent.deleteMany({
+    where: { namespace: digest(`${issuer}|${clientId}|${origin}`) },
+  });
   mode = 'valid';
   identityStatus = 'enabled';
   identityStatusCalls.length = 0;
@@ -298,6 +310,9 @@ beforeEach(async () => {
 });
 afterAll(async () => {
   await app?.close();
+  await admin.authProviderLogoutEvent.deleteMany({
+    where: { namespace: digest(`${issuer}|${clientId}|${origin}`) },
+  });
   if (store) {
     // Only fixture-specific keys; never FLUSHDB or shared application cleanup.
     const keys = await store.redis.keys(
@@ -1324,5 +1339,290 @@ it('keeps provider enabled and other-company access when only one company member
       await admin.membership.deleteMany({ where: { tenantId: otherTenantId } });
       await admin.tenant.deleteMany({ where: { id: otherTenantId } });
     }
+  });
+});
+
+async function withDurableLogoutApp(
+  work: (guarded: INestApplication) => Promise<void>,
+) {
+  const previous = process.env.AUTH_LOGOUT_MODE;
+  let guarded: INestApplication | undefined;
+  try {
+    vi.stubEnv('AUTH_LOGOUT_MODE', 'durable');
+    const module = await Test.createTestingModule({
+      imports: [AppModule],
+    }).compile();
+    guarded = module.createNestApplication();
+    configureHttp(guarded);
+    await guarded.init();
+    await work(guarded);
+  } finally {
+    await guarded?.close();
+    vi.stubEnv('AUTH_LOGOUT_MODE', previous);
+  }
+}
+const logoutNamespace = () => digest(`${issuer}|${clientId}|${origin}`);
+const sendLogout = (guarded: INestApplication, token: string) =>
+  request(guarded.getHttpServer())
+    .post('/api/v1/auth/backchannel-logout')
+    .type('form')
+    .send({ logout_token: token });
+it('persists verified logout across Redis failure and API restart without granting a revoked session', async () => {
+  let cookie = '';
+  const jti = randomUUID();
+  const failure = vi
+    .spyOn(AuthStore.prototype, 'applyProviderLogout')
+    .mockRejectedValue(new Error('synthetic Redis outage'));
+  try {
+    await withDurableLogoutApp(async (guarded) => {
+      cookie = cookies(await statusLogin(guarded), SESSION_COOKIE);
+      await sendLogout(
+        guarded,
+        logoutToken({ jti, sid: providerSessionId }),
+      ).expect(204);
+      expect(await store.readSession(handle(cookie))).toBeDefined();
+      await request(guarded.getHttpServer())
+        .get('/api/v1/auth/session')
+        .set('Cookie', cookie)
+        .expect(401);
+      const event = await admin.authProviderLogoutEvent.findUniqueOrThrow({
+        where: {
+          namespace_eventKey: {
+            namespace: logoutNamespace(),
+            eventKey: digest(jti),
+          },
+        },
+      });
+      mode = 'recent-before-logout';
+      await statusLogin(guarded, 401);
+      mode = 'valid';
+      expect(event.completedAt).toBeNull();
+      expect(event.targetHash).toBe(digest(providerSessionId));
+      expect(Object.keys(event).sort()).toEqual(
+        [
+          'namespace',
+          'eventKey',
+          'targetKind',
+          'targetHash',
+          'issuedAt',
+          'acceptedAt',
+          'completedAt',
+          'lastAttemptedAt',
+        ].sort(),
+      );
+    });
+  } finally {
+    failure.mockRestore();
+  }
+  await withDurableLogoutApp(async (restarted) => {
+    const event = await admin.authProviderLogoutEvent.findUniqueOrThrow({
+      where: {
+        namespace_eventKey: {
+          namespace: logoutNamespace(),
+          eventKey: digest(jti),
+        },
+      },
+    });
+    expect(event.completedAt).not.toBeNull();
+    expect(await store.readSession(handle(cookie))).toBeUndefined();
+    await request(restarted.getHttpServer())
+      .get('/api/v1/auth/session')
+      .set('Cookie', cookie)
+      .expect(401);
+  });
+});
+it('keeps durable logout exact, session-scoped and safe to retry after completion failure', async () => {
+  await withDurableLogoutApp(async (guarded) => {
+    const first = cookies(await statusLogin(guarded), SESSION_COOKIE);
+    providerSessionId = 'synthetic-other-provider-session';
+    const other = cookies(await statusLogin(guarded), SESSION_COOKIE);
+    const jti = randomUUID();
+    const token = logoutToken({
+      jti,
+      sid: 'synthetic-provider-session',
+      sub: subject,
+    });
+    const completeFailure = vi
+      .spyOn(DatabaseService.prototype, 'completeProviderLogout')
+      .mockRejectedValue(new Error('synthetic completion outage'));
+    try {
+      const responses = await Promise.all(
+        Array.from({ length: 4 }, () => sendLogout(guarded, token)),
+      );
+      await guarded.get(AuthService).reconcileProviderLogouts();
+      expect(responses.map((response) => response.status)).toEqual([
+        204, 204, 204, 204,
+      ]);
+      expect(
+        await admin.authProviderLogoutEvent.count({
+          where: { namespace: logoutNamespace() },
+        }),
+      ).toBe(1);
+      expect(await store.readSession(handle(first))).toBeUndefined();
+      await request(guarded.getHttpServer())
+        .get('/api/v1/auth/session')
+        .set('Cookie', other)
+        .expect(200);
+      await sendLogout(
+        guarded,
+        logoutToken({ jti, sid: providerSessionId }),
+      ).expect(401);
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+      providerSessionId = 'synthetic-provider-session';
+      const fresh = cookies(await statusLogin(guarded), SESSION_COOKIE);
+      await sendLogout(guarded, token).expect(204);
+      await request(guarded.getHttpServer())
+        .get('/api/v1/auth/session')
+        .set('Cookie', fresh)
+        .expect(200);
+    } finally {
+      completeFailure.mockRestore();
+    }
+    await guarded.get(AuthService).reconcileProviderLogouts();
+    expect(await pendingProviderLogouts(runtime, logoutNamespace())).toEqual(
+      [],
+    );
+  });
+});
+it('does not acknowledge an uncommitted logout and never queues forged tokens', async () => {
+  await withDurableLogoutApp(async (guarded) => {
+    const cookie = cookies(await statusLogin(guarded), SESSION_COOKIE);
+    const acceptFailure = vi
+      .spyOn(DatabaseService.prototype, 'acceptProviderLogout')
+      .mockRejectedValue(new Error('synthetic PostgreSQL outage'));
+    try {
+      await sendLogout(guarded, logoutToken({ sid: providerSessionId })).expect(
+        503,
+      );
+    } finally {
+      acceptFailure.mockRestore();
+    }
+    await request(guarded.getHttpServer())
+      .get('/api/v1/auth/session')
+      .set('Cookie', cookie)
+      .expect(200);
+    await sendLogout(
+      guarded,
+      logoutToken({ sid: providerSessionId, variant: 'signature' }),
+    ).expect(401);
+    expect(
+      await admin.authProviderLogoutEvent.count({
+        where: { namespace: logoutNamespace() },
+      }),
+    ).toBe(0);
+    const readFailure = vi
+      .spyOn(DatabaseService.prototype, 'providerSessionRevoked')
+      .mockRejectedValue(new Error('synthetic revocation lookup outage'));
+    try {
+      await request(guarded.getHttpServer())
+        .get('/api/v1/auth/session')
+        .set('Cookie', cookie)
+        .expect(503);
+    } finally {
+      readFailure.mockRestore();
+    }
+  });
+});
+it('keeps provider logout metadata private and pending batches bounded to one namespace', async () => {
+  const namespace = digest(randomUUID());
+  const otherNamespace = digest(randomUUID());
+  try {
+    await admin.authProviderLogoutEvent.createMany({
+      data: Array.from({ length: 30 }, (_, index) => ({
+        namespace,
+        eventKey: digest(String(index)),
+        targetKind: 'subject',
+        targetHash: digest(`${issuer}\0${subject}`),
+        issuedAt: 1n,
+      })),
+    });
+    const firstBatch = await pendingProviderLogouts(runtime, namespace);
+    const secondBatch = await pendingProviderLogouts(runtime, namespace);
+    expect(firstBatch).toHaveLength(25);
+    expect(secondBatch).toHaveLength(25);
+    expect(
+      new Set([...firstBatch, ...secondBatch].map((event) => event.eventKey))
+        .size,
+    ).toBe(30);
+    expect(await pendingProviderLogouts(runtime, otherNamespace)).toEqual([]);
+    expect(
+      await providerSessionRevoked(
+        runtime,
+        namespace,
+        digest(`${issuer}\0${subject}`),
+        undefined,
+        0,
+      ),
+    ).toBe(true);
+    expect(
+      await providerSessionRevoked(
+        runtime,
+        otherNamespace,
+        digest(`${issuer}\0${subject}`),
+        undefined,
+        0,
+      ),
+    ).toBe(false);
+    await expect(runtime.authProviderLogoutEvent.findMany()).rejects.toThrow(
+      /permission denied/,
+    );
+    const functions = await admin.$queryRaw<
+      { safe: boolean }[]
+    >`SELECT p.prosecdef AND r.rolname='kinto_control_owner' AND p.proconfig=ARRAY['search_path=pg_catalog, public'] AND NOT has_function_privilege('kinto_worker',p.oid,'EXECUTE') AND NOT has_function_privilege('kinto_dispatcher',p.oid,'EXECUTE') AS safe FROM pg_proc p JOIN pg_roles r ON r.oid=p.proowner WHERE p.proname IN ('accept_provider_logout','pending_provider_logouts','complete_provider_logout','provider_session_revoked')`;
+    expect(functions).toHaveLength(4);
+    expect(functions.every((row) => row.safe)).toBe(true);
+  } finally {
+    await admin.authProviderLogoutEvent.deleteMany({ where: { namespace } });
+  }
+});
+
+it('leaves malformed or oversized Redis logout targets pending without partial session deletion', async () => {
+  await withDurableLogoutApp(async (guarded) => {
+    const first = cookies(await statusLogin(guarded), SESSION_COOKIE);
+    const second = cookies(await statusLogin(guarded), SESSION_COOKIE);
+    const key = store.key('session', handle(second));
+    const original = await store.redis.get(key);
+    expect(original).toBeTruthy();
+    const jti = randomUUID();
+    const index = `kinto:auth:v2:${logoutNamespace()}:provider-session:${digest(providerSessionId)}`;
+    const stale = Array.from({ length: 1001 }, () =>
+      store.key('session', opaqueToken()),
+    );
+    try {
+      await store.redis.set(key, 'invalid synthetic JSON');
+      await sendLogout(
+        guarded,
+        logoutToken({ jti, sid: providerSessionId }),
+      ).expect(204);
+      await guarded.get(AuthService).reconcileProviderLogouts();
+      expect(await store.readSession(handle(first))).toBeDefined();
+      await request(guarded.getHttpServer())
+        .get('/api/v1/auth/session')
+        .set('Cookie', first)
+        .expect(401);
+      await store.redis.set(key, original!, 'EX', IDLE_SECONDS);
+      await store.redis.sadd(index, ...stale);
+      await guarded.get(AuthService).reconcileProviderLogouts();
+      expect(await store.readSession(handle(first))).toBeDefined();
+      expect(
+        (
+          await admin.authProviderLogoutEvent.findUniqueOrThrow({
+            where: {
+              namespace_eventKey: {
+                namespace: logoutNamespace(),
+                eventKey: digest(jti),
+              },
+            },
+          })
+        ).completedAt,
+      ).toBeNull();
+    } finally {
+      await store.redis.srem(index, ...stale);
+      if (await store.redis.exists(key))
+        await store.redis.set(key, original!, 'EX', IDLE_SECONDS);
+    }
+    await guarded.get(AuthService).reconcileProviderLogouts();
+    expect(await store.readSession(handle(first))).toBeUndefined();
+    expect(await store.readSession(handle(second))).toBeUndefined();
   });
 });

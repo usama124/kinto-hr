@@ -895,3 +895,17 @@ model EntitlementRevocationReceipt {
   @@id([tenantId, actorId, requestId])
   @@map("entitlement_revocation_receipts")
 }
+
+model AuthProviderLogoutEvent {
+  namespace    String @db.Char(64)
+  eventKey     String @map("event_key") @db.Char(64)
+  targetKind   String @map("target_kind") @db.VarChar(10)
+  targetHash   String @map("target_hash") @db.Char(64)
+  issuedAt     BigInt @map("issued_at")
+  acceptedAt   DateTime @default(now()) @map("accepted_at") @db.Timestamptz()
+  completedAt  DateTime? @map("completed_at") @db.Timestamptz()
+  lastAttemptedAt DateTime? @map("last_attempted_at") @db.Timestamptz()
+
+  @@id([namespace, eventKey])
+  @@map("auth_provider_logout_events")
+}

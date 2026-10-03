@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { Redis } from 'ioredis';
 import { z } from 'zod';
+import type { ProviderLogoutRecord } from '@kinto/database';
 import { authenticatedIdentitySchema } from '@kinto/contracts';
 
 export const IDLE_SECONDS = 30 * 60;
@@ -209,6 +210,34 @@ export class AuthStore {
       return redis.call('DEL', KEYS[1])`,
       1,
       this.key('session', token),
+    );
+  }
+  async applyProviderLogout(event: ProviderLogoutRecord) {
+    const target = `${this.prefix}${event.targetKind === 'subject' ? 'subject' : 'provider-session'}:${event.targetHash}`;
+    // No ephemeral replay key: a retry after DB completion failure is harmless.
+    // Validate every candidate before writes; Lua errors do not roll back writes.
+    await this.redis.eval(
+      `
+      if redis.call('SCARD', KEYS[1]) > 1000 then return redis.error_reply('Logout target exceeds reconciliation bound') end
+      local candidates = {}
+      for _, key in ipairs(redis.call('SMEMBERS', KEYS[1])) do
+        local raw = redis.call('GET', key)
+        if raw then
+          local ok, s = pcall(cjson.decode, raw)
+          if not ok or type(s) ~= 'table' or type(s.authTime) ~= 'number' then return redis.error_reply('Invalid session metadata') end
+          if s.authTime <= tonumber(ARGV[1]) then table.insert(candidates, {key=key, session=s}) end
+        end
+      end
+      for _, item in ipairs(candidates) do
+        local s = item.session
+        if s.subjectIndex then redis.call('SREM', s.subjectIndex, item.key) end
+        if s.providerSessionIndex then redis.call('SREM', s.providerSessionIndex, item.key) end
+        redis.call('DEL', item.key)
+      end
+      return #candidates`,
+      1,
+      target,
+      event.issuedAt,
     );
   }
   async revokeProviderSessions(event: {
