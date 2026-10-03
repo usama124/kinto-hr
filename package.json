@@ -32,7 +32,8 @@
     "test:keycloak": "tsx scripts/verify-keycloak.ts",
     "check:docs": "node scripts/check-docs.mjs",
     "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test:coverage && pnpm check:docs",
-    "verify:full": "pnpm verify && pnpm test:integration && pnpm test:schema-isolation && pnpm test:migrations && pnpm test:recovery && pnpm build && pnpm test:worker:runtime && pnpm test:e2e && pnpm test:keycloak"
+    "verify:full": "pnpm verify && pnpm test:integration && pnpm test:schema-isolation && pnpm test:migrations && pnpm test:recovery && pnpm build && pnpm test:worker:runtime && pnpm test:e2e && pnpm test:keycloak",
+    "auth:logout:check": "tsx scripts/check-provider-logout.ts"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

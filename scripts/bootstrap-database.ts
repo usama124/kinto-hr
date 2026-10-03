@@ -284,6 +284,7 @@ try {
   for (const signature of [
     'public.accept_provider_logout(text,text,text,text,bigint)',
     'public.pending_provider_logouts(text)',
+    'public.provider_logout_health(text)',
     'public.complete_provider_logout(text,text)',
     'public.provider_session_revoked(text,text,text,bigint)',
     'public.reconcile_company_owner_provider(uuid, uuid, uuid, varchar, varchar, timestamptz, uuid, uuid)',

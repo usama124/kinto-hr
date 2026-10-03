@@ -22,9 +22,13 @@ The [opt-in provider identity-status guard](provider-identity-status.md) checks 
 
 The [durable provider logout inbox](durable-provider-logout.md) persists verified hashed receipts before acknowledgment. Pending and completed receipts deny affected sessions independently of Redis cleanup; bounded fair retries survive API restart and completion failure. The new control-plane table is included in isolation and restore verification. This does not recover provider callbacks that never reach Kinto or synchronize permanent identity status.
 
+## Private logout monitoring slice — 3 October 2026
+
+The [private logout health command](provider-logout-monitoring.md) reads only namespace aggregates, signals overdue work or stalled attempts, bounds dependency failures and exposes no receipt identifiers. It is a local operations command, not deployed alert delivery or a provider heartbeat.
+
 ## Next bounded local step
 
-Implement private reconciliation/backlog health monitoring and synthetic failure/alert checks. Deployed alert delivery, provider retry/availability policy, consistent API configuration and staging/security acceptance still require separate operational approval.
+Review optional employee bank-detail capture with separate recent-MFA authorization, safe projections and regression coverage; salary transfers remain outside Kinto. Production storage/scanning, approved retention and deployment acceptance are still external gates. Deployed alert delivery, provider retry/availability policy, consistent API configuration and staging/security acceptance still require separate operational approval.
 
 ## External and deployment gates remain
 

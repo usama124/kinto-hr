@@ -278,6 +278,10 @@ The Prisma tooling dependency `@prisma/config>deepmerge-ts` is narrowly overridd
 
 Changes to money rules, auth/tenant boundaries, commercial state, supported device compatibility or hosting location require an entry stating decision, reason, alternatives, affected phase/tests, approver and effective date. Do not edit previous payroll snapshots or plan contracts to implement a new decision. After a meaningful scope change, re-estimate remaining phases.
 
+### 3 October 2026 — private accepted-logout backlog monitoring
+
+Engineering adds migration 48's constrained aggregate function and a private one-shot `auth:logout:check` command. The command uses the API's exact canonical auth namespace and restricted runtime role; it never claims receipts, emits receipt identifiers, changes access, or opens a public endpoint. Default alert thresholds are 300 seconds for oldest pending work and 30 seconds for idle attempts. A five-second probe deadline and redacted exit-code/JSON diagnostics support an approved external scheduler. Empty backlog is not proof of a running reconciler or provider callback delivery. This local engineering decision does not approve alert recipients, paid infrastructure, production scheduling or retention. See [evidence](../evidence/phase-01/provider-logout-monitoring.md). Next bounded local backlog: optional employee bank-detail capture; no in-system salary payment.
+
 ## Source register
 
 These sources were consulted for the planning package on 28 August 2026. They support specific technical facts, not a declaration that the product is compliant, compatible or implemented. Verify version-specific behavior again during the relevant spike.

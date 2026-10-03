@@ -1,6 +1,8 @@
 import 'reflect-metadata';
 import { existsSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { createHash, generateKeyPairSync, randomUUID, sign } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { Test } from '@nestjs/testing';
@@ -11,6 +13,7 @@ import {
   inAuthorizedTenant,
   pendingProviderLogouts,
   providerSessionRevoked,
+  providerLogoutHealth,
 } from '@kinto/database';
 import { AppModule } from '../../apps/api/src/app.module';
 import { configureHttp } from '../../apps/api/src/http';
@@ -1397,6 +1400,22 @@ it('persists verified logout across Redis failure and API restart without granti
       await statusLogin(guarded, 401);
       mode = 'valid';
       expect(event.completedAt).toBeNull();
+      await admin.authProviderLogoutEvent.update({
+        where: {
+          namespace_eventKey: {
+            namespace: logoutNamespace(),
+            eventKey: digest(jti),
+          },
+        },
+        data: { acceptedAt: new Date(Date.now() - 600000) },
+      });
+      const { checkLogoutHealth } =
+        await import('../../apps/api/src/auth/logout-health');
+      const monitored = await checkLogoutHealth(() =>
+        providerLogoutHealth(runtime, logoutNamespace()),
+      );
+      expect(monitored.backlog?.pending).toBe(1);
+      expect(monitored.alerts).toContain('logout_backlog_overdue');
       expect(event.targetHash).toBe(digest(providerSessionId));
       expect(Object.keys(event).sort()).toEqual(
         [
@@ -1568,8 +1587,8 @@ it('keeps provider logout metadata private and pending batches bounded to one na
     );
     const functions = await admin.$queryRaw<
       { safe: boolean }[]
-    >`SELECT p.prosecdef AND r.rolname='kinto_control_owner' AND p.proconfig=ARRAY['search_path=pg_catalog, public'] AND NOT has_function_privilege('kinto_worker',p.oid,'EXECUTE') AND NOT has_function_privilege('kinto_dispatcher',p.oid,'EXECUTE') AS safe FROM pg_proc p JOIN pg_roles r ON r.oid=p.proowner WHERE p.proname IN ('accept_provider_logout','pending_provider_logouts','complete_provider_logout','provider_session_revoked')`;
-    expect(functions).toHaveLength(4);
+    >`SELECT p.prosecdef AND r.rolname='kinto_control_owner' AND p.proconfig=ARRAY['search_path=pg_catalog, public'] AND NOT has_function_privilege('kinto_worker',p.oid,'EXECUTE') AND NOT has_function_privilege('kinto_dispatcher',p.oid,'EXECUTE') AS safe FROM pg_proc p JOIN pg_roles r ON r.oid=p.proowner WHERE p.proname IN ('accept_provider_logout','pending_provider_logouts','provider_logout_health','complete_provider_logout','provider_session_revoked')`;
+    expect(functions).toHaveLength(5);
     expect(functions.every((row) => row.safe)).toBe(true);
   } finally {
     await admin.authProviderLogoutEvent.deleteMany({ where: { namespace } });
@@ -1624,5 +1643,196 @@ it('leaves malformed or oversized Redis logout targets pending without partial s
     await guarded.get(AuthService).reconcileProviderLogouts();
     expect(await store.readSession(handle(first))).toBeUndefined();
     expect(await store.readSession(handle(second))).toBeUndefined();
+  });
+});
+
+it('monitors only namespace aggregates without claiming receipts and signals failed cleanup', async () => {
+  const namespace = digest(randomUUID());
+  const other = digest(randomUUID());
+  try {
+    const now = Date.now();
+    await admin.authProviderLogoutEvent.createMany({
+      data: [
+        {
+          namespace,
+          eventKey: digest('pending-monitor'),
+          targetKind: 'subject',
+          targetHash: digest('private-subject'),
+          issuedAt: 1n,
+          acceptedAt: new Date(now - 600000),
+        },
+        {
+          namespace,
+          eventKey: digest('attempted-monitor'),
+          targetKind: 'session',
+          targetHash: digest('private-sid'),
+          issuedAt: 1n,
+          acceptedAt: new Date(now - 400000),
+          lastAttemptedAt: new Date(now - 60000),
+        },
+        {
+          namespace,
+          eventKey: digest('completed-monitor'),
+          targetKind: 'subject',
+          targetHash: digest('completed'),
+          issuedAt: 1n,
+          acceptedAt: new Date(now - 900000),
+          completedAt: new Date(now),
+        },
+        {
+          namespace: other,
+          eventKey: digest('other-monitor'),
+          targetKind: 'subject',
+          targetHash: digest('other'),
+          issuedAt: 1n,
+          acceptedAt: new Date(now - 900000),
+        },
+      ],
+    });
+    const before = await admin.authProviderLogoutEvent.findMany({
+      where: { namespace },
+      orderBy: { eventKey: 'asc' },
+    });
+    const snapshot = await providerLogoutHealth(runtime, namespace);
+    expect(snapshot.pending).toBe(2);
+    expect(snapshot.unattempted).toBe(1);
+    expect(snapshot.oldestPendingSeconds).toBeGreaterThanOrEqual(600);
+    expect(snapshot.oldestPendingSeconds).toBeLessThan(620);
+    expect(snapshot.lastAttemptSeconds).toBeGreaterThanOrEqual(60);
+    const { checkLogoutHealth } =
+      await import('../../apps/api/src/auth/logout-health');
+    expect(
+      (await checkLogoutHealth(() => providerLogoutHealth(runtime, namespace)))
+        .alerts,
+    ).toEqual(['logout_backlog_overdue', 'logout_reconciliation_stalled']);
+    expect(
+      await admin.authProviderLogoutEvent.findMany({
+        where: { namespace },
+        orderBy: { eventKey: 'asc' },
+      }),
+    ).toEqual(before);
+    expect(
+      await providerLogoutHealth(runtime, digest('empty-monitor')),
+    ).toEqual({
+      pending: 0,
+      unattempted: 0,
+      oldestPendingSeconds: 0,
+      lastAttemptSeconds: null,
+    });
+    expect(Object.keys(snapshot).sort()).toEqual([
+      'lastAttemptSeconds',
+      'oldestPendingSeconds',
+      'pending',
+      'unattempted',
+    ]);
+    expect(JSON.stringify(snapshot)).not.toContain(namespace);
+    await expect(providerLogoutHealth(runtime, 'bad')).rejects.toThrow(
+      'Invalid provider logout digest',
+    );
+    await admin.authProviderLogoutEvent.updateMany({
+      where: { namespace, completedAt: null },
+      data: { lastAttemptedAt: new Date() },
+    });
+    expect(
+      (await checkLogoutHealth(() => providerLogoutHealth(runtime, namespace)))
+        .alerts,
+    ).toEqual(['logout_backlog_overdue']);
+    await admin.authProviderLogoutEvent.updateMany({
+      where: { namespace },
+      data: { completedAt: new Date() },
+    });
+    expect(
+      (await checkLogoutHealth(() => providerLogoutHealth(runtime, namespace)))
+        .status,
+    ).toBe('ready');
+  } finally {
+    await admin.authProviderLogoutEvent.deleteMany({
+      where: { namespace: { in: [namespace, other] } },
+    });
+  }
+});
+
+it('runs the private logout health command with bounded exit codes and redacted diagnostics', async () => {
+  const namespace = logoutNamespace();
+  const probe = async (changes: NodeJS.ProcessEnv = {}) => {
+    let output: string;
+    let code = 0;
+    try {
+      output = (
+        await promisify(execFile)(
+          process.execPath,
+          ['node_modules/tsx/dist/cli.mjs', 'scripts/check-provider-logout.ts'],
+          {
+            env: {
+              ...process.env,
+              AUTH_LOGOUT_MODE: 'durable',
+              AUTH_LOGOUT_MAX_PENDING_SECONDS: '300',
+              AUTH_LOGOUT_MAX_IDLE_SECONDS: '30',
+              ...changes,
+            },
+            timeout: 10000,
+          },
+        )
+      ).stdout;
+    } catch (error) {
+      const failure = error as { code: number; stdout: string; stderr: string };
+      expect(failure.stderr).toBe('');
+      expect(failure.code).toBe(1);
+      code = failure.code;
+      output = failure.stdout;
+    }
+    return {
+      code,
+      report: JSON.parse(output.trim()) as {
+        status: string;
+        alerts: string[];
+        backlog: unknown;
+      },
+    };
+  };
+  expect(await probe()).toEqual({
+    code: 0,
+    report: {
+      status: 'ready',
+      alerts: [],
+      backlog: {
+        pending: 0,
+        unattempted: 0,
+        oldestPendingSeconds: 0,
+        lastAttemptSeconds: null,
+      },
+    },
+  });
+  await admin.authProviderLogoutEvent.create({
+    data: {
+      namespace,
+      eventKey: digest('cli-monitor'),
+      targetKind: 'subject',
+      targetHash: digest('private-cli'),
+      issuedAt: 1n,
+      acceptedAt: new Date(Date.now() - 600000),
+    },
+  });
+  const overdue = await probe();
+  expect(overdue.code).toBe(1);
+  expect(overdue.report.alerts).toEqual([
+    'logout_backlog_overdue',
+    'logout_reconciliation_stalled',
+  ]);
+  expect(JSON.stringify(overdue.report)).not.toContain(namespace);
+  expect(
+    (await probe({ AUTH_LOGOUT_MODE: 'synchronous' })).report.alerts,
+  ).toEqual(['logout_durable_mode_required']);
+  expect(
+    (await probe({ AUTH_LOGOUT_MAX_PENDING_SECONDS: '0' })).report.alerts,
+  ).toEqual(['logout_monitor_configuration_invalid']);
+  const failed = await probe({
+    DATABASE_URL:
+      'postgresql://private:secret@127.0.0.1:1/kinto_test?connect_timeout=1',
+  });
+  expect(failed.report).toEqual({
+    status: 'unavailable',
+    alerts: ['logout_probe_unavailable'],
+    backlog: null,
   });
 });

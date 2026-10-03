@@ -10,6 +10,7 @@ import {
   archiveTenantEmployee,
   rehireTenantEmployee,
   assertSafeRuntimeRole,
+  providerLogoutHealth,
   createOrganizationPolicyDraft,
   createTenantBranch,
   createTenantLegalEntity,
@@ -965,6 +966,24 @@ async function main() {
     const restoreMs = Math.round(performance.now() - restoreStarted);
     stage = 'restored snapshot equality';
     assert.deepEqual(await snapshot(restored), expected);
+    stage = 'restored private logout monitoring';
+    const logoutHealth = await providerLogoutHealth(
+      restoredApp,
+      digest(Buffer.from('synthetic-logout-recovery')),
+    );
+    assert.equal(logoutHealth.pending, 1);
+    assert.equal(logoutHealth.unattempted, 1);
+    assert.equal(logoutHealth.lastAttemptSeconds, null);
+    const [monitorPrivileges] = await restored.$queryRaw<{ safe: boolean }[]>`
+      SELECT p.prosecdef AND r.rolname='kinto_control_owner'
+        AND p.proconfig=ARRAY['search_path=pg_catalog, public']
+        AND NOT has_function_privilege('kinto_worker',p.oid,'EXECUTE')
+        AND NOT has_function_privilege('kinto_dispatcher',p.oid,'EXECUTE') AS safe
+      FROM pg_proc p JOIN pg_roles r ON r.oid=p.proowner
+      WHERE p.oid='public.provider_logout_health(text)'::regprocedure`;
+    assert.equal(monitorPrivileges.safe, true);
+    assert.deepEqual(await snapshot(restored), expected);
+
     stage = 'restored entitlement creation retry';
     assert.deepEqual(
       await createEntitlementChange(
@@ -1135,6 +1154,7 @@ async function main() {
       tenants: 2,
       snapshotEmployees: 8,
       providerLogoutReceiptsPreserved: true,
+      providerLogoutMonitoringRestored: true,
       completedReplayPreserved: true,
       pendingResumedOnce: true,
       deadPreserved: true,
