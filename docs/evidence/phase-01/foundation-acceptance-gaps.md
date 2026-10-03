@@ -10,11 +10,13 @@ Repository review on 2 October 2026, starting from merged main `92623c3` (PR 52)
 - P01-04: organization/lifecycle/history, contact/CNIC data, salary history, checklists and explicit post-rehire access reactivation are implemented. The existing private-details DTO does not capture bank details; optional bank capture is not claimed complete. Attendance/leave/payroll calculations remain later phases.
 - P01-05: CSV validation/atomic confirmation, document quarantine/local-test transfer/scan/download/replacement, employee-visible documents, contact-change decisions and workforce exports have local workflows. Production object transfer/scanning, approved retention purge and file recovery remain incomplete.
 
+## Schema classification gap closed — 3 October 2026
+
+The [schema isolation classification gate](schema-isolation-classification.md) now inventories every business table, exact RLS policies, role/table/column privileges and domain regression references. CI, isolated migration upgrades and restored snapshots enforce it. The independent restore whitelist remains. This satisfies the bounded local gap described in the original review without approving deployed security.
+
 ## Next bounded local step
 
-Make the Phase 1 data-model requirement explicit in CI: maintain a schema isolation inventory mapping every business table to its tenant/control-plane scope and regression test classification. Extend existing synthetic catalog/isolation/migration checks so an added table, missing classification or incorrect tenant policy fails. The existing restore table whitelist and forced-RLS checks are retained, but are not a documented per-table scope/test inventory. No new tenant table should be approved merely by updating a count.
-
-This step can proceed without live identities, paid infrastructure, K50 hardware or payroll assumptions. It is separate from deployed security acceptance and must not weaken restricted roles or RLS to make tests pass.
+Review and implement the provider identity-disable synchronization contract with synthetic fixtures and failure/retry tests. Determine the authority, scope and revocation behavior before enabling any synchronization; company-specific membership revocation must not disable a global identity used by another company. Keep provider/deployment delivery disabled until its separate configuration and operational approval gates are met.
 
 ## External and deployment gates remain
 

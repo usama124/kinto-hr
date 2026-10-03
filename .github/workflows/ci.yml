@@ -49,6 +49,8 @@ jobs:
       - run: pnpm db:migrate
       - run: pnpm db:bootstrap
       - run: pnpm verify
+      - name: Verify schema isolation classification
+        run: pnpm test:schema-isolation
       - run: pnpm test:integration
       - run: pnpm test:migrations
       - run: pnpm test:recovery
