@@ -64,6 +64,7 @@ const newPassword = randomBytes(24).toString('base64url');
 const otpSecret = randomBytes(20).toString('hex');
 const clientSecret = randomBytes(32).toString('base64url');
 const provisioningClientSecret = randomBytes(32).toString('base64url');
+const identityStatusClientSecret = randomBytes(32).toString('base64url');
 const invitedEmail = 'invited-owner@kinto.test';
 const invitedPassword = `Kinto!${randomBytes(18).toString('hex')}Aa1`;
 const db = createDatabase(adminUrl);
@@ -194,6 +195,7 @@ try {
     backchannelUrl: `http://127.0.0.1:${apiPort}/api/v1/auth/backchannel-logout`,
     clientSecret,
     provisioningClientSecret,
+    identityStatusClientSecret,
     users: [
       { id: userId, username, password, otpSecret },
       {
@@ -309,6 +311,9 @@ try {
     OIDC_CLIENT_ID: 'kinto-web',
     OIDC_CLIENT_SECRET: clientSecret,
     OIDC_MFA_PROFILE: 'keycloak-loa2-v1',
+    IDENTITY_STATUS_MODE: 'keycloak',
+    KEYCLOAK_IDENTITY_STATUS_CLIENT_ID: 'kinto-identity-status',
+    KEYCLOAK_IDENTITY_STATUS_CLIENT_SECRET: identityStatusClientSecret,
     ACCOUNT_PROVISIONING_MODE: 'keycloak',
     KEYCLOAK_PROVISIONING_CLIENT_ID: 'kinto-provisioner',
     KEYCLOAK_PROVISIONING_CLIENT_SECRET: provisioningClientSecret,
@@ -857,6 +862,73 @@ try {
       preResetContext = undefined;
     },
   );
+  await scenario(
+    'read-only status checks revoke sessions on real provider disable without restoring them on re-enable',
+    async () => {
+      const { cookie } = await sessionFor(page);
+      const statusTokenResponse = await fetch(
+        `${issuer}/protocol/openid-connect/token`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Basic ${Buffer.from(`kinto-identity-status:${identityStatusClientSecret}`).toString('base64')}`,
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: new URLSearchParams({ grant_type: 'client_credentials' }),
+        },
+      );
+      assert.equal(statusTokenResponse.status, 200);
+      const statusToken = String(
+        ((await statusTokenResponse.json()) as { access_token: string })
+          .access_token,
+      );
+      const userUrl = `${new URL(issuer).origin}/admin/realms/${realm}/users/${userId}`;
+      const readonlyWrite = await fetch(userUrl, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${statusToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ enabled: false }),
+      });
+      assert.equal(readonlyWrite.status, 403);
+      const enabled = await fetch(userUrl, {
+        headers: { Authorization: `Bearer ${statusToken}` },
+      });
+      assert.equal(enabled.status, 200);
+      assert.equal(
+        ((await enabled.json()) as { enabled: boolean }).enabled,
+        true,
+      );
+      const change = async (value: boolean) => {
+        const result = await fetch(userUrl, {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${managementToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ enabled: value }),
+        });
+        assert.equal(result.status, 204);
+      };
+      await change(false);
+      const denied = await context.request.get(
+        `${proxy!.origin}/api/v1/auth/session`,
+      );
+      assert.equal(denied.status(), 401);
+      assert.equal(await store!.readSession(cookie.value), undefined);
+      await change(true);
+      const stillDenied = await context.request.get(
+        `${proxy!.origin}/api/v1/auth/session`,
+      );
+      assert.equal(stillDenied.status(), 401);
+      assert.equal(
+        (await db.identity.findUniqueOrThrow({ where: { id: identityId } }))
+          .status,
+        'active',
+      );
+    },
+  );
   await scenario('expired reset links cannot change a password', async () => {
     await context.clearCookies();
     const count = mail.messages.length;
@@ -898,6 +970,7 @@ try {
     .replaceAll(invitedPassword, '[password]')
     .replaceAll(clientSecret, '[client-secret]')
     .replaceAll(provisioningClientSecret, '[client-secret]')
+    .replaceAll(identityStatusClientSecret, '[client-secret]')
     .replaceAll(otpSecret, '[otp-secret]')
     .replace(/https?:\/\/\S+/g, '[url]');
   await writeFile(`${directory}/failure.txt`, message, { mode: 0o600 });

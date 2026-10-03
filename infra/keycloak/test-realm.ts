@@ -7,6 +7,7 @@ export interface KeycloakFixture {
   backchannelUrl: string;
   clientSecret: string;
   provisioningClientSecret?: string;
+  identityStatusClientSecret?: string;
   users: {
     id: string;
     username: string;
@@ -110,6 +111,22 @@ export function testRealm(input: KeycloakFixture) {
       },
     ],
     clients: [
+      ...(input.identityStatusClientSecret
+        ? [
+            {
+              clientId: 'kinto-identity-status',
+              enabled: true,
+              protocol: 'openid-connect',
+              publicClient: false,
+              secret: input.identityStatusClientSecret,
+              standardFlowEnabled: false,
+              directAccessGrantsEnabled: false,
+              implicitFlowEnabled: false,
+              serviceAccountsEnabled: true,
+              fullScopeAllowed: true,
+            },
+          ]
+        : []),
       {
         clientId: 'kinto-web',
         enabled: true,
@@ -162,6 +179,16 @@ export function testRealm(input: KeycloakFixture) {
         : []),
     ],
     users: [
+      ...(input.identityStatusClientSecret
+        ? [
+            {
+              username: 'service-account-kinto-identity-status',
+              enabled: true,
+              serviceAccountClientId: 'kinto-identity-status',
+              clientRoles: { 'realm-management': ['view-users'] },
+            },
+          ]
+        : []),
       ...input.users.map((user) => ({
         id: user.id,
         username: user.username,

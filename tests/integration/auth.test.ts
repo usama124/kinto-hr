@@ -63,6 +63,9 @@ let identityId: string;
 const provisionedTenantIds: string[] = [];
 let tokenRequests = 0;
 let mode = 'valid';
+let identityStatus = 'enabled';
+const identityStatusCalls: string[] = [];
+
 const codes = new Map<
   string,
   { nonce: string; challenge: string; mode: string; sid: string }
@@ -82,7 +85,55 @@ beforeAll(async () => {
   provider = createServer(async (req, res) => {
     const url = new URL(req.url!, issuer);
     res.setHeader('Content-Type', 'application/json');
-    if (url.pathname === '/.well-known/openid-configuration') {
+    const path = url.pathname.replace(/^\/realms\/synthetic/, '');
+    if (url.pathname === '/realms/synthetic/protocol/openid-connect/token') {
+      identityStatusCalls.push('token');
+      if (
+        req.headers.authorization !==
+        `Basic ${Buffer.from('status-reader:synthetic-status-secret').toString('base64')}`
+      ) {
+        res.statusCode = 401;
+        return res.end('{}');
+      }
+      if (identityStatus === 'token-outage') {
+        res.statusCode = 503;
+        return res.end('{}');
+      }
+      return res.end(
+        JSON.stringify({
+          access_token: 'synthetic-status-reader-token',
+          token_type: 'Bearer',
+          expires_in: 60,
+        }),
+      );
+    }
+    if (url.pathname.startsWith('/admin/realms/synthetic/users/')) {
+      identityStatusCalls.push(req.method!);
+      if (
+        req.method !== 'GET' ||
+        req.headers.authorization !== 'Bearer synthetic-status-reader-token'
+      ) {
+        res.statusCode = 403;
+        return res.end('{}');
+      }
+      if (identityStatus === 'outage' || identityStatus === 'missing') {
+        res.statusCode = identityStatus === 'missing' ? 404 : 503;
+        return res.end('{}');
+      }
+      return res.end(
+        JSON.stringify({
+          id:
+            identityStatus === 'mismatched'
+              ? 'other-subject'
+              : decodeURIComponent(url.pathname.split('/').at(-1)!),
+          enabled:
+            identityStatus === 'malformed'
+              ? 'true'
+              : identityStatus !== 'disabled',
+        }),
+      );
+    }
+    if (path === '/.well-known/openid-configuration') {
       return res.end(
         JSON.stringify({
           issuer,
@@ -96,9 +147,8 @@ beforeAll(async () => {
         }),
       );
     }
-    if (url.pathname === '/jwks')
-      return res.end(JSON.stringify({ keys: [jwk] }));
-    if (url.pathname === '/authorize') {
+    if (path === '/jwks') return res.end(JSON.stringify({ keys: [jwk] }));
+    if (path === '/authorize') {
       const code = randomUUID();
       codes.set(code, {
         nonce: url.searchParams.get('nonce')!,
@@ -112,7 +162,7 @@ beforeAll(async () => {
       res.writeHead(302, { Location: callback.href });
       return res.end();
     }
-    if (url.pathname === '/token') {
+    if (path === '/token') {
       tokenRequests++;
       let body = '';
       for await (const part of req) body += part;
@@ -188,8 +238,9 @@ beforeAll(async () => {
   const address = provider.address();
   if (!address || typeof address === 'string')
     throw new Error('Fixture did not start');
-  issuer = `http://127.0.0.1:${address.port}`;
+  issuer = `http://127.0.0.1:${address.port}/realms/synthetic`;
   for (const [key, value] of Object.entries({
+    IDENTITY_STATUS_MODE: 'disabled',
     AUTH_MODE: 'oidc',
     NODE_ENV: 'test',
     AUTH_ORIGIN: origin,
@@ -231,6 +282,8 @@ beforeAll(async () => {
 });
 beforeEach(async () => {
   mode = 'valid';
+  identityStatus = 'enabled';
+  identityStatusCalls.length = 0;
   providerSessionId = 'synthetic-provider-session';
   for (const ip of ['127.0.0.1', '::ffff:127.0.0.1', '::1'])
     await store.redis.del(store.key('rate', ip));
@@ -1075,3 +1128,201 @@ it.each(['loa1', 'numeric-loa', 'no-acr', 'valid'])(
     await expect(directGrant('keycloak-loa2-v1')).rejects.toThrow();
   },
 );
+
+async function withIdentityStatusApp(
+  work: (guarded: INestApplication) => Promise<void>,
+) {
+  const values = {
+    IDENTITY_STATUS_MODE: 'keycloak',
+    OIDC_MFA_PROFILE: 'keycloak-loa2-v1',
+    KEYCLOAK_IDENTITY_STATUS_CLIENT_ID: 'status-reader',
+    KEYCLOAK_IDENTITY_STATUS_CLIENT_SECRET: 'synthetic-status-secret',
+  };
+  const previous = Object.fromEntries(
+    Object.keys(values).map((key) => [key, process.env[key]]),
+  );
+  let guarded: INestApplication | undefined;
+  try {
+    for (const [key, value] of Object.entries(values)) vi.stubEnv(key, value);
+    mode = 'loa2';
+    const module = await Test.createTestingModule({
+      imports: [AppModule],
+    }).compile();
+    guarded = module.createNestApplication();
+    configureHttp(guarded);
+    await guarded.init();
+    await work(guarded);
+  } finally {
+    await guarded?.close();
+    for (const [key, value] of Object.entries(previous)) vi.stubEnv(key, value);
+  }
+}
+async function statusLogin(guarded: INestApplication, expectedStatus = 303) {
+  const begin = await request(guarded.getHttpServer())
+    .get('/api/v1/auth/login')
+    .expect(302);
+  const authorized = await fetch(begin.headers.location, {
+    redirect: 'manual',
+  });
+  const callback = new URL(authorized.headers.get('location')!);
+  return request(guarded.getHttpServer())
+    .get(`${callback.pathname}${callback.search}`)
+    .set('Cookie', cookies(begin, LOGIN_COOKIE))
+    .expect(expectedStatus);
+}
+
+it('rejects provider-disabled login and revokes every same-identity session without touching another identity or company records', async () => {
+  await withIdentityStatusApp(async (guarded) => {
+    const first = cookies(await statusLogin(guarded), SESSION_COOKIE);
+    providerSessionId = 'synthetic-second-provider-session';
+    const second = cookies(await statusLogin(guarded), SESSION_COOKIE);
+    const other = await store.createSession({
+      principal: {
+        issuer,
+        subject: 'synthetic-other-subject',
+        mfaVerified: true,
+      },
+      identityId: randomUUID(),
+      providerSessionId: 'unrelated-session',
+      authTime: Math.floor(Date.now() / 1000),
+    });
+    const otherIssuer = await store.createSession({
+      principal: {
+        issuer: 'https://other.synthetic.example/realms/synthetic',
+        subject,
+        mfaVerified: true,
+      },
+      identityId: randomUUID(),
+      authTime: Math.floor(Date.now() / 1000),
+    });
+    identityStatus = 'disabled';
+    const revokeFailure = vi
+      .spyOn(AuthStore.prototype, 'revokeProviderSessions')
+      .mockRejectedValueOnce(new Error('synthetic revocation outage'));
+    try {
+      await request(guarded.getHttpServer())
+        .get('/api/v1/auth/session')
+        .set('Cookie', first)
+        .expect(503);
+      expect(await store.readSession(handle(first))).toBeDefined();
+    } finally {
+      revokeFailure.mockRestore();
+    }
+    await request(guarded.getHttpServer())
+      .get('/api/v1/auth/session')
+      .set('Cookie', first)
+      .expect(401);
+    expect(await store.readSession(handle(first))).toBeUndefined();
+    expect(await store.readSession(handle(second))).toBeUndefined();
+    expect(await store.readSession(other.token)).toBeDefined();
+    expect(await store.readSession(otherIssuer.token)).toBeDefined();
+    await store.deleteSession(otherIssuer.token);
+    await store.deleteSession(other.token);
+    await statusLogin(guarded, 401);
+    expect(
+      (await admin.identity.findUniqueOrThrow({ where: { id: identityId } }))
+        .status,
+    ).toBe('active');
+    expect(
+      (
+        await admin.membership.findUniqueOrThrow({
+          where: { tenantId_identityId: { tenantId, identityId } },
+        })
+      ).status,
+    ).toBe('active');
+    expect(
+      identityStatusCalls
+        .filter((method) => method !== 'token')
+        .every((method) => method === 'GET'),
+    ).toBe(true);
+    identityStatus = 'enabled';
+    await request(guarded.getHttpServer())
+      .get('/api/v1/auth/session')
+      .set('Cookie', first)
+      .expect(401);
+  });
+});
+
+it('fails closed on unconfirmed provider state, preserves sessions for retry and does not restore locally disabled access', async () => {
+  await withIdentityStatusApp(async (guarded) => {
+    const cookie = cookies(await statusLogin(guarded), SESSION_COOKIE);
+    for (const state of [
+      'outage',
+      'token-outage',
+      'missing',
+      'malformed',
+      'mismatched',
+    ]) {
+      identityStatus = state;
+      if (state === 'token-outage')
+        await request(guarded.getHttpServer())
+          .get('/api/v1/health/ready')
+          .expect(503);
+      await request(guarded.getHttpServer())
+        .get('/api/v1/auth/session')
+        .set('Cookie', cookie)
+        .expect(503);
+      expect(await store.readSession(handle(cookie))).toBeDefined();
+      await request(guarded.getHttpServer())
+        .get(`/api/v1/tenants/${tenantId}/employees`)
+        .set('Cookie', cookie)
+        .expect(503);
+    }
+    identityStatus = 'enabled';
+    await request(guarded.getHttpServer())
+      .get('/api/v1/auth/session')
+      .set('Cookie', cookie)
+      .expect(200);
+    await admin.identity.update({
+      where: { id: identityId },
+      data: { status: 'disabled' },
+    });
+    await request(guarded.getHttpServer())
+      .get('/api/v1/auth/session')
+      .set('Cookie', cookie)
+      .expect(401);
+    await statusLogin(guarded, 401);
+    expect(
+      (await admin.identity.findUniqueOrThrow({ where: { id: identityId } }))
+        .status,
+    ).toBe('disabled');
+  });
+});
+
+it('keeps provider enabled and other-company access when only one company membership is revoked', async () => {
+  await withIdentityStatusApp(async (guarded) => {
+    const otherTenantId = randomUUID();
+    try {
+      await admin.tenant.create({
+        data: {
+          id: otherTenantId,
+          name: 'Synthetic second company',
+          employeeLimit: 5,
+        },
+      });
+      await admin.membership.create({
+        data: { tenantId: otherTenantId, identityId, roles: ['owner'] },
+      });
+      const cookie = cookies(await statusLogin(guarded), SESSION_COOKIE);
+      await admin.membership.updateMany({
+        where: { tenantId, identityId },
+        data: { status: 'revoked' },
+      });
+      const result = await request(guarded.getHttpServer())
+        .get('/api/v1/auth/session')
+        .set('Cookie', cookie)
+        .expect(200);
+      expect(
+        result.body.tenants.map((tenant: { id: string }) => tenant.id),
+      ).toEqual([otherTenantId]);
+      expect(
+        (await admin.identity.findUniqueOrThrow({ where: { id: identityId } }))
+          .status,
+      ).toBe('active');
+      expect(identityStatus).toBe('enabled');
+    } finally {
+      await admin.membership.deleteMany({ where: { tenantId: otherTenantId } });
+      await admin.tenant.deleteMany({ where: { id: otherTenantId } });
+    }
+  });
+});
