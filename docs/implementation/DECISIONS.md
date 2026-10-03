@@ -50,6 +50,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 3 October 2026 — durable verified provider logout inbox
+
+Engineering added off-by-default durable logout mode with migration 47 and a forced-RLS control-plane inbox containing only hashed namespace/event/target metadata and timestamps. Verified callbacks are acknowledged after commit; pending/completed receipts block affected sessions even if Redis cleanup fails. Fair bounded processing and authentication-time cutoffs permit safe restart/replay without deleting newer authentication. No company membership or identity status changes. Receipt purge awaits retention approval. Provider-undelivered events remain outside Kinto's inbox guarantee. See [evidence](../evidence/phase-01/durable-provider-logout.md). Private backlog/alert verification and deployed acceptance remain next.
+
 ### 3 October 2026 — read-only provider identity-status guard
 
 Engineering added an off-by-default exact-issuer/subject Keycloak enabled-status check at login and authenticated session access. Confirmed disable atomically revokes the identity's sessions in this auth namespace; outages/malformed observations deny temporarily without changing local/provider state. Separate read-only credentials and trusted MFA are required. No company revocation disables a global provider account, and enabled state never restores local identity/membership access. This first slice does not persist provider observations or implement durable event reconciliation. See [evidence](../evidence/phase-01/provider-identity-status.md). Durable provider logout/reconciliation and deployed operational approval remain next.

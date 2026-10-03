@@ -4,6 +4,11 @@ import {
   type OnModuleInit,
 } from '@nestjs/common';
 import {
+  acceptProviderLogout,
+  pendingProviderLogouts,
+  completeProviderLogout,
+  providerSessionRevoked,
+  type ProviderLogoutRecord,
   assertSafeRuntimeRole,
   createDatabase,
   findActiveIdentity,
@@ -126,6 +131,29 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
   async ready() {
     await assertSafeRuntimeRole(this.db);
     await this.db.$queryRaw`SELECT 1`;
+  }
+  acceptProviderLogout(namespace: string, event: ProviderLogoutRecord) {
+    return acceptProviderLogout(this.db, namespace, event);
+  }
+  pendingProviderLogouts(namespace: string) {
+    return pendingProviderLogouts(this.db, namespace);
+  }
+  completeProviderLogout(namespace: string, key: string) {
+    return completeProviderLogout(this.db, namespace, key);
+  }
+  providerSessionRevoked(
+    namespace: string,
+    subject: string,
+    session: string | undefined,
+    authTime: number,
+  ) {
+    return providerSessionRevoked(
+      this.db,
+      namespace,
+      subject,
+      session,
+      authTime,
+    );
   }
   findIdentity(principal: AuthenticatedIdentity) {
     return findActiveIdentity(this.db, principal);

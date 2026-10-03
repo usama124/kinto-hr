@@ -2303,3 +2303,82 @@ export async function activateEmployee(
     return updated;
   });
 }
+
+// Internal verified-provider boundary. Never populate this from an unsigned
+// request body or tenant actor; HTTP validation precedes these trusted commands.
+export type ProviderLogoutRecord = {
+  eventKey: string;
+  targetKind: 'subject' | 'session';
+  targetHash: string;
+  issuedAt: number;
+};
+const logoutDigest = (value: string) => {
+  if (!/^[a-f0-9]{64}$/.test(value))
+    throw new Error('Invalid provider logout digest');
+  return value;
+};
+export async function acceptProviderLogout(
+  db: PrismaClient,
+  namespace: string,
+  event: ProviderLogoutRecord,
+) {
+  logoutDigest(namespace);
+  logoutDigest(event.eventKey);
+  logoutDigest(event.targetHash);
+  if (
+    !['subject', 'session'].includes(event.targetKind) ||
+    !Number.isSafeInteger(event.issuedAt) ||
+    event.issuedAt < 0
+  )
+    throw new Error('Invalid provider logout metadata');
+  const result = await db.$queryRaw<
+    { completed: boolean }[]
+  >`SELECT public.accept_provider_logout(${namespace},${event.eventKey},${event.targetKind},${event.targetHash},${event.issuedAt}::bigint) AS completed`;
+  return result[0].completed;
+}
+export async function pendingProviderLogouts(
+  db: PrismaClient,
+  namespace: string,
+): Promise<ProviderLogoutRecord[]> {
+  logoutDigest(namespace);
+  const rows = await db.$queryRaw<
+    {
+      event_key: string;
+      target_kind: 'subject' | 'session';
+      target_hash: string;
+      issued_at: bigint;
+    }[]
+  >`SELECT * FROM public.pending_provider_logouts(${namespace})`;
+  return rows.map((row) => ({
+    eventKey: row.event_key,
+    targetKind: row.target_kind,
+    targetHash: row.target_hash,
+    issuedAt: Number(row.issued_at),
+  }));
+}
+export async function completeProviderLogout(
+  db: PrismaClient,
+  namespace: string,
+  eventKey: string,
+) {
+  logoutDigest(namespace);
+  logoutDigest(eventKey);
+  await db.$executeRaw`SELECT public.complete_provider_logout(${namespace},${eventKey})`;
+}
+export async function providerSessionRevoked(
+  db: PrismaClient,
+  namespace: string,
+  subjectHash: string,
+  sessionHash: string | undefined,
+  authTime: number,
+) {
+  logoutDigest(namespace);
+  logoutDigest(subjectHash);
+  if (sessionHash) logoutDigest(sessionHash);
+  if (!Number.isSafeInteger(authTime) || authTime < 0)
+    throw new Error('Invalid provider session time');
+  const result = await db.$queryRaw<
+    { revoked: boolean }[]
+  >`SELECT public.provider_session_revoked(${namespace},${subjectHash},${sessionHash ?? null},${authTime}::bigint) AS revoked`;
+  return result[0].revoked;
+}

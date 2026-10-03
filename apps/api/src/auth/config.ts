@@ -23,6 +23,7 @@ export function readAuthConfig(env: NodeJS.ProcessEnv) {
       origin: endpoint.refine((value) => new URL(value).pathname === '/'),
       clientId: z.string().trim().min(1).max(255),
       clientSecret: z.string().min(16),
+      logoutMode: z.enum(['synchronous', 'durable']),
       mfaProfile: z.enum(['none', 'keycloak-loa2-v1']),
       redisUrl: z.url().refine((value) => {
         const url = new URL(value);
@@ -39,6 +40,7 @@ export function readAuthConfig(env: NodeJS.ProcessEnv) {
       origin: env.AUTH_ORIGIN,
       clientId: env.OIDC_CLIENT_ID,
       clientSecret: env.OIDC_CLIENT_SECRET,
+      logoutMode: env.AUTH_LOGOUT_MODE ?? 'synchronous',
       mfaProfile: env.OIDC_MFA_PROFILE ?? 'none',
       redisUrl: env.AUTH_REDIS_URL,
     });

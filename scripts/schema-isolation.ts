@@ -152,6 +152,17 @@ export const schemaIsolationInventory: readonly Classification[] = [
       'denies non-owners, stale MFA, cross-tenant access and cross-tenant cursors',
     ),
   },
+  {
+    name: 'auth_provider_logout_events',
+    scope: 'platform-control',
+    tenantColumn: null,
+    policies: [controlPolicy],
+    grants: { kinto_control_owner: controlCrud },
+    regression: regression(
+      'auth',
+      'persists verified logout across Redis failure and API restart without granting a revoked session',
+    ),
+  },
   tenantTable(
     'branches',
     organization(
