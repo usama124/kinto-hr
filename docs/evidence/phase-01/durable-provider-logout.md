@@ -40,3 +40,7 @@ Apply migration 47, generate Prisma, bootstrap restricted roles and deploy match
 Only callbacks that reach Kinto and are verified/committed are recoverable here. A request lost while the entire API/database is unavailable remains the provider's delivery problem; Kinto cannot pull an absent Logout Token from this inbox. Provider retry/availability policy, backlog age/error monitoring and delivered alerts, production database/Redis recovery, consistent deployment, security review and human staging acceptance remain open. Password-reset sign-out choice and fresh provider disable checks remain separate contracts. No live provider, customer or paid infrastructure was modified.
 
 Next bounded local step: private backlog/reconciliation health monitoring and synthetic alert/failure checks, followed by approved staging operations. No full Phase 1 acceptance is claimed.
+
+## Subsequent monitoring increment
+
+The [private health command](provider-logout-monitoring.md) now provides read-only backlog counts/age, stalled-attempt alerts and redacted dependency diagnostics. Deployed scheduling, notification delivery and provider callback availability remain separate gates.

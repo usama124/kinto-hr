@@ -2382,3 +2382,31 @@ export async function providerSessionRevoked(
   >`SELECT public.provider_session_revoked(${namespace},${subjectHash},${sessionHash ?? null},${authTime}::bigint) AS revoked`;
   return result[0].revoked;
 }
+
+// Private read-only aggregate; does not claim pending reconciliation work.
+export type ProviderLogoutHealth = {
+  pending: number;
+  unattempted: number;
+  oldestPendingSeconds: number;
+  lastAttemptSeconds: number | null;
+};
+export async function providerLogoutHealth(
+  db: PrismaClient,
+  namespace: string,
+): Promise<ProviderLogoutHealth> {
+  logoutDigest(namespace);
+  const [row] = await db.$queryRaw<
+    {
+      pending: bigint;
+      unattempted: bigint;
+      oldest_pending_seconds: number;
+      last_attempt_seconds: number | null;
+    }[]
+  >`SELECT * FROM public.provider_logout_health(${namespace})`;
+  return {
+    pending: Number(row.pending),
+    unattempted: Number(row.unattempted),
+    oldestPendingSeconds: row.oldest_pending_seconds,
+    lastAttemptSeconds: row.last_attempt_seconds,
+  };
+}
