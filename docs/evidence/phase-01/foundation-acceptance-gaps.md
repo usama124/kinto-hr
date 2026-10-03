@@ -14,9 +14,13 @@ Repository review on 2 October 2026, starting from merged main `92623c3` (PR 52)
 
 The [schema isolation classification gate](schema-isolation-classification.md) now inventories every business table, exact RLS policies, role/table/column privileges and domain regression references. CI, isolated migration upgrades and restored snapshots enforce it. The independent restore whitelist remains. This satisfies the bounded local gap described in the original review without approving deployed security.
 
+## Provider disable enforcement slice — 3 October 2026
+
+The [opt-in provider identity-status guard](provider-identity-status.md) checks exact provider state at login/session access. Confirmed disable revokes same-identity sessions, unconfirmed state temporarily denies access, and company-specific revocation never disables a shared provider identity. It leaves local identity status untouched and remains disabled by default. It is not durable event synchronization or deployed approval.
+
 ## Next bounded local step
 
-Review and implement the provider identity-disable synchronization contract with synthetic fixtures and failure/retry tests. Determine the authority, scope and revocation behavior before enabling any synchronization; company-specific membership revocation must not disable a global identity used by another company. Keep provider/deployment delivery disabled until its separate configuration and operational approval gates are met.
+Define and implement bounded durable provider logout/reconciliation handling with synthetic outage, replay and restart coverage. Review provider event authority and delivery guarantees before accepting persistent status changes; membership revocation must remain company-scoped. Provider event delivery, monitoring and staging/security acceptance still need separate deployment approval.
 
 ## External and deployment gates remain
 

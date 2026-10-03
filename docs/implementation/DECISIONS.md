@@ -50,6 +50,10 @@ Confirmed means the product owner supplied the requirement. Working default mean
 
 ## Change control
 
+### 3 October 2026 — read-only provider identity-status guard
+
+Engineering added an off-by-default exact-issuer/subject Keycloak enabled-status check at login and authenticated session access. Confirmed disable atomically revokes the identity's sessions in this auth namespace; outages/malformed observations deny temporarily without changing local/provider state. Separate read-only credentials and trusted MFA are required. No company revocation disables a global provider account, and enabled state never restores local identity/membership access. This first slice does not persist provider observations or implement durable event reconciliation. See [evidence](../evidence/phase-01/provider-identity-status.md). Durable provider logout/reconciliation and deployed operational approval remain next.
+
 ### 3 October 2026 — explicit schema isolation classification gate
 
 Engineering added a reviewed per-table inventory covering tenant, private tenant control-plane, global identity, platform control and plan catalog boundaries. CI now rejects unknown/missing tables, missing domain regression references, policy drift, unsafe roles and unexpected effective table/column privileges. Isolated migration upgrades and database recovery use the same verifier while retaining independent restore coverage. Synthetic weakening tests roll back every catalog change. No policy, grant, migration or API permission changed. See [evidence](../evidence/phase-01/schema-isolation-classification.md). Next is provider identity-disable synchronization contract/synthetic verification; production provider, deployment and human acceptance gates remain open.

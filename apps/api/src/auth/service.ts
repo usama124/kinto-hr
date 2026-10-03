@@ -13,10 +13,18 @@ import { DatabaseService } from '../database.service';
 import { readAuthConfig } from './config';
 import { OidcProvider } from './oidc';
 import { AuthStore, opaqueToken, digest } from './store';
+import {
+  KeycloakIdentityStatus,
+  readIdentityStatusConfig,
+} from './identity-status';
 
 @Injectable()
 export class AuthService implements OnModuleInit, OnModuleDestroy {
   private readonly config = readAuthConfig(process.env);
+  private readonly identityStatusConfig = readIdentityStatusConfig(process.env);
+  private readonly identityStatus = this.identityStatusConfig
+    ? new KeycloakIdentityStatus(this.identityStatusConfig)
+    : undefined;
   private store?: AuthStore;
   private provider?: OidcProvider;
   constructor(
@@ -40,7 +48,10 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     this.store?.close();
   }
   async ready() {
-    if (this.config) await this.resources().store.ready();
+    if (this.config) {
+      await this.resources().store.ready();
+      await this.identityStatus?.ready();
+    }
   }
   private resources() {
     if (!this.config) throw new NotFoundException();
@@ -61,6 +72,32 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     await store.saveLogin(token, transaction);
     return { url, token };
   }
+  private async requireEnabledIdentity(principal: {
+    issuer: string;
+    subject: string;
+  }) {
+    if (!this.identityStatus) return;
+    let enabled: boolean;
+    try {
+      enabled = await this.identityStatus.enabled(principal);
+    } catch {
+      throw new ServiceUnavailableException('Identity status unavailable');
+    }
+    if (!enabled) {
+      try {
+        // Revokes all this issuer/subject's sessions across companies, not
+        // another identity or a company-specific membership. No DB/provider writes.
+        await this.resources().store.revokeProviderSessions({
+          issuer: principal.issuer,
+          subject: principal.subject,
+          jti: `identity-status:${opaqueToken()}`,
+        });
+      } catch {
+        throw new ServiceUnavailableException('Identity status unavailable');
+      }
+      throw new UnauthorizedException();
+    }
+  }
   async complete(query: string, loginToken: string, oldSession?: string) {
     const { store, provider, config } = this.resources();
     const transaction = await store.takeLogin(loginToken);
@@ -74,6 +111,7 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     } catch {
       throw new UnauthorizedException();
     }
+    await this.requireEnabledIdentity(verified.principal);
     const identity = await this.database.findIdentity(verified.principal);
     if (!identity) throw new UnauthorizedException();
     const tenants = await this.database.discoverTenants(identity.id);
@@ -90,6 +128,7 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     const { store } = this.resources();
     let session = await store.readSession(token);
     if (!session) throw new UnauthorizedException();
+    await this.requireEnabledIdentity(session.principal);
     const identity = await this.database.findIdentity(session.principal);
     if (!identity || identity.id !== session.identityId) {
       await store.deleteSession(token);
