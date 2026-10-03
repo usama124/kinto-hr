@@ -31,6 +31,8 @@ export type Permission =
   | 'payroll.prepare'
   | 'payroll.finalize'
   | 'billing.manage'
+  | 'devices.read'
+  | 'devices.manage'
   | 'organization.read'
   | 'organization.manage'
   | 'company_policies.read'
@@ -49,7 +51,9 @@ const permissions: Record<Role, readonly Permission[]> = {
     'employees.documents.read',
     'employees.documents.write',
     'billing.manage',
+    'devices.read',
     'organization.read',
+    'devices.manage',
     'organization.manage',
     'company_policies.read',
     'company_policies.manage',
@@ -66,6 +70,7 @@ const permissions: Record<Role, readonly Permission[]> = {
     'employees.imports.write',
     'employees.documents.read',
     'employees.documents.write',
+    'devices.read',
     'organization.read',
     'company_policies.read',
     'entitlements.read',

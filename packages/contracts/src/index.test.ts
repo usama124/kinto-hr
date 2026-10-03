@@ -1,3 +1,9 @@
+import {
+  deviceCreateSchema,
+  deviceUpdateSchema,
+  deviceListQuerySchema,
+  deviceInventorySchema,
+} from './devices';
 import { expect, it } from 'vitest';
 import {
   attendanceSourceEventSchema,
@@ -1261,5 +1267,76 @@ it('normalizes optional bank details while rejecting partial, unsafe and unversi
   ).toBe(false);
   expect(employeeBankDetailsResponseSchema.parse({ details: null })).toEqual({
     details: null,
+  });
+});
+
+it('restricts device inventory to credential-free draft metadata and reviewed transitions', () => {
+  const branchId = '00000000-0000-4000-8000-000000000001';
+  const create = {
+    branchId,
+    code: 'K50-01',
+    name: ' Entrance ',
+    model: 'ZKTeco_K50',
+    firmware: null,
+    sourceTimezone: 'Asia/Karachi',
+    reason: 'initial_setup',
+  };
+  expect(deviceCreateSchema.parse(create).name).toBe('Entrance');
+  for (const change of [
+    { code: 'invalid code' },
+    { firmware: 'private\nvalue' },
+    { model: 'Unknown' },
+    { sourceTimezone: 'UTC' },
+    { password: 'secret' },
+    { tenantId: branchId },
+    { sourceIdentityStatus: 'verified' },
+  ])
+    expect(deviceCreateSchema.safeParse({ ...create, ...change }).success).toBe(
+      false,
+    );
+  const update = {
+    branchId,
+    name: 'Entrance',
+    model: 'ZKTeco_K50',
+    firmware: 'synthetic-1',
+    sourceTimezone: 'Asia/Karachi',
+    expectedVersion: 1,
+    status: 'draft',
+    reason: 'metadata_correction',
+  };
+  expect(deviceUpdateSchema.parse(update)).toEqual(update);
+  expect(
+    deviceUpdateSchema.safeParse({
+      ...update,
+      status: 'retired',
+      reason: 'retire_device',
+    }).success,
+  ).toBe(true);
+  for (const change of [
+    { expectedVersion: 0 },
+    { expectedVersion: 2147483647 },
+    { status: 'active' },
+    { status: 'retired' },
+    { reason: 'retire_device' },
+    { code: 'NEW' },
+  ])
+    expect(deviceUpdateSchema.safeParse({ ...update, ...change }).success).toBe(
+      false,
+    );
+  expect(deviceListQuerySchema.parse({})).toEqual({ limit: 25 });
+  expect(
+    deviceListQuerySchema.parse({ limit: '50', afterId: branchId }),
+  ).toEqual({ limit: 50, afterId: branchId });
+  for (const value of [
+    { limit: 0 },
+    { limit: 51 },
+    { limit: 'bad' },
+    { limit: 1.5 },
+    { tenantId: branchId },
+  ])
+    expect(deviceListQuerySchema.safeParse(value).success).toBe(false);
+  expect(deviceInventorySchema.parse({ items: [], nextCursor: null })).toEqual({
+    items: [],
+    nextCursor: null,
   });
 });

@@ -5,6 +5,9 @@ import { createHash, randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import {
+  createTenantDeviceInventory,
+  updateTenantDeviceInventory,
+  readTenantDeviceInventory,
   activateEmployee,
   activateTenantEmployee,
   archiveTenantEmployee,
@@ -69,6 +72,7 @@ async function snapshot(db: PrismaClient) {
     [
       'administrator_account_requests',
       'administrator_invitations',
+      'attendance_devices',
       'audit_events',
       'auth_provider_logout_events',
       'branches',
@@ -210,6 +214,9 @@ async function snapshot(db: PrismaClient) {
       orderBy: { id: 'asc' },
     }),
     legalEntities: await db.legalEntity.findMany({ orderBy: { id: 'asc' } }),
+    attendanceDevices: await db.attendanceDevice.findMany({
+      orderBy: { id: 'asc' },
+    }),
     branches: await db.branch.findMany({ orderBy: { id: 'asc' } }),
     departments: await db.department.findMany({ orderBy: { id: 'asc' } }),
     designations: await db.designation.findMany({ orderBy: { id: 'asc' } }),
@@ -430,6 +437,36 @@ async function main() {
         provinceCode: 'PK-PB',
         reason: 'Recovery fixture branch',
       });
+      const deviceMetadata = {
+        branchId: branch.id,
+        name: 'Synthetic recovery entrance',
+        model: 'ZKTeco_K50' as const,
+        firmware: null,
+        sourceTimezone: 'Asia/Karachi' as const,
+      };
+      await createTenantDeviceInventory(sourceApp, principal, tenantId, {
+        ...deviceMetadata,
+        code: 'K50-DRAFT',
+        reason: 'initial_setup',
+      });
+      const retiredDevice = await createTenantDeviceInventory(
+        sourceApp,
+        principal,
+        tenantId,
+        { ...deviceMetadata, code: 'K50-RETIRED', reason: 'initial_setup' },
+      );
+      await updateTenantDeviceInventory(
+        sourceApp,
+        principal,
+        tenantId,
+        retiredDevice.id,
+        {
+          ...deviceMetadata,
+          expectedVersion: 1,
+          status: 'retired',
+          reason: 'retire_device',
+        },
+      );
       const department = await createTenantOrganizationCatalogEntry(
         sourceApp,
         principal,
@@ -1054,7 +1091,7 @@ async function main() {
     const policies = await restored.$queryRaw<
       { enabled: boolean; forced: boolean }[]
     >`SELECT relrowsecurity AS enabled, relforcerowsecurity AS forced FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND relkind='r' AND relname <> '_prisma_migrations'`;
-    assert.equal(policies.length, 43);
+    assert.equal(policies.length, 44);
     assert.ok(policies.every((row) => row.enabled && row.forced));
     assert.deepEqual(await restoredApp.employee.findMany(), []);
     stage = 'restored tenant lifecycle visibility';
@@ -1208,6 +1245,39 @@ async function main() {
         1,
       );
     }
+    stage = 'restored device inventory and observer delivery';
+    for (const [index, tenantId] of tenants.entries()) {
+      const devices = await readTenantDeviceInventory(
+        restoredApp,
+        { identityId: membershipOwners[index], mfaVerified: true },
+        tenantId,
+        { limit: 25 },
+      );
+      assert.deepEqual(devices.items.map((row) => row.status).sort(), [
+        'draft',
+        'retired',
+      ]);
+      assert.ok(
+        devices.items.every(
+          (row) =>
+            row.health === 'not_connected' &&
+            row.sourceIdentityStatus === 'unverified',
+        ),
+      );
+    }
+    const deviceEvents = await restored.outboxEvent.findMany({
+      where: { type: 'device.inventory_changed.v1' },
+    });
+    assert.equal(deviceEvents.length, 6);
+    for (const event of deviceEvents) {
+      const ref = { tenantId: event.tenantId, eventId: event.id };
+      assert.equal(await processEvent(restoredWorker, ref), 'completed');
+      assert.equal(await processEvent(restoredWorker, ref), 'completed');
+      assert.equal(
+        await restored.consumerReceipt.count({ where: { eventId: event.id } }),
+        1,
+      );
+    }
     stage = 'restored migration replay';
     pnpm(['db:migrate'], restoredEnv);
     const report = {
@@ -1232,6 +1302,8 @@ async function main() {
       membershipAdministrationAuditPreserved: true,
       organizationPolicyHistoryPreserved: true,
       organizationCatalogsPreserved: true,
+      attendanceDeviceInventoryPreserved: true,
+      attendanceDeviceChangeEventsConsumed: true,
       employeeAssignmentsPreserved: true,
       employeeBankDetailsPreserved: true,
       employeeBankChangeEventsConsumed: true,

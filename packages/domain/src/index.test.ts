@@ -125,3 +125,19 @@ describe('capacity and permissions', () => {
     );
   });
 });
+
+it('limits device inventory management to owners and reading to owners or HR', () => {
+  expect(hasPermission(['owner'], 'devices.read')).toBe(true);
+  expect(hasPermission(['owner'], 'devices.manage')).toBe(true);
+  expect(hasPermission(['hr_admin'], 'devices.read')).toBe(true);
+  expect(hasPermission(['hr_admin'], 'devices.manage')).toBe(false);
+  for (const role of [
+    'employee',
+    'payroll_preparer',
+    'payroll_approver',
+    'platform_operator',
+  ] as const) {
+    expect(hasPermission([role], 'devices.read')).toBe(false);
+    expect(hasPermission([role], 'devices.manage')).toBe(false);
+  }
+});

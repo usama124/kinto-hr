@@ -164,6 +164,13 @@ export const schemaIsolationInventory: readonly Classification[] = [
     ),
   },
   tenantTable(
+    'attendance_devices',
+    regression(
+      'attendance-devices',
+      'keeps inventory private and rejects cross-tenant branch assignment',
+    ),
+  ),
+  tenantTable(
     'branches',
     organization(
       'creates tenant branches and protects an effective or future default from deactivation',
