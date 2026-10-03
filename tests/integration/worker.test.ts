@@ -288,6 +288,27 @@ describe('durable outbox worker with real PostgreSQL and Redis', () => {
     );
   });
 
+  it('observes bank-change references once without access to financial records', async () => {
+    const event = await admin.outboxEvent.create({
+      data: {
+        tenantId: tenantA,
+        type: 'employee.bank_details_changed.v1',
+        aggregateId: randomUUID(),
+        aggregateVersion: 1,
+      },
+    });
+    const ref = { tenantId: tenantA, eventId: event.id };
+    expect(await processEvent(worker, ref)).toBe('completed');
+    expect(await processEvent(worker, ref)).toBe('completed');
+    expect(
+      await admin.consumerReceipt.count({ where: { eventId: event.id } }),
+    ).toBe(1);
+    expect((await delivery(ref)).attempts).toBe(1);
+    await expect(worker.employeeBankDetail.findMany()).rejects.toThrow(
+      /permission denied/,
+    );
+  });
+
   it('does not acknowledge unsupported events or malformed references', async () => {
     const event = await admin.outboxEvent.create({
       data: {

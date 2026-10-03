@@ -16,6 +16,7 @@ model Tenant {
   billingMode                  String                        @default("free") @map("billing_mode") @db.VarChar(20)
   createdAt                    DateTime                      @default(now()) @map("created_at") @db.Timestamptz()
   employees                    Employee[]
+  employeeBankDetails          EmployeeBankDetail[]
   employeePrivateDetails       EmployeePrivateDetail[]
   compensationAgreements       CompensationAgreement[]
   salaryComponents             SalaryComponent[]
@@ -77,6 +78,7 @@ model Identity {
   revokedEntitlementGrants     EntitlementGrant[]             @relation("GrantRevokedBy")
   createdEntitlementOverrides  EntitlementOverride[]          @relation("OverrideCreatedBy")
   revokedEntitlementOverrides  EntitlementOverride[]          @relation("OverrideRevokedBy")
+  updatedEmployeeBankDetails    EmployeeBankDetail[] @relation("BankDetailsUpdatedBy")
   updatedEmployeePrivateDetails EmployeePrivateDetail[]         @relation("PrivateDetailsUpdatedBy")
   createdCompensationVersions   CompensationComponentVersion[]   @relation("CompensationVersionCreatedBy")
   assignedChecklistTasks        ChecklistTask[]                   @relation("ChecklistAssignee")
@@ -424,6 +426,7 @@ model Employee {
   employmentPeriods      EmploymentPeriod[]
   assignments            EmployeeAssignment[]    @relation("AssignedEmployee")
   managedAssignments     EmployeeAssignment[]    @relation("AssignmentManager")
+  bankDetails            EmployeeBankDetail?
   privateDetails         EmployeePrivateDetail?
   compensationAgreement CompensationAgreement?
   checklistTasks         ChecklistTask[]
@@ -908,4 +911,24 @@ model AuthProviderLogoutEvent {
 
   @@id([namespace, eventKey])
   @@map("auth_provider_logout_events")
+}
+
+model EmployeeBankDetail {
+  id                    String   @id @db.Uuid
+  tenantId              String   @map("tenant_id") @db.Uuid
+  employeeId            String   @map("employee_id") @db.Uuid
+  bankName              String?  @map("bank_name") @db.VarChar(120)
+  accountTitle          String?  @map("account_title") @db.VarChar(160)
+  accountNumber         String?  @map("account_number") @db.VarChar(34)
+  version               Int      @default(1)
+  updatedByIdentityId   String   @map("updated_by_identity_id") @db.Uuid
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+  tenant                Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  employee              Employee @relation(fields: [tenantId, employeeId], references: [tenantId, id], onDelete: Restrict)
+  updatedBy             Identity @relation("BankDetailsUpdatedBy", fields: [updatedByIdentityId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, employeeId])
+  @@map("employee_bank_details")
 }

@@ -20,6 +20,7 @@ import {
   employeeRehireSchema,
   employeeAccountReactivationSchema,
   employeeProfileUpdateSchema,
+  employeeBankDetailsUpdateSchema,
   employeePrivateDetailsUpdateSchema,
   employeeCompensationRevisionSchema,
   employeeChecklistTaskCreateSchema,
@@ -290,6 +291,39 @@ export class EmployeesController {
     );
   }
 
+  @Get(':employeeId/bank-details')
+  async readBankDetails(
+    @Req() req: AuthRequest,
+    @Param('tenantId') tenantId: unknown,
+    @Param('employeeId') employeeId: unknown,
+  ) {
+    const employee = tenantIdSchema.safeParse(employeeId);
+    if (!employee.success) throw new BadRequestException();
+    const context = await this.context(req, tenantId);
+    return this.database.readEmployeeBankDetails(
+      context.actor,
+      context.tenantId,
+      employee.data,
+    );
+  }
+  @Put(':employeeId/bank-details')
+  async updateBankDetails(
+    @Req() req: AuthRequest,
+    @Param('tenantId') tenantId: unknown,
+    @Param('employeeId') employeeId: unknown,
+    @Body() body: unknown,
+  ) {
+    const employee = tenantIdSchema.safeParse(employeeId);
+    const input = employeeBankDetailsUpdateSchema.safeParse(body);
+    if (!employee.success || !input.success) throw new BadRequestException();
+    const context = await this.context(req, tenantId, true);
+    return this.database.updateEmployeeBankDetails(
+      context.actor,
+      context.tenantId,
+      employee.data,
+      input.data,
+    );
+  }
   @Get(':employeeId/private-details')
   async readPrivateDetails(
     @Req() req: AuthRequest,

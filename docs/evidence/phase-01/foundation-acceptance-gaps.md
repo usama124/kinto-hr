@@ -7,7 +7,7 @@ Repository review on 2 October 2026, starting from merged main `92623c3` (PR 52)
 - P01-01: repository/build/CI, restricted roles, migration replay, workers, monitoring and synthetic database restore are implemented. CI already inventories business tables during restore and checks forced RLS. Approved deployed environments, backup/PITR/file recovery, delivered alerts and remote CI evidence still need separate validation.
 - P01-02: company/operator provisioning, invitations, OIDC/MFA, tenant selection, memberships, organization policies and audit access have local implementation/evidence. Employee-account provisioning existed in the API but was missing from employee records; the [employee account workspace](employee-account-workspace.md) closes that bounded UI gap. Production provider callback reconciliation and identity-disable synchronization remain open.
 - P01-03: base plans, effective capacity, grants/overrides, previews/history and creation/revocation receipts are implemented locally. This does not implement commercial prices, invoices, collections or renewals.
-- P01-04: organization/lifecycle/history, contact/CNIC data, salary history, checklists and explicit post-rehire access reactivation are implemented. The existing private-details DTO does not capture bank details; optional bank capture is not claimed complete. Attendance/leave/payroll calculations remain later phases.
+- P01-04: organization/lifecycle/history, contact/CNIC data, salary history, checklists and explicit post-rehire access reactivation are implemented. The original private-details DTO still excludes bank values; the separately authorized [bank-details increment](employee-bank-details.md) now closes optional bank capture without granting HR financial access. Attendance/leave/payroll calculations remain later phases.
 - P01-05: CSV validation/atomic confirmation, document quarantine/local-test transfer/scan/download/replacement, employee-visible documents, contact-change decisions and workforce exports have local workflows. Production object transfer/scanning, approved retention purge and file recovery remain incomplete.
 
 ## Schema classification gap closed — 3 October 2026
@@ -26,9 +26,13 @@ The [durable provider logout inbox](durable-provider-logout.md) persists verifie
 
 The [private logout health command](provider-logout-monitoring.md) reads only namespace aggregates, signals overdue work or stalled attempts, bounds dependency failures and exposes no receipt identifiers. It is a local operations command, not deployed alert delivery or a provider heartbeat.
 
+## Optional bank capture slice — 3 October 2026
+
+The [bank-details boundary](employee-bank-details.md) captures optional bank name/title/account reference through payroll-only, recent-MFA read/write routes and an explicitly loaded workspace. It supports optimistic concurrency and clearing; ordinary roster/private-contact/audit/outbox projections exclude the values. No bank verification, payroll calculation or money movement is introduced.
+
 ## Next bounded local step
 
-Review optional employee bank-detail capture with separate recent-MFA authorization, safe projections and regression coverage; salary transfers remain outside Kinto. Production storage/scanning, approved retention and deployment acceptance are still external gates. Deployed alert delivery, provider retry/availability policy, consistent API configuration and staging/security acceptance still require separate operational approval.
+Consolidate foundation release-readiness evidence and unresolved deployment gates for review; this must not manufacture production approval. Salary transfers remain outside Kinto. Production storage/scanning, approved retention and deployment acceptance are still external gates. Deployed alert delivery, provider retry/availability policy, consistent API configuration and staging/security acceptance still require separate operational approval.
 
 ## External and deployment gates remain
 

@@ -40,6 +40,8 @@ import {
   employeeTerminationSchema,
   employeeArchiveSchema,
   employeeRehireSchema,
+  employeeBankDetailsUpdateSchema,
+  employeeBankDetailsResponseSchema,
   employeePrivateDetailsUpdateSchema,
   employeeCompensationRevisionSchema,
   employeeChecklistTaskCreateSchema,
@@ -1107,4 +1109,59 @@ it('validates employee setup receipts without exposing provider identities or ac
       employeeAccountProvisioningResultSchema.safeParse(invalid).success,
     ).toBe(false);
   }
+});
+
+it('normalizes optional bank details while rejecting partial, unsafe and unversioned clears', () => {
+  const input = {
+    expectedVersion: 0,
+    bankName: ' Synthetic Bank ',
+    accountTitle: ' Synthetic Account ',
+    accountNumber: ' 00 ab 1234 ',
+    reason: 'initial_setup',
+  };
+  expect(employeeBankDetailsUpdateSchema.parse(input)).toEqual({
+    ...input,
+    bankName: 'Synthetic Bank',
+    accountTitle: 'Synthetic Account',
+    accountNumber: '00AB1234',
+  });
+  for (const change of [
+    { accountTitle: null },
+    { accountNumber: '00-1234' },
+    { accountNumber: 'A'.repeat(35) },
+    { bankName: '' },
+    { bankName: 'B'.repeat(121) },
+    { accountTitle: 'T'.repeat(161) },
+    { reason: 'Arbitrary sensitive private reason' },
+    { reason: 'clear_details' },
+    { expectedVersion: 2147483647 },
+    { password: 'private' },
+  ])
+    expect(
+      employeeBankDetailsUpdateSchema.safeParse({ ...input, ...change })
+        .success,
+    ).toBe(false);
+  const cleared = {
+    expectedVersion: 1,
+    bankName: null,
+    accountTitle: null,
+    accountNumber: null,
+    reason: 'clear_details',
+  };
+  expect(employeeBankDetailsUpdateSchema.parse(cleared)).toEqual(cleared);
+  expect(
+    employeeBankDetailsUpdateSchema.safeParse({
+      ...cleared,
+      expectedVersion: 0,
+    }).success,
+  ).toBe(false);
+  expect(
+    employeeBankDetailsUpdateSchema.safeParse({
+      ...cleared,
+      reason: 'account_change',
+    }).success,
+  ).toBe(false);
+  expect(employeeBankDetailsResponseSchema.parse({ details: null })).toEqual({
+    details: null,
+  });
 });

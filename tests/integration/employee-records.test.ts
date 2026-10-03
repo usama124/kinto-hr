@@ -9,6 +9,8 @@ import {
   createTenantLegalEntity,
   createTenantOrganizationCatalogEntry,
   readTenantEmployee,
+  readTenantEmployeeBankDetails,
+  updateTenantEmployeeBankDetails,
   readTenantEmployeePrivateDetails,
   readTenantEmployeeCompensation,
   readTenantEmployeeChecklist,
@@ -198,6 +200,9 @@ describe('tenant employee records and effective assignments', () => {
     await admin.employeeAssignment.deleteMany({
       where: { tenantId: { in: tenants } },
     });
+    await admin.employeeBankDetail.deleteMany({
+      where: { tenantId: { in: tenants } },
+    });
     await admin.employeePrivateDetail.deleteMany({
       where: { tenantId: { in: tenants } },
     });
@@ -319,6 +324,273 @@ describe('tenant employee records and effective assignments', () => {
       },
     );
     expect(sameNumber.id).not.toBe(created.id);
+  });
+
+  it('isolates optional bank details behind payroll permission, recent MFA and atomic versions', async () => {
+    const refs = await setupOrganization(tenantId, identities.owner, 'BANK');
+    const employee = await createTenantEmployee(
+      runtime,
+      actor(identities.hr),
+      tenantId,
+      {
+        employeeNumber: 'BANK-001',
+        name: 'Synthetic Bank Fixture',
+        joiningDate: date(-1),
+        employmentType: 'monthly_salaried',
+        ...refs,
+        managerEmployeeId: null,
+        topLevelReason: 'Approved top-level fixture',
+        reason: 'Create bank fixture',
+      },
+    );
+    const read = (
+      identity = identities.payroll,
+      mfa = true,
+      selectedTenant = tenantId,
+      selectedEmployee = employee.id,
+    ) =>
+      readTenantEmployeeBankDetails(
+        runtime,
+        actor(identity, mfa),
+        selectedTenant,
+        selectedEmployee,
+      );
+    const input = {
+      expectedVersion: 0,
+      bankName: 'Synthetic Private Bank',
+      accountTitle: 'Synthetic Private Account',
+      accountNumber: '001234567890',
+      reason: 'initial_setup' as const,
+    };
+    const write = (
+      value = input,
+      identity = identities.payroll,
+      mfa = true,
+      selectedTenant = tenantId,
+    ) =>
+      updateTenantEmployeeBankDetails(
+        runtime,
+        actor(identity, mfa),
+        selectedTenant,
+        employee.id,
+        value,
+      );
+    expect(await read()).toEqual({ details: null });
+    const [unverified] = await runtime.$queryRaw<{ outcome: string }[]>`
+      SELECT * FROM public.read_tenant_employee_bank_details(${identities.payroll}::uuid,NULL::boolean,${tenantId}::uuid,${employee.id}::uuid)`;
+    expect(unverified.outcome).toBe('forbidden');
+    for (const fields of [
+      { bankName: null, title: null, number: null, reason: 'clear_details' },
+      {
+        bankName: input.bankName,
+        title: null,
+        number: input.accountNumber,
+        reason: 'initial_setup',
+      },
+      {
+        bankName: input.bankName,
+        title: input.accountTitle,
+        number: input.accountNumber,
+        reason: 'Unreviewed private text',
+      },
+    ]) {
+      const [invalid] = await runtime.$queryRaw<{ outcome: string }[]>`
+        SELECT * FROM public.update_tenant_employee_bank_details(${identities.payroll}::uuid,true,${tenantId}::uuid,${employee.id}::uuid,
+          ${randomUUID()}::uuid,0,${fields.bankName}::varchar,${fields.title}::varchar,${fields.number}::varchar,${fields.reason}::varchar,${randomUUID()}::uuid,${randomUUID()}::uuid)`;
+      expect(invalid.outcome).toBe('invalid_state');
+    }
+    expect(await admin.employeeBankDetail.count({ where: { tenantId } })).toBe(
+      0,
+    );
+    for (const identity of [
+      identities.owner,
+      identities.hr,
+      identities.employee,
+      identities.otherOwner,
+    ]) {
+      await expect(read(identity)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      await expect(write(input, identity)).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+      });
+    }
+    await expect(read(identities.payroll, false)).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    await expect(write(input, identities.payroll, false)).rejects.toMatchObject(
+      { code: 'FORBIDDEN' },
+    );
+    await expect(write(input, identities.approver)).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    // A real payroll membership in a second tenant still cannot target this employee.
+    await admin.membership.create({
+      data: {
+        tenantId: otherTenantId,
+        identityId: identities.payroll,
+        roles: ['payroll_preparer'],
+      },
+    });
+    await expect(
+      write(input, identities.payroll, true, otherTenantId),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(
+      read(identities.payroll, true, otherTenantId),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(
+      read(identities.payroll, true, tenantId, randomUUID()),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    const initial = await Promise.allSettled([write(), write()]);
+    expect(
+      initial.filter((result) => result.status === 'fulfilled'),
+    ).toHaveLength(1);
+    expect(
+      initial
+        .filter((result) => result.status === 'rejected')
+        .map((result) => (result as PromiseRejectedResult).reason),
+    ).toMatchObject([{ code: 'STALE_VERSION' }]);
+    const stored = await read(identities.approver);
+    expect(stored.details).toMatchObject({
+      bankName: input.bankName,
+      accountTitle: input.accountTitle,
+      accountNumber: input.accountNumber,
+      version: 1,
+    });
+    const publicRecord = await readTenantEmployee(
+      runtime,
+      actor(identities.hr),
+      tenantId,
+      employee.id,
+    );
+    const roster = await readTenantEmployees(
+      runtime,
+      actor(identities.hr),
+      tenantId,
+    );
+    const privateRecord = await readTenantEmployeePrivateDetails(
+      runtime,
+      actor(identities.hr),
+      tenantId,
+      employee.id,
+    );
+    for (const value of [
+      input.bankName,
+      input.accountTitle,
+      input.accountNumber,
+    ])
+      expect(
+        JSON.stringify({ publicRecord, roster, privateRecord }),
+      ).not.toContain(value);
+    await expect(runtime.employeeBankDetail.findMany()).rejects.toThrow(
+      /permission denied/,
+    );
+    const revisions = await Promise.allSettled([
+      write({ ...input, expectedVersion: 1 }),
+      write({ ...input, expectedVersion: 1 }),
+    ]);
+    expect(
+      revisions.filter((result) => result.status === 'fulfilled'),
+    ).toHaveLength(1);
+    expect((await read()).details?.version).toBe(2);
+    await expect(write({ ...input, expectedVersion: 1 })).rejects.toMatchObject(
+      { code: 'STALE_VERSION' },
+    );
+    await updateTenantEmployeeBankDetails(
+      runtime,
+      actor(identities.payroll),
+      tenantId,
+      employee.id,
+      {
+        expectedVersion: 2,
+        bankName: null,
+        accountTitle: null,
+        accountNumber: null,
+        reason: 'clear_details',
+      },
+    );
+    expect((await read()).details).toMatchObject({
+      version: 3,
+      bankName: null,
+      accountTitle: null,
+      accountNumber: null,
+    });
+    const audit = await admin.auditEvent.findMany({
+      where: { tenantId, action: { startsWith: 'employee.bank_details_' } },
+    });
+    const outbox = await admin.outboxEvent.findMany({
+      where: { tenantId, type: 'employee.bank_details_changed.v1' },
+    });
+    expect(audit).toHaveLength(3);
+    expect(outbox).toHaveLength(3);
+    expect(audit.map((event) => event.reason).sort()).toEqual([
+      'clear_details',
+      'initial_setup',
+      'initial_setup',
+    ]);
+    for (const value of [
+      input.bankName,
+      input.accountTitle,
+      input.accountNumber,
+    ])
+      expect(JSON.stringify({ audit, outbox })).not.toContain(value);
+    await admin.identity.update({
+      where: { id: identities.payroll },
+      data: { status: 'disabled' },
+    });
+    await expect(read()).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(write({ ...input, expectedVersion: 3 })).rejects.toMatchObject(
+      { code: 'FORBIDDEN' },
+    );
+    await admin.identity.update({
+      where: { id: identities.payroll },
+      data: { status: 'active' },
+    });
+    await admin.tenant.update({
+      where: { id: tenantId },
+      data: { status: 'suspended' },
+    });
+    await expect(read()).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(write({ ...input, expectedVersion: 3 })).rejects.toMatchObject(
+      { code: 'FORBIDDEN' },
+    );
+    await admin.tenant.update({
+      where: { id: tenantId },
+      data: { status: 'active' },
+    });
+    await admin.membership.update({
+      where: {
+        tenantId_identityId: { tenantId, identityId: identities.payroll },
+      },
+      data: { status: 'revoked' },
+    });
+    await expect(read()).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(write({ ...input, expectedVersion: 3 })).rejects.toMatchObject(
+      { code: 'FORBIDDEN' },
+    );
+    await admin.membership.update({
+      where: {
+        tenantId_identityId: { tenantId, identityId: identities.payroll },
+      },
+      data: { status: 'active' },
+    });
+    await admin.employee.update({
+      where: { id: employee.id },
+      data: { status: 'terminated' },
+    });
+    expect((await read()).details?.version).toBe(3);
+    await expect(write({ ...input, expectedVersion: 3 })).rejects.toMatchObject(
+      { code: 'INVALID_STATE' },
+    );
+    await admin.employee.update({
+      where: { id: employee.id },
+      data: { status: 'archived' },
+    });
+    await expect(write({ ...input, expectedVersion: 3 })).rejects.toMatchObject(
+      { code: 'INVALID_STATE' },
+    );
+    const [safe] = await admin.$queryRaw<
+      { safe: boolean }[]
+    >`SELECT p.prosecdef AND r.rolname='kinto_control_owner' AND p.proconfig=ARRAY['search_path=pg_catalog, public'] AND NOT has_function_privilege('kinto_worker',p.oid,'EXECUTE') AND NOT has_function_privilege('kinto_dispatcher',p.oid,'EXECUTE') AS safe FROM pg_proc p JOIN pg_roles r ON r.oid=p.proowner WHERE p.oid='public.update_tenant_employee_bank_details(uuid,boolean,uuid,uuid,uuid,integer,varchar,varchar,varchar,varchar,uuid,uuid)'::regprocedure`;
+    expect(safe.safe).toBe(true);
   });
 
   it('isolates versioned private details behind owner/HR permission and recent MFA', async () => {

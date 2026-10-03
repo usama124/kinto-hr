@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import EmployeeAccountInvitation from './account-invitation';
+import EmployeeBankDetails from './bank-details';
 import { FormEvent, useEffect, useState } from 'react';
 import {
   employeeRosterSchema,
@@ -963,6 +964,16 @@ export default function Employees() {
                       </button>
                     </form>
                   )}
+                  {canReadCompensation && (
+                    <EmployeeBankDetails
+                      key={`${tenantId}:${employee.id}`}
+                      tenantId={tenantId}
+                      employeeId={employee.id}
+                      csrf={csrf}
+                      canWrite={canWriteCompensation}
+                      editable={['draft', 'active'].includes(employee.status)}
+                    />
+                  )}
                   {canReadCompensation && !compensation[employee.id] && (
                     <button
                       className="secondary-button"
@@ -1537,7 +1548,7 @@ export default function Employees() {
       <p className="audit-note">
         Employee numbers are unique inside this company. Restricted contact,
         emergency, address and CNIC details load only on request. Salary and
-        bank details remain unavailable in this workflow.
+        bank details require separate payroll permissions and recent MFA.
       </p>
     </>
   );

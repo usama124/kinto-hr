@@ -35,6 +35,8 @@ import {
   reconcileAdministratorInvitationProvider,
   markAdministratorInvitationDelivered,
   scheduleTenantEmployeeTermination,
+  updateTenantEmployeeBankDetails,
+  readTenantEmployeeBankDetails,
   updateTenantEmployeePrivateDetails,
   reviseTenantEmployeeCompensation,
   createTenantEmployeeImportPreview,
@@ -80,6 +82,7 @@ async function snapshot(db: PrismaClient) {
       'designations',
       'employee_account_requests',
       'employee_assignments',
+      'employee_bank_details',
       'employee_documents',
       'employee_identity_links',
       'employee_import_batches',
@@ -148,6 +151,9 @@ async function snapshot(db: PrismaClient) {
       orderBy: { id: 'asc' },
     }),
     employeeAssignments: await db.employeeAssignment.findMany({
+      orderBy: { id: 'asc' },
+    }),
+    employeeBankDetails: await db.employeeBankDetail.findMany({
       orderBy: { id: 'asc' },
     }),
     employeePrivateDetails: await db.employeePrivateDetail.findMany({
@@ -595,6 +601,35 @@ async function main() {
           reason: 'Recovery fixture private employee details',
         },
       );
+      stage = `source tenant ${index + 1} bank capture`;
+      await updateTenantEmployeeBankDetails(
+        sourceApp,
+        principal,
+        tenantId,
+        completeEmployee.id,
+        {
+          expectedVersion: 0,
+          bankName: 'Synthetic Recovery Bank',
+          accountTitle: 'Synthetic Recovery Account',
+          accountNumber: '001234567890',
+          reason: 'initial_setup',
+        },
+      );
+      if (index === 1)
+        await updateTenantEmployeeBankDetails(
+          sourceApp,
+          principal,
+          tenantId,
+          completeEmployee.id,
+          {
+            expectedVersion: 1,
+            bankName: null,
+            accountTitle: null,
+            accountNumber: null,
+            reason: 'clear_details',
+          },
+        );
+      stage = `source tenant ${index + 1} compensation capture`;
       await reviseTenantEmployeeCompensation(
         sourceApp,
         principal,
@@ -1019,7 +1054,7 @@ async function main() {
     const policies = await restored.$queryRaw<
       { enabled: boolean; forced: boolean }[]
     >`SELECT relrowsecurity AS enabled, relforcerowsecurity AS forced FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND relkind='r' AND relname <> '_prisma_migrations'`;
-    assert.equal(policies.length, 42);
+    assert.equal(policies.length, 43);
     assert.ok(policies.every((row) => row.enabled && row.forced));
     assert.deepEqual(await restoredApp.employee.findMany(), []);
     stage = 'restored tenant lifecycle visibility';
@@ -1075,6 +1110,25 @@ async function main() {
         await restored.employeePrivateDetail.count({ where: { tenantId } }),
         1,
       );
+      const bank = await restored.employeeBankDetail.findFirstOrThrow({
+        where: { tenantId },
+      });
+      const privateBank = await readTenantEmployeeBankDetails(
+        restoredApp,
+        { identityId: membershipOwners[tenantIndex], mfaVerified: true },
+        tenantId,
+        bank.employeeId,
+      );
+      assert.equal(privateBank.details?.version, tenantIndex === 0 ? 1 : 2);
+      assert.equal(
+        privateBank.details?.accountNumber,
+        tenantIndex === 0 ? '001234567890' : null,
+      );
+      await assert.rejects(
+        restoredApp.employeeBankDetail.findMany(),
+        /permission denied/,
+      );
+
       assert.equal(
         await restored.employeeProfileChangeRequest.count({
           where: { tenantId },
@@ -1140,6 +1194,20 @@ async function main() {
       ).attempts,
       5,
     );
+    stage = 'restored bank-change observer delivery';
+    const bankEvents = await restored.outboxEvent.findMany({
+      where: { type: 'employee.bank_details_changed.v1' },
+    });
+    assert.equal(bankEvents.length, 3);
+    for (const event of bankEvents) {
+      const ref = { tenantId: event.tenantId, eventId: event.id };
+      assert.equal(await processEvent(restoredWorker, ref), 'completed');
+      assert.equal(await processEvent(restoredWorker, ref), 'completed');
+      assert.equal(
+        await restored.consumerReceipt.count({ where: { eventId: event.id } }),
+        1,
+      );
+    }
     stage = 'restored migration replay';
     pnpm(['db:migrate'], restoredEnv);
     const report = {
@@ -1165,6 +1233,8 @@ async function main() {
       organizationPolicyHistoryPreserved: true,
       organizationCatalogsPreserved: true,
       employeeAssignmentsPreserved: true,
+      employeeBankDetailsPreserved: true,
+      employeeBankChangeEventsConsumed: true,
       employeePrivateDetailsPreserved: true,
       employeeProfileChangeRequestDecisionsPreserved: true,
       workforceReportExportPreserved: true,

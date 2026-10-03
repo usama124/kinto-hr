@@ -17,3 +17,7 @@ Scope: P01-04 restricted contact, emergency-contact, residential address and CNI
 Contract, domain, API and PostgreSQL integration tests cover normalization, strict input rejection, recent MFA, roles, cross-tenant isolation, stale writes, public-projection exclusion, direct-table denial and sanitized audit/outbox records. Migration replay and synthetic backup/restore include the forced-RLS table and its records.
 
 No production data, government verification service or encryption key was introduced. Field encryption remains a deployment security-review decision before live personal data is accepted.
+
+## Subsequent financial boundary
+
+The [optional bank-details increment](employee-bank-details.md) now uses a different table, contract and payroll-only permission boundary. These contact/CNIC routes still reject bank fields, and owner/HR contact access never grants financial access.

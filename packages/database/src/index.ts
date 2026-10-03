@@ -57,6 +57,9 @@ import {
   employeeTerminationSchema,
   employeeArchiveSchema,
   employeeRehireSchema,
+  employeeBankDetailsUpdateSchema,
+  employeeBankDetailsResponseSchema,
+  type EmployeeBankDetailsUpdate,
   employeePrivateDetailsUpdateSchema,
   employeePrivateDetailsResponseSchema,
   employeeCompensationRevisionSchema,
@@ -2409,4 +2412,51 @@ export async function providerLogoutHealth(
     oldestPendingSeconds: row.oldest_pending_seconds,
     lastAttemptSeconds: row.last_attempt_seconds,
   };
+}
+
+export async function readTenantEmployeeBankDetails(
+  db: PrismaClient,
+  actor: PeopleActor,
+  tenantId: string,
+  employeeId: string,
+) {
+  validatePeopleActor(actor, tenantId);
+  tenantIdSchema.parse(employeeId);
+  const rows = await db.$queryRaw<
+    { outcome: 'ok' | 'forbidden' | 'not_found'; snapshot: unknown }[]
+  >`
+    SELECT * FROM public.read_tenant_employee_bank_details(${actor.identityId}::uuid,${actor.mfaVerified},${tenantId}::uuid,${employeeId}::uuid)`;
+  if (!rows[0] || rows[0].outcome === 'forbidden')
+    throw new DomainError('FORBIDDEN');
+  if (rows[0].outcome === 'not_found') throw new DomainError('NOT_FOUND');
+  return employeeBankDetailsResponseSchema.parse(rows[0].snapshot);
+}
+export async function updateTenantEmployeeBankDetails(
+  db: PrismaClient,
+  actor: PeopleActor,
+  tenantId: string,
+  employeeId: string,
+  input: EmployeeBankDetailsUpdate,
+) {
+  validatePeopleActor(actor, tenantId);
+  tenantIdSchema.parse(employeeId);
+  const value = employeeBankDetailsUpdateSchema.parse(input);
+  const [row] = await db.$queryRaw<
+    {
+      outcome:
+        'updated' | 'forbidden' | 'not_found' | 'stale' | 'invalid_state';
+      details_id: string | null;
+      details_version: number | null;
+    }[]
+  >`
+    SELECT * FROM public.update_tenant_employee_bank_details(${actor.identityId}::uuid,${actor.mfaVerified},${tenantId}::uuid,${employeeId}::uuid,
+      ${randomUUID()}::uuid,${value.expectedVersion}::integer,${value.bankName}::varchar,${value.accountTitle}::varchar,${value.accountNumber}::varchar,
+      ${value.reason}::varchar,${randomUUID()}::uuid,${randomUUID()}::uuid)`;
+  if (!row || row.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (row.outcome === 'not_found') throw new DomainError('NOT_FOUND');
+  if (row.outcome === 'stale') throw new DomainError('STALE_VERSION');
+  if (row.outcome === 'invalid_state') throw new DomainError('INVALID_STATE');
+  if (!row.details_id || !row.details_version)
+    throw new Error('Invalid bank-details mutation result');
+  return { id: row.details_id, version: row.details_version };
 }

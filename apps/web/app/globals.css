@@ -469,6 +469,19 @@ button {
   align-items: end;
   gap: 10px;
 }
+.employee-bank-details {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.employee-bank-details form {
+  grid-template-columns: minmax(0, 1fr);
+}
+.employee-bank-details dd {
+  margin: 4px 0;
+  overflow-wrap: anywhere;
+}
 .employee-account-setup p {
   overflow-wrap: anywhere;
 }

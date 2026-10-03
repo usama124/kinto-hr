@@ -37,6 +37,8 @@ const session = {
 const methods = {
   readEmployees: vi.fn(),
   readEmployee: vi.fn(),
+  readEmployeeBankDetails: vi.fn(),
+  updateEmployeeBankDetails: vi.fn(),
   readEmployeePrivateDetails: vi.fn(),
   createEmployee: vi.fn(),
   updateEmployeeProfile: vi.fn(),
@@ -618,4 +620,56 @@ it('passes expired MFA as unverified and rejects forged tenant or employee IDs',
     selectedTenantId: randomUUID(),
   });
   await authenticated('get', base).expect(403);
+});
+
+it('keeps bank data on a dedicated strict, versioned and CSRF-protected route', async () => {
+  methods.readEmployeeBankDetails.mockResolvedValueOnce({ details: null });
+  await authenticated('get', `${base}/${employeeId}/bank-details`).expect(200, {
+    details: null,
+  });
+  expect(methods.readEmployeeBankDetails).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+    employeeId,
+  );
+  getSession.mockResolvedValueOnce({ ...session, authTime: now - 301 });
+  methods.readEmployeeBankDetails.mockResolvedValueOnce({ details: null });
+  await authenticated('get', `${base}/${employeeId}/bank-details`).expect(200);
+  expect(methods.readEmployeeBankDetails).toHaveBeenLastCalledWith(
+    { identityId, mfaVerified: false },
+    tenantId,
+    employeeId,
+  );
+  const details = {
+    expectedVersion: 0,
+    bankName: 'Synthetic Bank',
+    accountTitle: 'Synthetic Account',
+    accountNumber: '00 ab 1234',
+    reason: 'initial_setup',
+  };
+  methods.updateEmployeeBankDetails.mockResolvedValueOnce({
+    id: randomUUID(),
+    version: 1,
+  });
+  await mutation('put', `${base}/${employeeId}/bank-details`)
+    .send(details)
+    .expect(200);
+  expect(methods.updateEmployeeBankDetails).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+    employeeId,
+    { ...details, accountNumber: '00AB1234' },
+  );
+  for (const invalid of [
+    { ...details, accountTitle: null },
+    { ...details, salary: 100000 },
+    { ...details, reason: 'private account number' },
+  ])
+    await mutation('put', `${base}/${employeeId}/bank-details`)
+      .send(invalid)
+      .expect(400);
+  await authenticated('put', `${base}/${employeeId}/bank-details`)
+    .send(details)
+    .expect(403);
+  await authenticated('get', `${base}/invalid/bank-details`).expect(400);
 });

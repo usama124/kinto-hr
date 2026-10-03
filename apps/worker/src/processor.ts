@@ -26,7 +26,7 @@ export class ProcessingError extends Error {
 // The consumer records receipts for committed employee lifecycle facts and runs
 // the one constrained aggregate export generator. The due transition remains a
 // separate database command; this handler sends no email, transfers no salary
-// and receives no direct employee, compensation or export-table access.
+// and receives no direct employee, bank, compensation or export-table access.
 const handleCommittedEvent: Handler = async (tx, event) => {
   if (event.type === 'workforce_report_export.requested.v1') {
     const rows = await tx.$queryRaw<{ outcome: string }[]>`
@@ -45,6 +45,7 @@ const handleCommittedEvent: Handler = async (tx, event) => {
       'employee.archived.v1',
       'employee.rehired.v1',
       'employee.account_reactivated.v1',
+      'employee.bank_details_changed.v1',
       'employee.private_details_changed.v1',
       'employee.compensation_changed.v1',
       'employee.checklist.created.v1',
