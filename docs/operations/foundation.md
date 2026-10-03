@@ -91,3 +91,7 @@ No customer data, public deployment, paid infrastructure or production security 
 
 - [BullMQ retry behavior](https://docs.bullmq.io/guide/retrying-failing-jobs), [connection behavior](https://docs.bullmq.io/guide/connections), and [job IDs](https://docs.bullmq.io/guide/jobs/job-ids) informed the queue setup. Database receipts remain necessary after queue job removal.
 - [Worker implementation evidence](../evidence/phase-01/worker.md) records executed checks and remaining gates.
+
+## Foundation review inventory
+
+Run `pnpm foundation:readiness` to obtain a private JSON review report (exit 1 means review required, 2 means inventory unavailable). It lists historical local evidence and outstanding gates; it does not execute tests or grant production approval. Run `pnpm foundation:readiness:verify` for integrity-only validation (exit 0 is not production readiness); this is also part of `pnpm verify`. See the [contract and review workflow](../evidence/phase-01/foundation-release-readiness.md). Collect actual candidate-revision test/remote-CI evidence separately and obtain the named approvals before live data or deployment.

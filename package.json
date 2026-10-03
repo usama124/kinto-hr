@@ -31,9 +31,11 @@
     "test:recovery": "tsx scripts/verify-recovery.ts",
     "test:keycloak": "tsx scripts/verify-keycloak.ts",
     "check:docs": "node scripts/check-docs.mjs",
-    "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test:coverage && pnpm check:docs",
+    "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test:coverage && pnpm check:docs && pnpm foundation:readiness:verify",
     "verify:full": "pnpm verify && pnpm test:integration && pnpm test:schema-isolation && pnpm test:migrations && pnpm test:recovery && pnpm build && pnpm test:worker:runtime && pnpm test:e2e && pnpm test:keycloak",
-    "auth:logout:check": "tsx scripts/check-provider-logout.ts"
+    "auth:logout:check": "tsx scripts/check-provider-logout.ts",
+    "foundation:readiness": "node --import tsx scripts/check-foundation-readiness.ts",
+    "foundation:readiness:verify": "node --import tsx scripts/check-foundation-readiness.ts --verify-manifest"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

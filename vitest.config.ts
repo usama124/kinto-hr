@@ -2,6 +2,7 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     include: [
+      'scripts/lib/**/*.test.ts',
       'packages/**/*.test.ts',
       'apps/api/**/*.test.ts',
       'apps/worker/**/*.test.ts',
