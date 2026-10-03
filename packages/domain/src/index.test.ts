@@ -62,6 +62,24 @@ describe('capacity and permissions', () => {
       hasPermission(['payroll_approver'], 'payroll.compensation.write'),
     ).toBe(false);
     expect(hasPermission(['owner'], 'payroll.compensation.read')).toBe(false);
+    expect(hasPermission(['payroll_preparer'], 'payroll.bank.read')).toBe(true);
+    expect(hasPermission(['payroll_preparer'], 'payroll.bank.write')).toBe(
+      true,
+    );
+    expect(hasPermission(['payroll_approver'], 'payroll.bank.read')).toBe(true);
+    expect(hasPermission(['payroll_approver'], 'payroll.bank.write')).toBe(
+      false,
+    );
+    expect(
+      hasPermission(
+        ['owner', 'hr_admin', 'employee', 'platform_operator'],
+        'payroll.bank.read',
+      ),
+    ).toBe(false);
+    expect(
+      hasPermission(['owner', 'payroll_preparer'], 'payroll.bank.write'),
+    ).toBe(true);
+
     expect(
       hasPermission(
         ['owner', 'hr_admin', 'platform_operator'],

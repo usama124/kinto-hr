@@ -1408,3 +1408,68 @@ export const employeeAccountReactivationResultSchema = z.strictObject({
 export type EmployeeAccountReactivation = z.infer<
   typeof employeeAccountReactivationSchema
 >;
+
+const bankFieldsSchema = z.strictObject({
+  bankName: z.string().trim().min(1).max(120).nullable(),
+  accountTitle: z.string().trim().min(1).max(160).nullable(),
+  // Format only: preserves leading zeroes; does not verify bank ownership/IBAN checksum.
+  accountNumber: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .transform((value) => value.replaceAll(' ', ''))
+    .pipe(z.string().regex(/^[A-Z0-9]{1,34}$/))
+    .nullable(),
+});
+export const employeeBankDetailsUpdateSchema = bankFieldsSchema
+  .extend({
+    expectedVersion: z.number().int().min(0).max(2147483646),
+    reason: z.enum([
+      'initial_setup',
+      'account_change',
+      'details_correction',
+      'clear_details',
+    ]),
+  })
+  .superRefine((value, context) => {
+    const fields = [value.bankName, value.accountTitle, value.accountNumber];
+    if (
+      fields.some((field) => field === null) &&
+      !fields.every((field) => field === null)
+    )
+      context.addIssue({
+        code: 'custom',
+        path: ['accountNumber'],
+        message: 'Supply all bank fields or clear all fields',
+      });
+    if (
+      (value.reason === 'clear_details') !==
+      fields.every((field) => field === null)
+    )
+      context.addIssue({
+        code: 'custom',
+        path: ['reason'],
+        message: 'Use the clear reason only when clearing every field',
+      });
+    if (value.expectedVersion === 0 && fields.every((field) => field === null))
+      context.addIssue({
+        code: 'custom',
+        path: ['expectedVersion'],
+        message: 'No initial empty bank record',
+      });
+  });
+export const employeeBankDetailsResponseSchema = z.strictObject({
+  details: bankFieldsSchema
+    .extend({
+      id: tenantIdSchema,
+      version: z.number().int().positive(),
+      updatedAt: z.iso.datetime({ offset: true }),
+    })
+    .nullable(),
+});
+export type EmployeeBankDetailsUpdate = z.infer<
+  typeof employeeBankDetailsUpdateSchema
+>;
+export type EmployeeBankDetailsResponse = z.infer<
+  typeof employeeBankDetailsResponseSchema
+>;

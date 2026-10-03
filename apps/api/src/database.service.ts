@@ -57,6 +57,8 @@ import {
   archiveTenantEmployee,
   rehireTenantEmployee,
   reactivateTenantEmployeeAccount,
+  readTenantEmployeeBankDetails,
+  updateTenantEmployeeBankDetails,
   readTenantEmployeePrivateDetails,
   updateTenantEmployeePrivateDetails,
   readTenantEmployeeCompensation,
@@ -108,6 +110,7 @@ import {
   type EmployeeTermination,
   type EmployeeArchive,
   type EmployeeRehire,
+  type EmployeeBankDetailsUpdate,
   type EmployeePrivateDetailsUpdate,
   type EmployeeCompensationRevision,
   type EmployeeChecklistTaskCreate,
@@ -681,6 +684,27 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     input: EmployeeProfileUpdate,
   ) {
     return updateTenantEmployeeProfile(
+      this.db,
+      actor,
+      tenantId,
+      employeeId,
+      input,
+    );
+  }
+  readEmployeeBankDetails(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    employeeId: string,
+  ) {
+    return readTenantEmployeeBankDetails(this.db, actor, tenantId, employeeId);
+  }
+  updateEmployeeBankDetails(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    employeeId: string,
+    input: EmployeeBankDetailsUpdate,
+  ) {
+    return updateTenantEmployeeBankDetails(
       this.db,
       actor,
       tenantId,

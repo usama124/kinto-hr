@@ -930,6 +930,9 @@ test('HR creates, activates, separates, archives and rehires an employee', async
   const joiningDate = '2026-09-08';
   const employees: Record<string, unknown>[] = [];
   let privateDetails: Record<string, unknown> | null = null;
+  let bankDetails: Record<string, unknown> | null = null;
+  let bankReads = 0;
+  let bankWrites = 0;
   let compensation: Record<string, unknown> | null = null;
   const checklistTasks: Record<string, unknown>[] = [];
   const organization = {
@@ -1100,6 +1103,49 @@ test('HR creates, activates, separates, archives and rehires an employee', async
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({ agreement: compensation }),
+      });
+    },
+  );
+  await page.route(
+    `**/api/v1/tenants/${tenantId}/employees/${employeeId}/bank-details`,
+    async (route) => {
+      const request = route.request();
+      if (request.method() === 'PUT') {
+        bankWrites++;
+        expect(request.headers()['x-csrf-token']).toBe(csrf);
+        const input = request.postDataJSON();
+        if (bankWrites === 3) return route.fulfill({ status: 409, body: '{}' });
+        if (bankWrites === 4) return route.fulfill({ status: 403, body: '{}' });
+        expect(input).toMatchObject({
+          expectedVersion: bankWrites - 1,
+          reason: bankWrites === 1 ? 'initial_setup' : 'clear_details',
+        });
+        if (bankWrites === 1) expect(input.accountNumber).toBe('00AB1234');
+        else
+          expect(input).toMatchObject({
+            bankName: null,
+            accountTitle: null,
+            accountNumber: null,
+          });
+        bankDetails = {
+          id: '2ca9fe8f-d494-4b3a-9940-c78873ea03d9',
+          version: bankWrites,
+          bankName: input.bankName,
+          accountTitle: input.accountTitle,
+          accountNumber: input.accountNumber,
+          updatedAt: '2026-10-03T12:00:00.000Z',
+        };
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ id: bankDetails.id, version: bankWrites }),
+        });
+      }
+      bankReads++;
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ details: bankDetails }),
       });
     },
   );
@@ -1360,7 +1406,7 @@ test('HR creates, activates, separates, archives and rehires an employee', async
   await expect(
     page.getByText(/Payroll setup remains incomplete/),
   ).toBeVisible();
-  await expect(page.getByText(/Salary and bank details remain/)).toBeVisible();
+  await expect(page.getByText(/Salary and bank details require/)).toBeVisible();
   await page
     .getByRole('button', { name: 'Load onboarding/offboarding checklist' })
     .click();
@@ -1389,6 +1435,73 @@ test('HR creates, activates, separates, archives and rehires an employee', async
   await expect(
     page.getByText('Private employee details saved with an audit record.'),
   ).toBeVisible();
+  expect(bankReads).toBe(0);
+  await page
+    .getByRole('button', { name: 'Load bank details', exact: true })
+    .click();
+  await expect(page.getByText('No bank details recorded.')).toBeVisible();
+  await page.getByLabel('Bank name', { exact: true }).fill('Synthetic Bank');
+  await page
+    .getByLabel('Account title', { exact: true })
+    .fill('Synthetic Account');
+  await page
+    .getByLabel('Account number or IBAN', { exact: true })
+    .fill('00-1234');
+  await page
+    .getByRole('button', { name: 'Save bank details', exact: true })
+    .click();
+  await expect(page.getByText(/Supply all bank fields/)).toBeVisible();
+  expect(bankWrites).toBe(0);
+  await page
+    .getByLabel('Account number or IBAN', { exact: true })
+    .fill('00 ab 1234');
+  await page
+    .getByRole('button', { name: 'Save bank details', exact: true })
+    .click();
+  await expect(
+    page.getByLabel('Account number or IBAN', { exact: true }),
+  ).toHaveValue('00AB1234');
+  await page.getByLabel('Bank change reason').selectOption('clear_details');
+  page.once('dialog', (dialog) => dialog.accept());
+  await page
+    .getByRole('button', { name: 'Save bank details', exact: true })
+    .click();
+  await expect(
+    page.getByLabel('Account number or IBAN', { exact: true }),
+  ).toHaveValue('');
+  await page.getByLabel('Bank name', { exact: true }).fill('Changed Bank');
+  await page
+    .getByLabel('Account title', { exact: true })
+    .fill('Changed Account');
+  await page
+    .getByLabel('Account number or IBAN', { exact: true })
+    .fill('00112233');
+  await page
+    .getByRole('button', { name: 'Save bank details', exact: true })
+    .click();
+  await expect(page.getByText(/Bank details changed elsewhere/)).toBeVisible();
+  await expect(
+    page.getByLabel('Account number or IBAN', { exact: true }),
+  ).toHaveCount(0);
+  await page
+    .getByRole('button', { name: 'Load bank details', exact: true })
+    .click();
+  await page.getByLabel('Bank name', { exact: true }).fill('Changed Bank');
+  await page
+    .getByLabel('Account title', { exact: true })
+    .fill('Changed Account');
+  await page
+    .getByLabel('Account number or IBAN', { exact: true })
+    .fill('00112233');
+  await page
+    .getByRole('button', { name: 'Save bank details', exact: true })
+    .click();
+  await expect(
+    page.getByText(/Bank details were not confirmed saved/),
+  ).toBeVisible();
+  await expect(
+    page.getByLabel('Account number or IBAN', { exact: true }),
+  ).toHaveCount(0);
   await page.getByRole('button', { name: 'Load compensation history' }).click();
   await page.getByLabel('Monthly amount (PKR)').fill('100000.00');
   await page.getByLabel('Effective from').fill(joiningDate);
@@ -3490,3 +3603,127 @@ for (const status of ['failed', 'revoked']) {
     expect(requests).toBe(1);
   });
 }
+
+test('bank details stay hidden from HR and read-only for payroll approvers', async ({
+  page,
+}) => {
+  const tenantId = '9d2ea3ef-3938-42d0-84f9-d2248f692f67';
+  const employeeId = '44c4bf77-58bb-42ea-9886-5db47c1c3de5';
+  let roles = ['hr_admin'];
+  let reads = 0;
+  let fail = false;
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        csrfToken: 'b'.repeat(43),
+        identityId: '18e19e63-bb7d-4b2d-87e8-2117f065951a',
+        selectedTenantId: tenantId,
+        tenants: [{ id: tenantId, name: 'Synthetic Bank Company', roles }],
+      }),
+    }),
+  );
+  await page.route(`**/api/v1/tenants/${tenantId}/organization`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        legalEntity: null,
+        branches: [],
+        departments: [],
+        designations: [],
+        latestPublishedVersion: 0,
+        publishedPolicy: null,
+        policyDrafts: [],
+      }),
+    }),
+  );
+  await page.route(`**/api/v1/tenants/${tenantId}/employees`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        employees: [
+          {
+            id: employeeId,
+            employeeNumber: 'BANK-001',
+            name: 'Bank Fixture',
+            legalName: null,
+            status: 'active',
+            version: 2,
+            joiningDate: '2026-09-01',
+            employmentType: 'monthly_salaried',
+            payrollSetup: 'incomplete',
+            accountAccess: {
+              status: 'not_provisioned',
+              membershipVersion: null,
+            },
+            finalWorkingDate: null,
+            archivedAt: null,
+            employmentHistory: [],
+            currentAssignment: null,
+            assignmentHistory: [],
+          },
+        ],
+      }),
+    }),
+  );
+  await page.route(
+    `**/api/v1/tenants/${tenantId}/employees/${employeeId}/bank-details`,
+    (route) => {
+      reads++;
+      expect(route.request().method()).toBe('GET');
+      return route.fulfill({
+        status: fail ? 403 : 200,
+        contentType: 'application/json',
+        body: fail
+          ? '{}'
+          : JSON.stringify({
+              details: {
+                id: employeeId,
+                version: 1,
+                bankName: 'Synthetic Bank',
+                accountTitle: 'Synthetic Account',
+                accountNumber: '00' + 'A'.repeat(32),
+                updatedAt: '2026-10-03T12:00:00.000Z',
+              },
+            }),
+      });
+    },
+  );
+  await page.goto('/employees');
+  await expect(
+    page.getByRole('heading', { name: 'Synthetic Bank Company' }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Load bank details', exact: true }),
+  ).toHaveCount(0);
+  expect(reads).toBe(0);
+  roles = ['hr_admin', 'payroll_approver'];
+  await page.reload();
+  await page
+    .getByRole('button', { name: 'Load bank details', exact: true })
+    .click();
+  await expect(
+    page.getByText('Synthetic Account', { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Save bank details', exact: true }),
+  ).toHaveCount(0);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  fail = true;
+  await page
+    .getByRole('button', { name: 'Reload bank details', exact: true })
+    .click();
+  await expect(
+    page.getByText(/Bank details could not be loaded/),
+  ).toBeVisible();
+  await expect(
+    page.getByText('Synthetic Account', { exact: true }),
+  ).toHaveCount(0);
+});

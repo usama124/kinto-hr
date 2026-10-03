@@ -234,6 +234,12 @@ export const schemaIsolationInventory: readonly Classification[] = [
   tenantTable('employee_import_rows', imports),
   privateTenantTable('employee_invitations', employeeAccount),
   tenantTable(
+    'employee_bank_details',
+    employeeRecord(
+      'isolates optional bank details behind payroll permission, recent MFA and atomic versions',
+    ),
+  ),
+  tenantTable(
     'employee_private_details',
     employeeRecord(
       'isolates versioned private details behind owner/HR permission and recent MFA',

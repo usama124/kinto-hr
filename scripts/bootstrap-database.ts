@@ -116,6 +116,8 @@ try {
     'DROP POLICY IF EXISTS platform_control ON employee_assignments',
     'CREATE POLICY platform_control ON employee_assignments FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON employee_private_details',
+    'DROP POLICY IF EXISTS platform_control ON employee_bank_details',
+    'CREATE POLICY platform_control ON employee_bank_details FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'CREATE POLICY platform_control ON employee_private_details FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON employee_profile_change_requests',
     'CREATE POLICY platform_control ON employee_profile_change_requests FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
@@ -198,7 +200,7 @@ try {
     'GRANT SELECT, INSERT, UPDATE ON employment_periods, employee_assignments TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
-    'GRANT SELECT, INSERT, UPDATE ON employee_private_details TO kinto_control_owner',
+    'GRANT SELECT, INSERT, UPDATE ON employee_private_details, employee_bank_details TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
     'GRANT SELECT, INSERT, UPDATE ON employee_profile_change_requests TO kinto_control_owner',
@@ -318,6 +320,8 @@ try {
     'public.create_tenant_workforce_report_export(uuid, boolean, uuid, uuid, uuid, varchar, varchar, date, date, date, varchar, uuid, uuid)',
     'public.read_tenant_workforce_report_export(uuid, boolean, uuid, uuid)',
     'public.authorize_tenant_workforce_report_export_download(uuid, boolean, uuid, uuid, uuid)',
+    'public.read_tenant_employee_bank_details(uuid, boolean, uuid, uuid)',
+    'public.update_tenant_employee_bank_details(uuid, boolean, uuid, uuid, uuid, integer, varchar, varchar, varchar, varchar, uuid, uuid)',
     'public.read_tenant_employee_private_details(uuid, boolean, uuid, uuid)',
     'public.read_tenant_employee_compensation(uuid, boolean, uuid, uuid)',
     'public.read_tenant_employee_checklist(uuid, boolean, uuid, uuid)',
@@ -370,6 +374,7 @@ try {
     'public.workforce_report_export_json(public.workforce_report_exports)',
     'public.generate_tenant_workforce_report_export(uuid, uuid)',
     'public.tenant_employee_private_authorized(uuid, boolean, uuid, varchar)',
+    'public.tenant_employee_bank_authorized(uuid, boolean, uuid, boolean)',
     'public.tenant_compensation_authorized(uuid, boolean, uuid, boolean)',
     'public.reject_compensation_version_overlap()',
     'public.tenant_checklist_authorized(uuid, boolean, uuid)',
