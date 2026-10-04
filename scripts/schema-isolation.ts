@@ -165,6 +165,23 @@ export const schemaIsolationInventory: readonly Classification[] = [
   },
   {
     ...privateTenantTable(
+      'connector_credentials',
+      regression(
+        'attendance-devices',
+        'admits only digest-backed credentials with external permits and preserves revocation across stale database rows',
+      ),
+      { kinto_control_owner: ['INSERT', 'SELECT'] },
+    ),
+    columnGrants: [
+      {
+        role: 'kinto_control_owner',
+        privilege: 'UPDATE',
+        columns: ['status', 'version', 'revoked_at'],
+      },
+    ],
+  },
+  {
+    ...privateTenantTable(
       'connector_enrollment_tokens',
       regression(
         'attendance-devices',
@@ -176,7 +193,13 @@ export const schemaIsolationInventory: readonly Classification[] = [
       {
         role: 'kinto_control_owner',
         privilege: 'UPDATE',
-        columns: ['status', 'version', 'revoked_at'],
+        columns: [
+          'status',
+          'version',
+          'revoked_at',
+          'generation_digest',
+          'redeemed_at',
+        ],
       },
     ],
   },

@@ -39,6 +39,7 @@ const handleCommittedEvent: Handler = async (tx, event) => {
   }
   if (
     ![
+      'connector.credential_changed.v1',
       'connector.enrollment_changed.v1',
       'attendance.allocation_changed.v1',
       'device.inventory_changed.v1',

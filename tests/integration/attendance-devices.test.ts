@@ -1,7 +1,19 @@
+import { LocalMachineAuthority } from '../../apps/api/src/attendance/local-machine-authority';
+import { AuthStore } from '../../apps/api/src/auth/store';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
+import {
+  listConnectorCredentials,
+  readConnectorCredentialCandidate,
   issueConnectorEnrollment,
   revokeConnectorEnrollment,
   listConnectorEnrollments,
@@ -90,7 +102,26 @@ describe('tenant attendance device inventory', () => {
   });
 
   afterEach(async () => {
+    for (const { machine, store } of machines.splice(0)) {
+      let cursor = '0';
+      do {
+        const page = await store.redis.scan(
+          cursor,
+          'MATCH',
+          machine.prefix + '*',
+          'COUNT',
+          100,
+        );
+        cursor = page[0];
+        if (page[1].length) await store.redis.unlink(...page[1]);
+      } while (cursor !== '0');
+      store.close();
+      await machine.close();
+    }
     const tenants = [tenantId, otherTenantId];
+    await admin.connectorCredential.deleteMany({
+      where: { tenantId: { in: tenants } },
+    });
     await admin.connectorEnrollmentToken.deleteMany({
       where: { tenantId: { in: tenants } },
     });
@@ -703,6 +734,8 @@ describe('tenant attendance device inventory', () => {
       { column_name: string }[]
     >`SELECT column_name FROM information_schema.column_privileges WHERE table_name='connector_enrollment_tokens' AND grantee='kinto_control_owner' AND privilege_type='UPDATE' ORDER BY column_name`;
     expect(columns.map((row) => row.column_name)).toEqual([
+      'generation_digest',
+      'redeemed_at',
       'revoked_at',
       'status',
       'version',
@@ -1136,4 +1169,563 @@ describe('tenant attendance device inventory', () => {
       }
     }
   });
+  const machines: { machine: LocalMachineAuthority; store: AuthStore }[] = [];
+  const machineSetup = async () => {
+    const redisUrl = new URL(process.env.REDIS_URL!);
+    redisUrl.pathname = '/2';
+    const namespace = randomUUID();
+    const machine = new LocalMachineAuthority(
+      runtimeUrl!,
+      redisUrl.toString(),
+      namespace,
+    );
+    const store = new AuthStore(redisUrl.toString());
+    await machine.connect();
+    await store.connect();
+    machines.push({ machine, store });
+    return { machine, store, redisUrl: redisUrl.toString(), namespace };
+  };
+
+  it('admits only digest-backed credentials with external permits and preserves revocation across stale database rows', async () => {
+    const fixture = await enrollmentSetup(1, 1);
+    const { machine, store } = await machineSetup();
+    const key = randomUUID();
+    const issued = await machine.issue(
+      actor(identities.owner),
+      tenantId,
+      key,
+      fixture.input,
+    );
+    const result = await machine.redeem(issued.token!);
+    expect(await machine.authorize(result.credential)).toEqual(
+      result.connector,
+    );
+    expect(result.connector).toMatchObject({
+      tenantId,
+      deviceId: fixture.first.id,
+      scope: 'heartbeat_only',
+      attendanceIngestionAvailable: false,
+    });
+    const stored = await admin.connectorCredential.findUniqueOrThrow({
+      where: { id: result.connector.id },
+    });
+    expect(stored.credentialDigest).toBe(
+      createHash('sha256').update(result.credential).digest('hex'),
+    );
+    expect(JSON.stringify(stored)).not.toContain(result.credential);
+    const replay = await machine.issue(
+      actor(identities.owner),
+      tenantId,
+      key,
+      fixture.input,
+    );
+    expect(replay).toMatchObject({
+      token: null,
+      replayed: true,
+      enrollment: { status: 'redeemed', connectorId: result.connector.id },
+    });
+    await expect(machine.redeem(issued.token!)).rejects.toThrow('FORBIDDEN');
+    await expect(machine.authorize('kc1_' + 'x'.repeat(43))).rejects.toThrow(
+      'FORBIDDEN',
+    );
+    await expect(
+      machine.revokeCredential(actor(identities.hr), tenantId, stored.id),
+    ).rejects.toThrow('FORBIDDEN');
+    await expect(
+      machine.revokeCredential(
+        actor(identities.owner, false),
+        tenantId,
+        stored.id,
+      ),
+    ).rejects.toThrow('FORBIDDEN');
+    await expect(
+      machine.revokeCredential(
+        actor(identities.otherOwner),
+        otherTenantId,
+        stored.id,
+      ),
+    ).rejects.toThrow('NOT_FOUND');
+    expect(await machine.authorize(result.credential)).toEqual(
+      result.connector,
+    );
+    expect(
+      await machine.revokeCredential(
+        actor(identities.owner),
+        tenantId,
+        stored.id,
+      ),
+    ).toMatchObject({ status: 'revoked', version: 2 });
+    await machine.revokeCredential(
+      actor(identities.owner),
+      tenantId,
+      stored.id,
+    );
+    expect(
+      await admin.auditEvent.count({
+        where: { tenantId, action: 'connector.revoked' },
+      }),
+    ).toBe(1);
+    // A delayed post-commit grant cannot replace the external revocation tombstone.
+    expect(
+      await store.redis.set(
+        machine.prefix + 'permit:' + stored.id,
+        stored.generationDigest + ':' + stored.credentialDigest,
+        'EX',
+        900,
+        'NX',
+      ),
+    ).toBeNull();
+    // Simulate an old PostgreSQL backup: the SQL candidate exists, but it is NOT admission.
+    await admin.connectorCredential.update({
+      where: { id: stored.id },
+      data: { status: 'active', version: 1, revokedAt: null },
+    });
+    expect(
+      await readConnectorCredentialCandidate(
+        runtime,
+        result.credential,
+        stored.generationDigest,
+      ),
+    ).toEqual(result.connector);
+    await expect(machine.authorize(result.credential)).rejects.toThrow(
+      'FORBIDDEN',
+    );
+    expect(
+      await listConnectorCredentials(runtime, actor(identities.hr), tenantId, {
+        limit: 25,
+      }),
+    ).toEqual({ items: [result.connector], nextCursor: null });
+  });
+
+  it('never revives a consumed enrollment from an older database snapshot or re-discloses a lost response', async () => {
+    const fixture = await enrollmentSetup();
+    const { machine } = await machineSetup();
+    const key = randomUUID();
+    const issued = await machine.issue(
+      actor(identities.owner),
+      tenantId,
+      key,
+      fixture.input,
+    );
+    await machine.redeem(issued.token!);
+    await admin.connectorCredential.deleteMany({ where: { tenantId } });
+    await admin.connectorEnrollmentToken.update({
+      where: { id: issued.enrollment.id },
+      data: { status: 'issued', version: 1, redeemedAt: null },
+    });
+    await expect(machine.redeem(issued.token!)).rejects.toThrow('FORBIDDEN');
+    expect(
+      (
+        await machine.issue(
+          actor(identities.owner),
+          tenantId,
+          key,
+          fixture.input,
+        )
+      ).token,
+    ).toBeNull();
+    expect(await admin.connectorCredential.count({ where: { tenantId } })).toBe(
+      0,
+    );
+  });
+
+  it('serializes competing redemption and retains device and connector capacity until revocation', async () => {
+    const fixture = await enrollmentSetup(1, 1);
+    const { machine, redisUrl, namespace } = await machineSetup();
+    const issued = await machine.issue(
+      actor(identities.owner),
+      tenantId,
+      randomUUID(),
+      fixture.input,
+    );
+    const peer = new LocalMachineAuthority(runtimeUrl!, redisUrl, namespace);
+    await peer.connect();
+    let results;
+    try {
+      results = await Promise.allSettled([
+        machine.redeem(issued.token!),
+        peer.redeem(issued.token!),
+      ]);
+    } finally {
+      await peer.close();
+    }
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((r) => r.status === 'rejected')).toHaveLength(1);
+    const winner = results.find((r) => r.status === 'fulfilled');
+    if (!winner || winner.status !== 'fulfilled')
+      throw new Error('Missing redemption winner');
+    await expect(
+      machine.issue(
+        actor(identities.owner),
+        tenantId,
+        randomUUID(),
+        fixture.input,
+      ),
+    ).rejects.toThrow('CONFLICT');
+    await expect(
+      machine.issue(actor(identities.owner), tenantId, randomUUID(), {
+        ...fixture.input,
+        deviceId: fixture.second.id,
+      }),
+    ).rejects.toThrow('CAPACITY_REACHED');
+    await expect(
+      changeAttendanceAllocation(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        randomUUID(),
+        {
+          expectedVersion: 1,
+          enabled: false,
+          deviceLimit: 0,
+          connectorLimit: 0,
+          reason: 'disable_attendance',
+        },
+      ),
+    ).rejects.toThrow('CONFLICT');
+    await expect(
+      machine.revokeEnrollment(
+        actor(identities.owner),
+        tenantId,
+        issued.enrollment.id,
+      ),
+    ).rejects.toThrow('INVALID_STATE');
+    await machine.revokeCredential(
+      actor(identities.owner),
+      tenantId,
+      winner.value.connector.id,
+    );
+    expect(
+      (
+        await machine.issue(
+          actor(identities.owner),
+          tenantId,
+          randomUUID(),
+          fixture.input,
+        )
+      ).token,
+    ).not.toBeNull();
+  });
+
+  it('fails closed after admission state loss and never recreates permits from database rows', async () => {
+    const fixture = await enrollmentSetup();
+    const { machine, store } = await machineSetup();
+    const issued = await machine.issue(
+      actor(identities.owner),
+      tenantId,
+      randomUUID(),
+      fixture.input,
+    );
+    const redeemed = await machine.redeem(issued.token!);
+    const pending = await machine.issue(
+      actor(identities.owner),
+      tenantId,
+      randomUUID(),
+      { ...fixture.input, deviceId: fixture.second.id },
+    );
+    await store.redis.del(machine.prefix + 'permit:' + redeemed.connector.id);
+    await expect(machine.authorize(redeemed.credential)).rejects.toThrow(
+      'FORBIDDEN',
+    );
+    await store.redis.del(machine.prefix + 'generation');
+    await expect(machine.authorize(redeemed.credential)).rejects.toThrow(
+      'FORBIDDEN',
+    );
+    await expect(machine.redeem(pending.token!)).rejects.toThrow('FORBIDDEN');
+    expect(await admin.connectorCredential.count({ where: { tenantId } })).toBe(
+      1,
+    );
+    // Redis outage is an error, not an SQL-only authorization fallback.
+    await machine.close();
+    await expect(machine.authorize(redeemed.credential)).rejects.toThrow();
+  });
+
+  it('seals bound revocation outside backups and denies the legacy SQL-only revoke path', async () => {
+    const fixture = await enrollmentSetup();
+    const { machine } = await machineSetup();
+    const issued = await machine.issue(
+      actor(identities.owner),
+      tenantId,
+      randomUUID(),
+      fixture.input,
+    );
+    await expect(
+      revokeConnectorEnrollment(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        issued.enrollment.id,
+        { expectedVersion: 1 },
+      ),
+    ).rejects.toThrow('INVALID_STATE');
+    await machine.revokeEnrollment(
+      actor(identities.owner),
+      tenantId,
+      issued.enrollment.id,
+    );
+    await admin.connectorEnrollmentToken.update({
+      where: { id: issued.enrollment.id },
+      data: { status: 'issued', version: 1, revokedAt: null },
+    });
+    await expect(machine.redeem(issued.token!)).rejects.toThrow('FORBIDDEN');
+    const legacy = await issueConnectorEnrollment(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      randomUUID(),
+      { ...fixture.input, deviceId: fixture.second.id },
+    );
+    await expect(machine.redeem(legacy.token!)).rejects.toThrow('FORBIDDEN');
+  });
+
+  it.each([
+    'issuer',
+    'company',
+    'subscription',
+    'allocation',
+    'device',
+    'branch',
+    'expiry',
+  ] as const)(
+    'rechecks %s authority before redemption and burns failed attempts',
+    async (change) => {
+      const fixture = await enrollmentSetup();
+      const { machine } = await machineSetup();
+      const issued = await machine.issue(
+        actor(identities.owner),
+        tenantId,
+        randomUUID(),
+        fixture.input,
+      );
+      if (change === 'issuer')
+        await admin.membership.updateMany({
+          where: { tenantId, identityId: identities.owner },
+          data: { status: 'revoked' },
+        });
+      if (change === 'company')
+        await admin.tenant.update({
+          where: { id: tenantId },
+          data: { status: 'suspended' },
+        });
+      if (change === 'subscription')
+        await admin.tenantSubscription.updateMany({
+          where: { tenantId },
+          data: { status: 'ended', endedAt: new Date() },
+        });
+      if (change === 'allocation')
+        await changeAttendanceAllocation(
+          runtime,
+          actor(identities.owner),
+          tenantId,
+          randomUUID(),
+          {
+            expectedVersion: 1,
+            enabled: true,
+            deviceLimit: 3,
+            connectorLimit: 2,
+            reason: 'allocation_change',
+          },
+        );
+      if (change === 'device')
+        await admin.attendanceDevice.update({
+          where: { id: fixture.first.id },
+          data: { version: 2 },
+        });
+      if (change === 'branch')
+        await admin.branch.update({
+          where: { id: fixture.branch.id },
+          data: { status: 'inactive' },
+        });
+      if (change === 'expiry') {
+        const createdAt = new Date(Date.now() - 1200000);
+        await admin.connectorEnrollmentToken.update({
+          where: { id: issued.enrollment.id },
+          data: {
+            createdAt,
+            expiresAt: new Date(createdAt.getTime() + 900000),
+          },
+        });
+      }
+      await expect(machine.redeem(issued.token!)).rejects.toThrow('FORBIDDEN');
+      if (change === 'issuer')
+        await admin.membership.updateMany({
+          where: { tenantId, identityId: identities.owner },
+          data: { status: 'active' },
+        });
+      if (change === 'company')
+        await admin.tenant.update({
+          where: { id: tenantId },
+          data: { status: 'active' },
+        });
+      await expect(machine.redeem(issued.token!)).rejects.toThrow('FORBIDDEN');
+      expect(
+        await admin.connectorCredential.count({ where: { tenantId } }),
+      ).toBe(0);
+    },
+  );
+
+  it('rolls back failed redemption audit writes and isolates all credential storage from runtime roles', async () => {
+    const fixture = await enrollmentSetup();
+    const { machine } = await machineSetup();
+    const issued = await machine.issue(
+      actor(identities.owner),
+      tenantId,
+      randomUUID(),
+      fixture.input,
+    );
+    const stored = await admin.connectorEnrollmentToken.findUniqueOrThrow({
+      where: { id: issued.enrollment.id },
+    });
+    const duplicateAudit = await admin.auditEvent.findFirstOrThrow({
+      where: { tenantId },
+    });
+    const before = await admin.outboxEvent.count({ where: { tenantId } });
+    await expect(
+      runtime.$queryRaw`SELECT * FROM redeem_connector_enrollment(${stored.tokenDigest}::varchar,${stored.generationDigest}::varchar,${randomUUID()}::uuid,${'b'.repeat(64)}::varchar,${duplicateAudit.id}::uuid,${randomUUID()}::uuid,${randomUUID()}::uuid)`,
+    ).rejects.toThrow(/23505/);
+    expect(await admin.connectorCredential.count({ where: { tenantId } })).toBe(
+      0,
+    );
+    expect(
+      (
+        await admin.connectorEnrollmentToken.findUniqueOrThrow({
+          where: { id: stored.id },
+        })
+      ).status,
+    ).toBe('issued');
+    expect(await admin.outboxEvent.count({ where: { tenantId } })).toBe(before);
+    const redeemed = await machine.redeem(issued.token!);
+    for (const url of [
+      runtimeUrl,
+      process.env.WORKER_DATABASE_URL,
+      process.env.DISPATCHER_DATABASE_URL,
+    ]) {
+      if (!url || !new URL(url).pathname.startsWith('/kinto_test'))
+        throw new Error('Synthetic database required');
+      const restricted = createDatabase(url);
+      try {
+        await expect(restricted.connectorCredential.findMany()).rejects.toThrow(
+          /permission denied/,
+        );
+        await expect(
+          restricted.$queryRaw`SELECT connector_projection(${redeemed.connector.id}::uuid)`,
+        ).rejects.toThrow(/permission denied/);
+      } finally {
+        await restricted.$disconnect();
+      }
+    }
+    await expect(
+      listConnectorCredentials(runtime, actor(identities.employee), tenantId, {
+        limit: 25,
+      }),
+    ).rejects.toThrow('FORBIDDEN');
+    expect(
+      (
+        await listConnectorCredentials(
+          runtime,
+          actor(identities.otherOwner),
+          otherTenantId,
+          { limit: 25 },
+        )
+      ).items,
+    ).toEqual([]);
+    const publicData = JSON.stringify(
+      await listConnectorCredentials(runtime, actor(identities.hr), tenantId, {
+        limit: 25,
+      }),
+    );
+    expect(publicData).not.toContain(redeemed.credential);
+    expect(publicData).not.toContain(stored.generationDigest);
+  });
+  it('does not expose a credential when its post-commit permit loses a revocation race', async () => {
+    const fixture = await enrollmentSetup();
+    const { machine, store } = await machineSetup();
+    const issued = await machine.issue(
+      actor(identities.owner),
+      tenantId,
+      randomUUID(),
+      fixture.input,
+    );
+    const redis = machine['store'].redis;
+    const original = redis.set.bind(redis);
+    const intercepted = vi
+      .spyOn(redis, 'set')
+      .mockImplementation(async (...args) => {
+        if (String(args[0]).startsWith(machine.prefix + 'permit:'))
+          await store.redis.set(String(args[0]), 'revoked', 'EX', 2592000);
+        return Reflect.apply(original, redis, args);
+      });
+    try {
+      await expect(machine.redeem(issued.token!)).rejects.toThrow('FORBIDDEN');
+    } finally {
+      intercepted.mockRestore();
+    }
+    const row = await admin.connectorCredential.findFirstOrThrow({
+      where: { tenantId },
+    });
+    expect(row.status).toBe('active');
+    expect(await store.redis.get(machine.prefix + 'permit:' + row.id)).toBe(
+      'revoked',
+    );
+    await expect(machine.redeem(issued.token!)).rejects.toThrow('FORBIDDEN');
+    await machine.revokeCredential(actor(identities.owner), tenantId, row.id);
+    expect(
+      (
+        await machine.issue(
+          actor(identities.owner),
+          tenantId,
+          randomUUID(),
+          fixture.input,
+        )
+      ).token,
+    ).not.toBeNull();
+  });
+
+  it.each(['company', 'subscription', 'device', 'branch', 'expiry'] as const)(
+    'rechecks %s on each credential authorization',
+    async (change) => {
+      const fixture = await enrollmentSetup();
+      const { machine } = await machineSetup();
+      const issued = await machine.issue(
+        actor(identities.owner),
+        tenantId,
+        randomUUID(),
+        fixture.input,
+      );
+      const result = await machine.redeem(issued.token!);
+      if (change === 'company')
+        await admin.tenant.update({
+          where: { id: tenantId },
+          data: { status: 'suspended' },
+        });
+      if (change === 'subscription')
+        await admin.tenantSubscription.updateMany({
+          where: { tenantId },
+          data: { status: 'ended', endedAt: new Date() },
+        });
+      if (change === 'device')
+        await admin.attendanceDevice.update({
+          where: { id: fixture.first.id },
+          data: { version: 2 },
+        });
+      if (change === 'branch')
+        await admin.branch.update({
+          where: { id: fixture.branch.id },
+          data: { status: 'inactive' },
+        });
+      if (change === 'expiry') {
+        const createdAt = new Date(Date.now() - 2678400000);
+        await admin.connectorCredential.update({
+          where: { id: result.connector.id },
+          data: {
+            createdAt,
+            expiresAt: new Date(createdAt.getTime() + 2592000000),
+          },
+        });
+      }
+      await expect(machine.authorize(result.credential)).rejects.toThrow(
+        'FORBIDDEN',
+      );
+    },
+  );
 });
