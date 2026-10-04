@@ -15,6 +15,7 @@ export default defineConfig({
         'apps/api/src/config.ts',
         'apps/api/src/auth/config.ts',
         'apps/api/src/attendance/preflight.ts',
+        'apps/api/src/attendance/machine-config.ts',
         'apps/worker/src/config.ts',
       ],
       exclude: ['**/*.test.ts'],

@@ -1,3 +1,11 @@
+import 'reflect-metadata';
+import { Test } from '@nestjs/testing';
+import request from 'supertest';
+import { MachineController } from '../../apps/api/src/attendance/machine-controller';
+import { MachineService } from '../../apps/api/src/attendance/machine-service';
+import { LocalConnectorOwnerController } from '../../apps/api/src/attendance/local-owner-controller';
+import { AuthService } from '../../apps/api/src/auth/service';
+import { configureHttp } from '../../apps/api/src/http';
 import { LocalMachineAuthority } from '../../apps/api/src/attendance/local-machine-authority';
 import { AuthStore } from '../../apps/api/src/auth/store';
 import { createHash, randomUUID } from 'node:crypto';
@@ -1728,4 +1736,100 @@ describe('tenant attendance device inventory', () => {
       );
     },
   );
+  it('runs the gated local HTTP lifecycle with real admission state and SQL permissions', async () => {
+    const fixture = await enrollmentSetup();
+    const { machine, redisUrl, namespace } = await machineSetup();
+    vi.stubEnv('CONNECTOR_HTTP_MODE', 'local_test');
+    vi.stubEnv('CONNECTOR_REDIS_URL', redisUrl);
+    vi.stubEnv('CONNECTOR_NAMESPACE', namespace);
+    vi.stubEnv('API_HOST', '127.0.0.1');
+    vi.stubEnv('NODE_ENV', 'test');
+    const service = new MachineService();
+    const csrf = 'c'.repeat(43),
+      origin = 'https://local.synthetic.example';
+    let identityId = identities.owner;
+    const module = await Test.createTestingModule({
+      controllers: [MachineController, LocalConnectorOwnerController],
+      providers: [
+        { provide: MachineService, useValue: service },
+        {
+          provide: AuthService,
+          useValue: {
+            limit: async () => {},
+            origin: () => origin,
+            session: async () => ({
+              identityId,
+              selectedTenantId: tenantId,
+              csrf,
+              authTime: Math.floor(Date.now() / 1000),
+              principal: { mfaVerified: true },
+            }),
+          },
+        },
+      ],
+    }).compile();
+    const app = module.createNestApplication();
+    configureHttp(app);
+    try {
+      await app.init();
+      await service.ready();
+      const owner = `/api/v1/tenants/${tenantId}/local-connectors`,
+        machinePath = '/api/v1/local-machine/connectors';
+      const issue = await request(app.getHttpServer())
+        .post(owner + '/enrollment-tokens')
+        .set('Cookie', '__Host-kinto-session=' + 's'.repeat(43))
+        .set('Origin', origin)
+        .set('X-CSRF-Token', csrf)
+        .set('Idempotency-Key', randomUUID())
+        .send(fixture.input)
+        .expect(201);
+      const redeemed = await request(app.getHttpServer())
+        .post(machinePath + '/redemption')
+        .send({ token: issue.body.token })
+        .expect(201);
+      const credential = redeemed.body.credential as string;
+      await request(app.getHttpServer())
+        .post(machinePath + '/redemption')
+        .send({ token: issue.body.token })
+        .expect(403);
+      const heartbeat = () =>
+        request(app.getHttpServer())
+          .post(machinePath + '/heartbeat')
+          .set('Authorization', 'Bearer ' + credential)
+          .send({});
+      expect((await heartbeat().expect(200)).body.connector.id).toBe(
+        redeemed.body.connector.id,
+      );
+      expect(await machine.authorize(credential)).toMatchObject({ tenantId });
+      identityId = identities.hr;
+      const metadata = await request(app.getHttpServer())
+        .get(owner + '/credentials')
+        .set('Cookie', '__Host-kinto-session=' + 's'.repeat(43))
+        .expect(200);
+      expect(metadata.body.items).toHaveLength(1);
+      expect(JSON.stringify(metadata.body)).not.toContain(credential);
+      const revoke = () =>
+        request(app.getHttpServer())
+          .post(
+            owner +
+              '/credentials/' +
+              redeemed.body.connector.id +
+              '/revocation',
+          )
+          .set('Cookie', '__Host-kinto-session=' + 's'.repeat(43))
+          .set('Origin', origin)
+          .set('X-CSRF-Token', csrf)
+          .send({ expectedVersion: 1 });
+      await revoke().expect(403);
+      await heartbeat().expect(200);
+      identityId = identities.owner;
+      await revoke().expect(201);
+      await heartbeat().expect(403);
+      await service.onModuleDestroy();
+      await heartbeat().expect(503);
+    } finally {
+      await app.close();
+      vi.unstubAllEnvs();
+    }
+  });
 });

@@ -1,6 +1,8 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import {
+  listConnectorEnrollments,
+  listConnectorCredentials,
   createDatabase,
   issueBoundConnectorEnrollment,
   redeemConnectorEnrollment,
@@ -13,13 +15,14 @@ import {
 import {
   connectorCredentialSchema,
   type EnrollmentIssue,
+  type EnrollmentListQuery,
 } from '@kinto/contracts';
 import { DomainError } from '@kinto/domain';
 import { AuthStore } from '../auth/store';
 const digest = (value: string) =>
   createHash('sha256').update(value).digest('hex');
 
-// Internal local-test boundary, deliberately NOT registered in AppModule or mounted.
+// Synthetic authority only; the optional HTTP wrapper rejects production configuration.
 // Independent security state: never evict individual seals or restore it with SQL backups.
 export class LocalMachineAuthority {
   private readonly db;
@@ -50,6 +53,27 @@ export class LocalMachineAuthority {
   async close() {
     this.store.close();
     await this.db.$disconnect();
+  }
+  async ready() {
+    await this.store.ready();
+    await this.db.$queryRaw`SELECT 1`;
+  }
+  allow(ip: string) {
+    return this.store.allow(ip);
+  }
+  enrollments(
+    actor: OrganizationActor,
+    tenant: string,
+    input: EnrollmentListQuery,
+  ) {
+    return listConnectorEnrollments(this.db, actor, tenant, input);
+  }
+  credentials(
+    actor: OrganizationActor,
+    tenant: string,
+    input: EnrollmentListQuery,
+  ) {
+    return listConnectorCredentials(this.db, actor, tenant, input);
   }
   private async generation() {
     await this.store.redis.set(

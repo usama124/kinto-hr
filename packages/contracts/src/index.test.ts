@@ -1,4 +1,7 @@
 import {
+  connectorRedemptionRequestSchema,
+  connectorHeartbeatRequestSchema,
+  connectorHeartbeatResultSchema,
   connectorCredentialSchema,
   connectorRecordSchema,
   connectorRedemptionResultSchema,
@@ -1606,4 +1609,24 @@ it('validates redeemed enrollment and bounded secret-free connector projections'
     expect(
       enrollmentItemSchema.safeParse({ ...redeemed, ...change }).success,
     ).toBe(false);
+});
+
+it('rejects caller-selected machine scope and heartbeat data', () => {
+  expect(
+    connectorRedemptionRequestSchema.parse({ token: 'ke1_' + 'a'.repeat(43) })
+      .token,
+  ).toMatch(/^ke1_/);
+  expect(
+    connectorRedemptionRequestSchema.safeParse({
+      token: 'ke1_' + 'a'.repeat(43),
+      tenantId: 'injected',
+    }).success,
+  ).toBe(false);
+  expect(connectorHeartbeatRequestSchema.parse({})).toEqual({});
+  expect(
+    connectorHeartbeatRequestSchema.safeParse({ deviceId: 'injected' }).success,
+  ).toBe(false);
+  expect(
+    connectorHeartbeatResultSchema.safeParse({ credential: 'secret' }).success,
+  ).toBe(false);
 });

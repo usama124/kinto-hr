@@ -4475,3 +4475,24 @@ test('attendance allocation malformed receipt reconciles exactly and confirmed r
   ).toBeVisible();
   expect(keys).toHaveLength(2);
 });
+
+test('default API keeps synthetic connector admission and owner workflows disabled', async ({
+  request,
+}) => {
+  const api = 'http://127.0.0.1:4000/api/v1';
+  const redemption = await request.post(
+    api + '/local-machine/connectors/redemption',
+    { data: { token: 'ke1_' + 'a'.repeat(43) } },
+  );
+  expect(redemption.status()).toBe(404);
+  const heartbeat = await request.post(
+    api + '/local-machine/connectors/heartbeat',
+    { headers: { authorization: 'Bearer kc1_' + 'b'.repeat(43) }, data: {} },
+  );
+  expect(heartbeat.status()).toBe(404);
+  const owner = await request.get(
+    api +
+      '/tenants/00000000-0000-4000-8000-000000000001/local-connectors/credentials',
+  );
+  expect(owner.status()).toBe(404);
+});
