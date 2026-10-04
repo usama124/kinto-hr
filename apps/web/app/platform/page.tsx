@@ -159,6 +159,13 @@ export default function CompanyDirectory() {
                     Manage entitlement controls
                   </Link>
                 )}
+                {company.status === 'active' && company.baseSubscription && (
+                  <p>
+                    <Link href={`/platform/companies/${company.id}/attendance`}>
+                      Manage attendance allocation
+                    </Link>
+                  </p>
+                )}
                 <p>
                   Owner setup:{' '}
                   {company.ownerSetupStatus?.replaceAll('_', ' ') ??

@@ -1392,3 +1392,25 @@ footer span:last-child {
 .device-workspace small {
   overflow-wrap: anywhere;
 }
+
+.allocation-controls {
+  margin-top: 24px;
+}
+.settings-form .allocation-fields {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  margin: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.settings-form .allocation-toggle {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.settings-form .allocation-toggle input {
+  width: auto;
+  margin: 0;
+}

@@ -111,3 +111,7 @@ The [review inventory](foundation-readiness.json) and [readiness diagnostic](../
 ### Explicit attendance allocation controls — 4 October 2026
 
 [Immutable operator allocations](../evidence/phase-02/attendance-entitlement-controls.md) add separate attendance device/connector limits with fresh authority, optimistic versioning, exact-request replay and transactional audit/outbox. All plans default disabled/zero; existing employee entitlements and complimentary billing remain unchanged. Allocating capacity does not activate devices or grant machine access. Next: allocation management/review workspace, then single-use enrollment with atomic usage enforcement. P02-01 remains partial; hardware and production gates remain pending.
+
+### Attendance allocation workspace — 4 October 2026
+
+[Operator management and company read-only review](../evidence/phase-02/attendance-allocation-workspace.md) now expose explicit versioned attendance capacity. Review/confirmation and exact uncertain-request retry preserve the original payload/key; fresh session/CSRF and strict tenant snapshots protect refresh/retry boundaries. The web platform API forwarding gap is repaired without changing backend authority. Machine access remains unavailable. Next: single-use connector enrollment and atomic capacity reservations/binding before credential activation. P02-01 and production/hardware acceptance remain partial.

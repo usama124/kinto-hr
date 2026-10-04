@@ -4124,3 +4124,354 @@ test('device workspace permits retirement on inactive branches but blocks draft 
   );
   expect(writes).toBe(1);
 });
+
+const allocationSnapshot = (version = 0, enabled = false) => ({
+  tenantId: deviceTenant,
+  version,
+  enabled,
+  deviceLimit: enabled ? 3 : 0,
+  connectorLimit: enabled ? 2 : 0,
+  configuredAt: version ? '2026-10-04T00:00:00Z' : null,
+  machineAccessAvailable: false,
+});
+const allocationPath = `/api/v1/platform/tenants/${deviceTenant}/attendance-entitlements`;
+const allocationPage = `/platform/companies/${deviceTenant}/attendance`;
+async function reviewAllocation(page: Page) {
+  await page.getByLabel('Attendance enabled').check();
+  await page.getByLabel('Device limit', { exact: true }).fill('3');
+  await page.getByLabel('Connector limit', { exact: true }).fill('2');
+  await page.getByRole('button', { name: 'Review allocation change' }).click();
+}
+
+test('attendance allocation operator reviews, applies and disables without machine access', async ({
+  page,
+}) => {
+  await deviceSession(page);
+  let snapshot = allocationSnapshot();
+  const writes: Record<string, unknown>[] = [];
+  await page.route(`**${allocationPath}`, (route) => {
+    const req = route.request();
+    if (req.method() === 'GET') return route.fulfill({ json: snapshot });
+    const input = req.postDataJSON();
+    writes.push(input);
+    expect(req.headers()['x-csrf-token']).toBe(deviceCsrf);
+    expect(req.headers()['idempotency-key']).toMatch(/^[a-f0-9-]{36}$/);
+    snapshot = allocationSnapshot(snapshot.version + 1, input.enabled);
+    return route.fulfill({
+      json: { id: deviceBranch, version: snapshot.version, replayed: false },
+    });
+  });
+  await page.goto(allocationPage);
+  await expect(page.getByText('Configured: Not configured')).toBeVisible();
+  await reviewAllocation(page);
+  expect(writes).toHaveLength(0);
+  await page.getByRole('button', { name: 'Confirm allocation change' }).click();
+  await expect(
+    page.getByText('Allocation version: 1', { exact: true }),
+  ).toBeVisible();
+  await page.getByLabel('Attendance enabled').uncheck();
+  await page.getByRole('button', { name: 'Review allocation change' }).click();
+  await page.getByRole('button', { name: 'Confirm allocation change' }).click();
+  await expect(
+    page.getByText('Allocation version: 2', { exact: true }),
+  ).toBeVisible();
+  expect(writes).toEqual([
+    {
+      expectedVersion: 0,
+      enabled: true,
+      deviceLimit: 3,
+      connectorLimit: 2,
+      reason: 'initial_setup',
+    },
+    {
+      expectedVersion: 1,
+      enabled: false,
+      deviceLimit: 0,
+      connectorLimit: 0,
+      reason: 'disable_attendance',
+    },
+  ]);
+  await expect(page.getByText(/Machine access is unavailable/)).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+});
+
+test('attendance allocation uncertain save retains exact retry across refresh and later disable', async ({
+  page,
+}) => {
+  await deviceSession(page);
+  let snapshot = allocationSnapshot();
+  const requests: { body: string | null; key: string }[] = [];
+  let token = deviceCsrf;
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({ json: { csrfToken: token } }),
+  );
+  await page.route(`**${allocationPath}`, (route) => {
+    const req = route.request();
+    if (req.method() === 'GET') return route.fulfill({ json: snapshot });
+    requests.push({
+      body: req.postData(),
+      key: req.headers()['idempotency-key'],
+    });
+    if (requests.length === 1) {
+      snapshot = allocationSnapshot(2, false); // original save committed, then another operator disabled
+      return route.abort();
+    }
+    expect(req.headers()['x-csrf-token']).toBe('fresh-csrf');
+    return route.fulfill({
+      json: { id: deviceBranch, version: 1, replayed: true },
+    });
+  });
+  await page.goto(allocationPage);
+  await reviewAllocation(page);
+  await page.getByRole('button', { name: 'Confirm allocation change' }).click();
+  await expect(
+    page.getByRole('button', { name: 'Retry exact allocation request' }),
+  ).toBeVisible();
+  await page
+    .getByRole('button', { name: 'Refresh attendance allocation' })
+    .click();
+  await expect(
+    page.getByText('Allocation version: 2', { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Review allocation change' }),
+  ).toBeDisabled();
+  token = 'fresh-csrf';
+  await page
+    .getByRole('button', { name: 'Retry exact allocation request' })
+    .click();
+  await expect(page.getByText(/Allocation receipt confirmed/)).toBeVisible();
+  expect(requests).toHaveLength(2);
+  expect(requests[0]).toEqual(requests[1]);
+  await expect(
+    page.getByText('Attendance allocation: Disabled', { exact: true }),
+  ).toBeVisible();
+});
+
+test('attendance allocation conflicts require refreshed version and changed reviews are invalidated', async ({
+  page,
+}) => {
+  await deviceSession(page);
+  let snapshot = allocationSnapshot();
+  let writes = 0;
+  await page.route(`**${allocationPath}`, (route) => {
+    if (route.request().method() === 'GET')
+      return route.fulfill({ json: snapshot });
+    writes++;
+    snapshot = allocationSnapshot(1, true);
+    return route.fulfill({ status: 409, json: {} });
+  });
+  await page.goto(allocationPage);
+  await reviewAllocation(page);
+  await page.getByLabel('Device limit', { exact: true }).fill('4');
+  await expect(
+    page.getByRole('button', { name: 'Confirm allocation change' }),
+  ).toHaveCount(0);
+  await page.getByRole('button', { name: 'Review allocation change' }).click();
+  await page.getByRole('button', { name: 'Confirm allocation change' }).click();
+  await expect(page.getByText(/Change refused or stale/)).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Review allocation change' }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole('button', { name: 'Retry exact allocation request' }),
+  ).toHaveCount(0);
+  await page
+    .getByRole('button', { name: 'Refresh attendance allocation' })
+    .click();
+  await expect(
+    page.getByText('Allocation version: 1', { exact: true }),
+  ).toBeVisible();
+  expect(writes).toBe(1);
+});
+
+test('attendance allocation revoked operator cannot retry and loses retained data', async ({
+  page,
+}) => {
+  await deviceSession(page);
+  let writes = 0;
+  let sessionDenied = false;
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({
+      status: sessionDenied ? 401 : 200,
+      json: { csrfToken: deviceCsrf },
+    }),
+  );
+  await page.route(`**${allocationPath}`, (route) => {
+    if (route.request().method() === 'GET')
+      return route.fulfill({ json: allocationSnapshot() });
+    writes++;
+    return route.abort();
+  });
+  await page.goto(allocationPage);
+  await reviewAllocation(page);
+  await page.getByRole('button', { name: 'Confirm allocation change' }).click();
+  await expect(
+    page.getByRole('button', { name: 'Retry exact allocation request' }),
+  ).toBeVisible();
+  sessionDenied = true;
+  await page
+    .getByRole('button', { name: 'Retry exact allocation request' })
+    .click();
+  await expect(
+    page.getByText('Sign in to review attendance allocation.'),
+  ).toBeVisible();
+  await expect(page.getByText(/Unconfirmed request:/)).toHaveCount(0);
+  await expect(page.getByText(`Company: ${deviceTenant}`)).toHaveCount(0);
+  expect(writes).toBe(1);
+});
+
+test('attendance allocation company view is read-only, selection-aware and fails closed', async ({
+  page,
+}) => {
+  await deviceSession(page, ['hr_admin']);
+  let invalid = false;
+  await page.route(
+    `**/api/v1/tenants/${deviceTenant}/attendance-entitlements`,
+    (route) => {
+      expect(route.request().method()).toBe('GET');
+      return route.fulfill({
+        json: {
+          ...allocationSnapshot(1, true),
+          ...(invalid ? { machineAccessAvailable: true } : {}),
+        },
+      });
+    },
+  );
+  await page.goto('/attendance-capacity');
+  await expect(
+    page.getByText('Device limit: 3 · Connector limit: 2'),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Review allocation change' }),
+  ).toHaveCount(0);
+  invalid = true;
+  await page
+    .getByRole('button', { name: 'Refresh attendance allocation' })
+    .click();
+  await expect(
+    page.getByText('Attendance allocation is unavailable.'),
+  ).toBeVisible();
+  await expect(
+    page.getByText('Device limit: 3 · Connector limit: 2'),
+  ).toHaveCount(0);
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({ json: { csrfToken: deviceCsrf, selectedTenantId: null } }),
+  );
+  await page
+    .getByRole('button', { name: 'Refresh attendance allocation' })
+    .click();
+  await expect(
+    page.getByText('Choose a company workspace first.'),
+  ).toBeVisible();
+});
+
+test('attendance allocation rejects employee access and wrong-company operator responses', async ({
+  page,
+}) => {
+  await deviceSession(page, ['employee']);
+  let reads = 0;
+  await page.route(
+    `**/api/v1/tenants/${deviceTenant}/attendance-entitlements`,
+    (route) => {
+      reads++;
+      return route.fulfill({ json: allocationSnapshot() });
+    },
+  );
+  await page.goto('/attendance-capacity');
+  await expect(
+    page.getByText(/Recent verification and authorized access/),
+  ).toBeVisible();
+  expect(reads).toBe(0);
+  await page.route(`**${allocationPath}`, (route) =>
+    route.fulfill({
+      json: { ...allocationSnapshot(1, true), tenantId: deviceBranch },
+    }),
+  );
+  await page.goto(allocationPage);
+  await expect(
+    page.getByText('Attendance allocation is unavailable.'),
+  ).toBeVisible();
+  await expect(
+    page.getByText('Device limit: 3 · Connector limit: 2'),
+  ).toHaveCount(0);
+});
+
+test('attendance allocation platform proxy reaches protected API without bypassing authentication', async ({
+  page,
+}) => {
+  const response = await page.request.get(allocationPath);
+  const direct = await page.request.get(
+    `http://127.0.0.1:4000${allocationPath}`,
+  );
+  // Disabled authentication intentionally hides protected routes with 404.
+  expect([401, 404]).toContain(direct.status());
+  expect(response.status()).toBe(direct.status());
+  const proxiedBody = await response.json();
+  const directBody = await direct.json();
+  expect(proxiedBody.requestId).toBe(response.headers()['x-request-id']);
+  expect(proxiedBody.requestId).toMatch(/^[a-f0-9-]{36}$/);
+  expect({ ...proxiedBody, requestId: null }).toEqual({
+    ...directBody,
+    requestId: null,
+  });
+});
+
+test('attendance allocation malformed receipt reconciles exactly and confirmed read failure never repeats save', async ({
+  page,
+}) => {
+  await deviceSession(page);
+  let readsFail = false;
+  const keys: string[] = [];
+  await page.route(`**${allocationPath}`, (route) => {
+    const req = route.request();
+    if (req.method() === 'GET')
+      return route.fulfill({
+        status: readsFail ? 503 : 200,
+        json: allocationSnapshot(keys.length ? 1 : 0, keys.length > 0),
+      });
+    keys.push(req.headers()['idempotency-key']);
+    if (keys.length === 1)
+      return route.fulfill({
+        json: { id: deviceBranch, version: 99, replayed: false },
+      });
+    readsFail = true;
+    return route.fulfill({
+      json: { id: deviceBranch, version: 1, replayed: true },
+    });
+  });
+  await page.goto(allocationPage);
+  await reviewAllocation(page);
+  await page.getByRole('button', { name: 'Confirm allocation change' }).click();
+  await expect(
+    page.getByRole('button', { name: 'Retry exact allocation request' }),
+  ).toBeVisible();
+  await page
+    .getByRole('button', { name: 'Retry exact allocation request' })
+    .click();
+  await expect(
+    page.getByText(
+      'Allocation receipt confirmed, but current state could not be loaded. Refresh before making another change.',
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Retry exact allocation request' }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole('button', { name: 'Review allocation change' }),
+  ).toHaveCount(0);
+  expect(keys).toHaveLength(2);
+  expect(keys[0]).toBe(keys[1]);
+  readsFail = false;
+  await page
+    .getByRole('button', { name: 'Refresh attendance allocation' })
+    .click();
+  await expect(
+    page.getByText('Allocation version: 1', { exact: true }),
+  ).toBeVisible();
+  expect(keys).toHaveLength(2);
+});

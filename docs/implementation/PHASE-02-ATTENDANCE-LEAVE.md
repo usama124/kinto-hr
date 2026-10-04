@@ -142,3 +142,7 @@ An attendance-only pilot requires approved data terms, functioning permissions/b
 - Device workspace: [owner/HR inventory screen](../evidence/phase-02/attendance-device-workspace.md), still draft-only and never connected.
 - Allocation controls: [operator-only immutable capacity versions](../evidence/phase-02/attendance-entitlement-controls.md), default disabled for every plan; no machine access or quota-consuming activation exists.
 - Customer attendance-pilot approval: pending.
+
+## Local allocation workspace increment — 4 October 2026
+
+The [allocation workspace](../evidence/phase-02/attendance-allocation-workspace.md) provides operator review/confirmation, explicit exact-request reconciliation and company owner/HR read-only state. Allocated limits still grant no machine access; the draft inventory and allocation UI do not complete P02-01. Next bounded implementation is single-use enrollment with atomic capacity reservation, verified binding and revocable credentials. Actual hardware validation and SDK rights remain separate release gates.
