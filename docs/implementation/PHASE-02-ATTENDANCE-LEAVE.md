@@ -136,7 +136,8 @@ An attendance-only pilot requires approved data terms, functioning permissions/b
 
 ## Implementation record
 
-- Work packages: P02-01/P02-02 preparatory schemas, pure preflight and tenant-scoped draft inventory API locally implemented; inventory UI, activation/entitlements, enrollment, mappings, authentication and durable ingestion pending. P02-03 through P02-05 not started.
+- Work packages: P02-01/P02-02 preparatory schemas, pure preflight and tenant-scoped draft inventory API locally implemented; owner/HR inventory UI locally implemented; activation/entitlements, enrollment, mappings, authentication and durable ingestion pending. P02-03 through P02-05 not started.
 - Hardware/firmware/SDK evidence: pending, not replaced by a simulator.
 - Code and synthetic tests: [attendance ingestion contracts/preflight](../evidence/phase-02/attendance-ingestion-contracts.md). Draft registry API: [device inventory evidence](../evidence/phase-02/attendance-device-inventory.md). No mounted ingestion endpoint, durable attendance acknowledgment, hardware reconciliation or rollout evidence.
+- Device workspace: [owner/HR inventory screen](../evidence/phase-02/attendance-device-workspace.md), still draft-only and never connected.
 - Customer attendance-pilot approval: pending.

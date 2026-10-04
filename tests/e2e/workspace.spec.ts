@@ -3727,3 +3727,400 @@ test('bank details stay hidden from HR and read-only for payroll approvers', asy
     page.getByText('Synthetic Account', { exact: true }),
   ).toHaveCount(0);
 });
+
+const deviceTenant = '00000000-0000-4000-8000-000000000101';
+const deviceBranch = '00000000-0000-4000-8000-000000000102';
+const deviceCsrf = 'd'.repeat(43);
+const inventoryRow = (n = 1) => ({
+  id: `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`,
+  branchId: deviceBranch,
+  code: `K50-${n}`,
+  name: `Synthetic entrance ${n}`,
+  model: 'ZKTeco_K50',
+  firmware: null as string | null,
+  sourceTimezone: 'Asia/Karachi',
+  status: 'draft',
+  version: 1,
+  adapterVersion: null,
+  sourceIdentityStatus: 'unverified',
+  health: 'not_connected',
+  lastSyncAt: null,
+  createdAt: '2026-10-04T00:00:00Z',
+  updatedAt: '2026-10-04T00:00:00Z',
+});
+async function deviceSession(
+  page: Page,
+  roles = ['owner'],
+  selected: string | null = deviceTenant,
+  active = true,
+) {
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        csrfToken: deviceCsrf,
+        selectedTenantId: selected,
+        tenants: [
+          { id: deviceTenant, name: 'Synthetic device company', roles },
+        ],
+      }),
+    }),
+  );
+  await page.route(`**/api/v1/tenants/${deviceTenant}/organization`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        legalEntity: null,
+        branches: [
+          {
+            id: deviceBranch,
+            legalEntityId: deviceBranch,
+            code: 'HQ',
+            name: 'Synthetic HQ',
+            provinceCode: 'PK-PB',
+            status: active ? 'active' : 'inactive',
+            version: 1,
+          },
+        ],
+        departments: [],
+        designations: [],
+        latestPublishedVersion: 0,
+        publishedPolicy: null,
+        policyDrafts: [],
+      }),
+    }),
+  );
+}
+
+test('device workspace registers, versions and retires drafts without connecting hardware', async ({
+  page,
+}) => {
+  await deviceSession(page);
+  const rows: ReturnType<typeof inventoryRow>[] = [];
+  const writes: Record<string, unknown>[] = [];
+  await page.route(
+    `**/api/v1/tenants/${deviceTenant}/devices**`,
+    async (route) => {
+      const req = route.request();
+      if (req.method() === 'GET')
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ items: rows, nextCursor: null }),
+        });
+      expect(req.headers()['x-csrf-token']).toBe(deviceCsrf);
+      const input = req.postDataJSON();
+      writes.push(input);
+      if (req.method() === 'POST') {
+        expect(input).toEqual({
+          branchId: deviceBranch,
+          code: 'K50-1',
+          name: 'Synthetic entrance 1',
+          model: 'ZKTeco_K50',
+          firmware: null,
+          sourceTimezone: 'Asia/Karachi',
+          reason: 'initial_setup',
+        });
+        rows.push(inventoryRow());
+      } else {
+        expect(input.expectedVersion).toBe(rows[0].version);
+        expect(input).not.toHaveProperty('code');
+        rows[0] = {
+          ...rows[0],
+          name: input.name,
+          firmware: input.firmware,
+          status: input.status,
+          version: rows[0].version + 1,
+        };
+      }
+      await route.fulfill({
+        status: req.method() === 'POST' ? 201 : 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ id: rows[0].id, version: rows[0].version }),
+      });
+    },
+  );
+  await page.goto('/devices');
+  await expect(
+    page.getByText('Owner access · draft inventory only.'),
+  ).toBeVisible();
+  await page.getByLabel('Device code', { exact: true }).fill('lowercase');
+  expect(
+    await page
+      .getByLabel('Device code', { exact: true })
+      .evaluate((element) => (element as HTMLInputElement).checkValidity()),
+  ).toBe(false);
+  await page.getByLabel('Device code', { exact: true }).fill('K50-1');
+  await page
+    .getByLabel('Device name', { exact: true })
+    .fill('Synthetic entrance 1');
+  await page
+    .getByRole('combobox', { name: 'Branch', exact: true })
+    .selectOption(deviceBranch);
+  await page.getByLabel('Firmware label (optional)').fill('$invalid');
+  await page
+    .getByRole('button', { name: 'Register draft device', exact: true })
+    .click();
+  await expect(page.getByRole('status')).toContainText('valid firmware label');
+  expect(writes).toHaveLength(0);
+  await page.getByLabel('Firmware label (optional)').fill('');
+  await page
+    .getByRole('button', { name: 'Register draft device', exact: true })
+    .click();
+  await expect(page.getByRole('status')).toContainText(
+    'Draft device registered',
+  );
+  await page.getByRole('button', { name: 'Edit K50-1', exact: true }).click();
+  await expect(page.getByLabel('Device code', { exact: true })).toBeDisabled();
+  await page
+    .getByLabel('Device name', { exact: true })
+    .fill('Renamed entrance');
+  await page.getByLabel('Firmware label (optional)').fill('synthetic-1');
+  await page
+    .getByRole('button', { name: 'Save metadata', exact: true })
+    .click();
+  await expect(page.getByRole('status')).toHaveText('Draft metadata updated.');
+  page.once('dialog', (dialog) => dialog.dismiss());
+  await page.getByRole('button', { name: 'Retire K50-1', exact: true }).click();
+  expect(writes).toHaveLength(2);
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByRole('button', { name: 'Retire K50-1', exact: true }).click();
+  await expect(page.getByRole('status')).toHaveText(
+    'Device retired; history retained.',
+  );
+  expect(writes).toHaveLength(3);
+  expect(writes[2]).toMatchObject({
+    name: 'Renamed entrance',
+    firmware: 'synthetic-1',
+    expectedVersion: 2,
+    status: 'retired',
+    reason: 'retire_device',
+  });
+  await expect(
+    page.getByRole('button', { name: 'Edit K50-1', exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByText(/Retired history is retained/)).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  expect(
+    await page.evaluate(
+      () =>
+        Object.keys(localStorage).length + Object.keys(sessionStorage).length,
+    ),
+  ).toBe(0);
+  await page.screenshot({
+    path: `test-results/device-workspace-${test.info().project.name}.png`,
+    fullPage: true,
+  });
+});
+
+test('device workspace keeps HR read-only and paginates without accumulating stale drafts', async ({
+  page,
+}) => {
+  await deviceSession(page, ['hr_admin']);
+  await page.route(`**/api/v1/tenants/${deviceTenant}/devices**`, (route) => {
+    expect(route.request().method()).toBe('GET');
+    const cursor = new URL(route.request().url()).searchParams.get('afterId');
+    const row = inventoryRow(cursor ? 2 : 1);
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        items: [row],
+        nextCursor: cursor ? null : row.id,
+      }),
+    });
+  });
+  await page.goto('/devices');
+  await expect(page.getByText('HR access · read only.')).toBeVisible();
+  await expect(page.getByRole('textbox')).toHaveCount(0);
+  await expect(
+    page.getByRole('button', { name: 'Edit K50-1', exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole('button', { name: 'Next page', exact: true }).click();
+  await expect(page.getByText('K50-2 · Synthetic entrance 2')).toBeVisible();
+  await expect(page.getByText('K50-1 · Synthetic entrance 1')).toHaveCount(0);
+  await expect(
+    page.getByRole('button', { name: 'Next page', exact: true }),
+  ).toBeDisabled();
+  await page.getByRole('button', { name: 'First page', exact: true }).click();
+  await expect(page.getByText('K50-1 · Synthetic entrance 1')).toBeVisible();
+});
+
+test('device workspace locks uncertain and conflicting writes until fresh inventory is loaded', async ({
+  page,
+}) => {
+  await deviceSession(page);
+  let writes = 0;
+  await page.route(`**/api/v1/tenants/${deviceTenant}/devices**`, (route) => {
+    if (route.request().method() === 'GET')
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ items: [inventoryRow()], nextCursor: null }),
+      });
+    writes++;
+    return writes === 1
+      ? route.abort('failed')
+      : route.fulfill({ status: 409, body: '{}' });
+  });
+  await page.goto('/devices');
+  for (const expected of [
+    'The change could not be confirmed',
+    'Change refused:',
+  ]) {
+    await page.getByRole('button', { name: 'Edit K50-1', exact: true }).click();
+    await page
+      .getByLabel('Device name', { exact: true })
+      .fill('Changed entrance');
+    await page
+      .getByRole('button', { name: 'Save metadata', exact: true })
+      .click();
+    await expect(page.getByRole('status')).toContainText(expected);
+    await expect(
+      page.getByRole('button', { name: 'Edit K50-1', exact: true }),
+    ).toBeDisabled();
+    await expect(page.getByLabel('Device name', { exact: true })).toHaveValue(
+      '',
+    );
+    await expect(
+      page.getByRole('button', { name: 'Register draft device', exact: true }),
+    ).toBeDisabled();
+    await page
+      .getByRole('button', { name: 'Refresh inventory', exact: true })
+      .click();
+    await expect(
+      page.getByRole('button', { name: 'Edit K50-1', exact: true }),
+    ).toBeEnabled();
+  }
+  expect(writes).toBe(2);
+});
+
+test('device workspace clears inventory and unsaved fields after access is revoked', async ({
+  page,
+}) => {
+  await deviceSession(page);
+  await page.route(`**/api/v1/tenants/${deviceTenant}/devices**`, (route) =>
+    route.fulfill({
+      status: route.request().method() === 'GET' ? 200 : 403,
+      contentType: 'application/json',
+      body: JSON.stringify({ items: [inventoryRow()], nextCursor: null }),
+    }),
+  );
+  await page.goto('/devices');
+  await page.getByRole('button', { name: 'Edit K50-1', exact: true }).click();
+  await page
+    .getByLabel('Device name', { exact: true })
+    .fill('Private unsaved text');
+  await page
+    .getByRole('button', { name: 'Save metadata', exact: true })
+    .click();
+  await expect(page.getByRole('status')).toContainText('access denied');
+  await expect(page.getByText('K50-1 · Synthetic entrance 1')).toHaveCount(0);
+  await expect(page.getByRole('textbox')).toHaveCount(0);
+  await expect(
+    page.getByText('Synthetic device company · device inventory'),
+  ).toHaveCount(0);
+});
+
+test('device workspace handles signed-out, unselected and unauthorized company contexts', async ({
+  page,
+}) => {
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({ status: 401, body: '{}' }),
+  );
+  await page.goto('/devices');
+  await expect(page.getByRole('status')).toHaveText(
+    'Sign in to view device inventory.',
+  );
+  await deviceSession(page, ['owner'], null);
+  await page
+    .getByRole('button', { name: 'Refresh inventory', exact: true })
+    .click();
+  await expect(page.getByRole('status')).toContainText('Select a company');
+  await deviceSession(page, ['employee']);
+  await page
+    .getByRole('button', { name: 'Refresh inventory', exact: true })
+    .click();
+  await expect(page.getByRole('status')).toContainText('access denied');
+  await expect(page.getByRole('textbox')).toHaveCount(0);
+});
+
+test('device workspace rejects invalid pages and refreshes without reusing another company authority', async ({
+  page,
+}) => {
+  await deviceSession(page);
+  let invalid = false;
+  await page.route(`**/api/v1/tenants/${deviceTenant}/devices**`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        items: [inventoryRow()],
+        nextCursor: invalid ? inventoryRow(2).id : null,
+      }),
+    }),
+  );
+  await page.goto('/devices');
+  await expect(page.getByText('K50-1 · Synthetic entrance 1')).toBeVisible();
+  invalid = true;
+  await page
+    .getByRole('button', { name: 'Refresh inventory', exact: true })
+    .click();
+  await expect(page.getByRole('status')).toContainText('unavailable');
+  await expect(page.getByText('K50-1 · Synthetic entrance 1')).toHaveCount(0);
+  invalid = false;
+  await deviceSession(page, ['hr_admin']);
+  await page
+    .getByRole('button', { name: 'Refresh inventory', exact: true })
+    .click();
+  await expect(page.getByText('HR access · read only.')).toBeVisible();
+  await expect(page.getByRole('textbox')).toHaveCount(0);
+});
+
+test('device workspace permits retirement on inactive branches but blocks draft registration', async ({
+  page,
+}) => {
+  await deviceSession(page, ['owner'], deviceTenant, false);
+  let writes = 0;
+  const row = inventoryRow();
+  await page.route(`**/api/v1/tenants/${deviceTenant}/devices**`, (route) => {
+    if (route.request().method() !== 'GET') {
+      writes++;
+      expect(route.request().method()).toBe('PUT');
+      expect(route.request().postDataJSON()).toMatchObject({
+        branchId: deviceBranch,
+        status: 'retired',
+        reason: 'retire_device',
+      });
+      row.status = 'retired';
+      row.version = 2;
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ id: row.id, version: 2 }),
+      });
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ items: [row], nextCursor: null }),
+    });
+  });
+  await page.goto('/devices');
+  await expect(
+    page.getByRole('button', { name: 'Register draft device', exact: true }),
+  ).toBeDisabled();
+  await expect(page.getByText(/Create or activate a branch/)).toBeVisible();
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByRole('button', { name: 'Retire K50-1', exact: true }).click();
+  await expect(page.getByRole('status')).toHaveText(
+    'Device retired; history retained.',
+  );
+  expect(writes).toBe(1);
+});

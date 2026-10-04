@@ -46,7 +46,7 @@ Billing work in Phase 4 can be developed alongside payroll after Phase 1 contrac
 
 - **P00 — in progress (partial architecture spike); 2–3 estimated weeks.** Exit: approved supported-scope record, K50 evidence, selected integration/auth/deployment approach and independent payroll fixtures. Allowed deployment: local/staging validation only.
 - **P01 — in progress (foundation only); 3–5 estimated weeks.** Exit: tenant-isolated platform and employee workflows, server-side capability/capacity controls, basic recovery evidence. Allowed deployment: internal staging; no public release.
-- **P02 — draft inventory API and synthetic contracts/preflight started; 4–6 estimated weeks.** Exit: reconciled attendance and leave with tested real K50 recovery. Allowed deployment: expressly agreed attendance-only pilot after applicable security/privacy gates; payroll remains unavailable.
+- **P02 — draft inventory API/UI and synthetic contracts/preflight started; 4–6 estimated weeks.** Exit: reconciled attendance and leave with tested real K50 recovery. Allowed deployment: expressly agreed attendance-only pilot after applicable security/privacy gates; payroll remains unavailable.
 - **P03 — not started; 4–6 estimated weeks.** Exit: independently reconciled payroll engine and approved rule packages. Allowed deployment: supervised shadow payroll; existing payroll remains authoritative.
 - **P04 — not started; 3–5 estimated engineering weeks.** Exit: two consecutive live payroll cycles reconciled, collection/grace behavior tested, operational/security sign-off. Allowed deployment: controlled commercial production.
 - **P05 — not started; 4–6 additional estimated weeks.** Exit: expense and asset gates, phased rollout and rollback evidence. Allowed deployment: opt-in production modules.
@@ -103,3 +103,7 @@ The [review inventory](foundation-readiness.json) and [readiness diagnostic](../
 ### Draft device inventory API — 4 October 2026
 
 [Tenant-scoped inventory](../evidence/phase-02/attendance-device-inventory.md) adds owner-only registration/versioned editing/retirement and owner/HR reads with recent MFA, audit/outbox writes, restricted PostgreSQL access and synthetic restore coverage. Draft records are never active or authenticated devices; adapter/source identity remain unverified. Next: the inventory workspace, then versioned device/connector entitlements and machine enrollment. Hardware, attendance processing, leave and production approvals remain pending.
+
+### Device inventory workspace — 4 October 2026
+
+[The device screen](../evidence/phase-02/attendance-device-workspace.md) now exposes draft registration, versioned metadata editing and confirmed retirement for owners, plus read-only HR inventory and bounded next/first-page navigation. Uncertain/stale writes lock editing until a refreshed session/inventory is loaded; denied access discards company data and form state. Every device remains unconnected and unverified. Next: versioned device/connector feature and capacity entitlements before machine enrollment. The remaining P02-01 registry activation, credential rotation, mappings and hardware acceptance are still pending.

@@ -9,14 +9,14 @@ const phases = [
   [
     '1',
     'Platform & people',
-    'Foundation in progress',
-    'Workspace, API and tenant-safe persistence first. Authentication and employee screens follow.',
+    'Production review pending',
+    'Tenant-safe employee workflows, accounts, policies and recovery are locally tested; production review remains.',
   ],
   [
     '2',
     'Attendance & leave',
-    'Planned',
-    'Device synchronization, shifts, leave balances and locked attendance inputs.',
+    'Preparation in progress',
+    'Draft device inventory and synthetic ingestion contracts are implemented. Connectivity, shifts, leave and locked attendance inputs remain pending.',
   ],
   [
     '3',
