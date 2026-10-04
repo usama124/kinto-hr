@@ -4496,3 +4496,848 @@ test('default API keeps synthetic connector admission and owner workflows disabl
   );
   expect(owner.status()).toBe(404);
 });
+
+const connectorIdentity = '00000000-0000-4000-8000-000000000104';
+const connectorBase = `/api/v1/tenants/${deviceTenant}/local-connectors`;
+const enrollmentRow = (n = 201) => {
+  const createdAt = new Date().toISOString();
+  return {
+    id: `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`,
+    deviceId: inventoryRow().id,
+    expectedDeviceVersion: 1,
+    allocationVersion: 1,
+    version: 1,
+    status: 'issued',
+    createdAt,
+    expiresAt: new Date(Date.parse(createdAt) + 900000).toISOString(),
+    revokedAt: null,
+  };
+};
+const credentialRow = (n = 301) => {
+  const createdAt = new Date().toISOString();
+  return {
+    id: `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`,
+    tenantId: deviceTenant,
+    deviceId: inventoryRow().id,
+    enrollmentId: enrollmentRow().id,
+    version: 1,
+    status: 'active',
+    createdAt,
+    expiresAt: new Date(Date.parse(createdAt) + 2592000000).toISOString(),
+    revokedAt: null as string | null,
+    scope: 'heartbeat_only',
+    attendanceIngestionAvailable: false,
+  };
+};
+async function connectorSetup(page: Page, roles = ['owner']) {
+  await deviceSession(page, roles);
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        identityId: connectorIdentity,
+        csrfToken: deviceCsrf,
+        selectedTenantId: deviceTenant,
+        tenants: [
+          { id: deviceTenant, name: 'Synthetic device company', roles },
+        ],
+      }),
+    }),
+  );
+  await page.route(`**/api/v1/tenants/${deviceTenant}/devices**`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ items: [inventoryRow()], nextCursor: null }),
+    }),
+  );
+  await page.route(
+    `**/api/v1/tenants/${deviceTenant}/attendance-entitlements`,
+    (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(allocationSnapshot(1, true)),
+      }),
+  );
+  await page.route(`**${connectorBase}/enrollment-tokens**`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        items: [],
+        nextCursor: null,
+        machineAccessAvailable: false,
+      }),
+    }),
+  );
+  await page.route(`**${connectorBase}/credentials**`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ items: [], nextCursor: null }),
+    }),
+  );
+}
+const issueFromWorkspace = async (page: Page) => {
+  await page
+    .getByRole('combobox', { name: 'Draft device', exact: true })
+    .selectOption(inventoryRow().id);
+  await page
+    .getByRole('button', { name: 'Issue enrollment token', exact: true })
+    .click();
+};
+test('connector workspace reveals a token once, clears it on hiding/refresh, and fits the viewport', async ({
+  page,
+}) => {
+  await connectorSetup(page);
+  const token = 'ke1_' + 'a'.repeat(43),
+    row = enrollmentRow();
+  let reads = 0,
+    writes = 0;
+  await page.route(`**${connectorBase}/enrollment-tokens**`, (route) => {
+    const req = route.request();
+    if (req.method() === 'GET') {
+      reads++;
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          items: writes ? [row] : [],
+          nextCursor: null,
+          machineAccessAvailable: false,
+        }),
+      });
+    }
+    writes++;
+    expect(req.headers()['x-csrf-token']).toBe(deviceCsrf);
+    expect(req.headers()['idempotency-key']).toMatch(/^[a-f0-9-]{36}$/);
+    expect(req.postDataJSON()).toEqual({
+      deviceId: inventoryRow().id,
+      expectedDeviceVersion: 1,
+      expectedAllocationVersion: 1,
+    });
+    return route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        enrollment: row,
+        replayed: false,
+        token,
+        machineAccessAvailable: false,
+      }),
+    });
+  });
+  await page.goto('/connectors');
+  await issueFromWorkspace(page);
+  await expect(
+    page.getByLabel('Enrollment token', { exact: true }),
+  ).toHaveValue(token);
+  await expect(
+    page.getByRole('button', { name: 'Issue enrollment token', exact: true }),
+  ).toBeDisabled();
+  expect(
+    await page.evaluate(() =>
+      JSON.stringify({
+        local: { ...localStorage },
+        session: { ...sessionStorage },
+      }),
+    ),
+  ).not.toContain(token);
+  expect(page.url()).not.toContain(token);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page
+    .getByRole('button', { name: 'Hide enrollment token', exact: true })
+    .click();
+  await expect(
+    page.getByLabel('Enrollment token', { exact: true }),
+  ).toHaveCount(0);
+  await page
+    .getByRole('button', { name: 'Refresh connector metadata', exact: true })
+    .click();
+  await expect(
+    page.getByRole('region', { name: 'Enrollment history' }),
+  ).toContainText(row.id);
+  expect(writes).toBe(1);
+  expect(reads).toBe(2);
+});
+test('connector workspace preserves the exact uncertain issue across refresh and never recovers its secret', async ({
+  page,
+}) => {
+  await connectorSetup(page);
+  const row = enrollmentRow();
+  const requests: {
+    key: string | undefined;
+    body: unknown;
+    csrf: string | undefined;
+  }[] = [];
+  let csrf = deviceCsrf;
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        identityId: connectorIdentity,
+        csrfToken: csrf,
+        selectedTenantId: deviceTenant,
+        tenants: [
+          {
+            id: deviceTenant,
+            name: 'Synthetic device company',
+            roles: ['owner'],
+          },
+        ],
+      }),
+    }),
+  );
+  await page.route(`**${connectorBase}/enrollment-tokens**`, (route) => {
+    const req = route.request();
+    if (req.method() === 'GET')
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          items: requests.length ? [row] : [],
+          nextCursor: null,
+          machineAccessAvailable: false,
+        }),
+      });
+    requests.push({
+      key: req.headers()['idempotency-key'],
+      body: req.postDataJSON(),
+      csrf: req.headers()['x-csrf-token'],
+    });
+    return route.fulfill({
+      status: requests.length === 1 ? 500 : 201,
+      contentType: 'application/json',
+      body: JSON.stringify(
+        requests.length === 1
+          ? {}
+          : {
+              enrollment: row,
+              replayed: true,
+              token: null,
+              machineAccessAvailable: false,
+            },
+      ),
+    });
+  });
+  await page.goto('/connectors');
+  await issueFromWorkspace(page);
+  await expect(page.getByRole('status')).toContainText('Outcome unknown');
+  csrf = 'e'.repeat(43);
+  await page
+    .getByRole('button', { name: 'Refresh connector metadata', exact: true })
+    .click();
+  await expect(
+    page.getByRole('button', { name: 'Issue enrollment token', exact: true }),
+  ).toBeDisabled();
+  await page
+    .getByRole('button', { name: 'Retry exact command', exact: true })
+    .click();
+  await expect(page.getByRole('status')).toContainText(
+    'original token cannot be recovered',
+  );
+  expect(requests).toHaveLength(2);
+  expect(requests[1].key).toBe(requests[0].key);
+  expect(requests[1].body).toEqual(requests[0].body);
+  expect(requests[1].csrf).toBe(csrf);
+  await expect(
+    page.getByLabel('Enrollment token', { exact: true }),
+  ).toHaveCount(0);
+});
+test('connector metadata is read-only for HR and unavailable when local mode is disabled', async ({
+  page,
+}) => {
+  await connectorSetup(page, ['hr_admin']);
+  const row = credentialRow();
+  await page.route(`**${connectorBase}/credentials**`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ items: [row], nextCursor: null }),
+    }),
+  );
+  await page.goto('/connectors');
+  await expect(page.getByText(/HR read-only access/)).toBeVisible();
+  await expect(
+    page.getByRole('button', {
+      name: /Issue enrollment|Revoke credential|Revoke enrollment/,
+    }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole('region', { name: 'Connector credentials' }),
+  ).toContainText(row.id);
+  await page.route(`**${connectorBase}/credentials**`, (route) =>
+    route.fulfill({ status: 404, body: '{}' }),
+  );
+  await page
+    .getByRole('button', { name: 'Refresh connector metadata', exact: true })
+    .click();
+  await expect(
+    page.getByText(/Local connector HTTP mode is disabled/),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('region', { name: 'Connector credentials' }),
+  ).toHaveCount(0);
+});
+test('connector revocation requires confirmation and keeps a failed response locked for exact retry', async ({
+  page,
+}) => {
+  await connectorSetup(page);
+  let row = credentialRow();
+  let writes = 0;
+  const payloads: unknown[] = [];
+  await page.route(`**${connectorBase}/credentials**`, (route) => {
+    const req = route.request();
+    if (req.method() === 'GET')
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ items: [row], nextCursor: null }),
+      });
+    writes++;
+    payloads.push(req.postDataJSON());
+    row = {
+      ...row,
+      status: 'revoked',
+      version: 2,
+      revokedAt: new Date().toISOString(),
+    };
+    return route.fulfill({
+      status: writes === 1 ? 500 : 201,
+      contentType: 'application/json',
+      body: JSON.stringify(writes === 1 ? {} : row),
+    });
+  });
+  await page.goto('/connectors');
+  const revoke = page.getByRole('button', {
+    name: 'Revoke credential ' + row.id,
+    exact: true,
+  });
+  page.once('dialog', (dialog) => dialog.dismiss());
+  await revoke.click();
+  expect(writes).toBe(0);
+  page.once('dialog', (dialog) => dialog.accept());
+  await revoke.click();
+  await expect(page.getByRole('status')).toContainText('Outcome unknown');
+  await page
+    .getByRole('button', { name: 'Refresh connector metadata', exact: true })
+    .click();
+  await expect(
+    page.getByRole('button', { name: /Revoke credential/ }),
+  ).toHaveCount(0);
+  await page
+    .getByRole('button', { name: 'Retry exact command', exact: true })
+    .click();
+  await expect(page.getByRole('status')).toContainText('Revocation confirmed');
+  expect(payloads).toEqual([{ expectedVersion: 1 }, { expectedVersion: 1 }]);
+});
+test('connector workspace clears uncertain requests on company or owner access changes', async ({
+  page,
+}) => {
+  await connectorSetup(page);
+  let selected = deviceTenant,
+    writes = 0;
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        identityId: connectorIdentity,
+        csrfToken: deviceCsrf,
+        selectedTenantId: selected,
+        tenants: [{ id: selected, name: 'Current company', roles: ['owner'] }],
+      }),
+    }),
+  );
+  await page.route(`**${connectorBase}/enrollment-tokens`, (route) =>
+    route.request().method() === 'POST'
+      ? (writes++, route.fulfill({ status: 500, body: '{}' }))
+      : route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            items: [],
+            nextCursor: null,
+            machineAccessAvailable: false,
+          }),
+        }),
+  );
+  await page.goto('/connectors');
+  await issueFromWorkspace(page);
+  await expect(page.getByRole('status')).toContainText('Outcome unknown');
+  selected = '00000000-0000-4000-8000-000000000999';
+  await page
+    .getByRole('button', { name: 'Retry exact command', exact: true })
+    .click();
+  await expect(page.getByText(/Connector access is unavailable/)).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Retry exact command', exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByText('Current company', { exact: true })).toHaveCount(
+    0,
+  );
+  expect(writes).toBe(1);
+});
+test('connector workspace rejects malformed receipts and cross-company credentials without displaying tokens', async ({
+  page,
+}) => {
+  await connectorSetup(page);
+  const token = 'ke1_' + 'z'.repeat(43);
+  await page.route(`**${connectorBase}/enrollment-tokens`, (route) =>
+    route.request().method() === 'POST'
+      ? route.fulfill({
+          status: 201,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            enrollment: { ...enrollmentRow(), deviceId: inventoryRow(2).id },
+            replayed: false,
+            token,
+            machineAccessAvailable: false,
+          }),
+        })
+      : route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            items: [],
+            nextCursor: null,
+            machineAccessAvailable: false,
+          }),
+        }),
+  );
+  await page.goto('/connectors');
+  await issueFromWorkspace(page);
+  await expect(page.getByRole('status')).toContainText('Outcome unknown');
+  await expect(
+    page.getByLabel('Enrollment token', { exact: true }),
+  ).toHaveCount(0);
+  await page.route(`**${connectorBase}/credentials**`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        items: [
+          {
+            ...credentialRow(),
+            tenantId: '00000000-0000-4000-8000-000000000999',
+          },
+        ],
+        nextCursor: null,
+      }),
+    }),
+  );
+  await page
+    .getByRole('button', { name: 'Refresh connector metadata', exact: true })
+    .click();
+  await expect(page.getByText(/metadata could not be verified/)).toBeVisible();
+  await expect(
+    page.getByRole('region', { name: 'Connector credentials' }),
+  ).toHaveCount(0);
+});
+test('connector token disappears on expiry and page hiding', async ({
+  page,
+}) => {
+  await connectorSetup(page);
+  const row = enrollmentRow();
+  await page.clock.install({ time: new Date(row.createdAt) });
+  await page.route(`**${connectorBase}/enrollment-tokens`, (route) =>
+    route.request().method() === 'POST'
+      ? route.fulfill({
+          status: 201,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            enrollment: row,
+            replayed: false,
+            token: 'ke1_' + 'a'.repeat(43),
+            machineAccessAvailable: false,
+          }),
+        })
+      : route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            items: [],
+            nextCursor: null,
+            machineAccessAvailable: false,
+          }),
+        }),
+  );
+  await page.goto('/connectors');
+  await issueFromWorkspace(page);
+  await expect(
+    page.getByLabel('Enrollment token', { exact: true }),
+  ).toBeVisible();
+  await page.clock.fastForward(900001);
+  await expect(
+    page.getByLabel('Enrollment token', { exact: true }),
+  ).toHaveCount(0);
+  await page.clock.setSystemTime(new Date(row.createdAt));
+  await page
+    .getByRole('button', { name: 'Refresh connector metadata', exact: true })
+    .click();
+  await issueFromWorkspace(page);
+  await expect(
+    page.getByLabel('Enrollment token', { exact: true }),
+  ).toBeVisible();
+  await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+  await expect(
+    page.getByLabel('Enrollment token', { exact: true }),
+  ).toHaveCount(0);
+});
+
+test('connector workspace paginates ordered bounded metadata and rejects a malformed cursor', async ({
+  page,
+}) => {
+  await connectorSetup(page);
+  const rows = Array.from({ length: 25 }, (_, index) =>
+    credentialRow(301 + index),
+  );
+  let invalid = false;
+  const seen: string[] = [];
+  await page.route(`**${connectorBase}/credentials**`, (route) => {
+    const after = new URL(route.request().url()).searchParams.get('afterId');
+    if (after) seen.push(after);
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(
+        after
+          ? { items: [credentialRow(326)], nextCursor: null }
+          : {
+              items: rows,
+              nextCursor: invalid ? credentialRow(399).id : rows.at(-1)!.id,
+            },
+      ),
+    });
+  });
+  await page.goto('/connectors');
+  await expect(
+    page.getByRole('heading', {
+      name: 'Credential ' + rows[0].id,
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page
+    .getByRole('button', { name: 'Next credentials page', exact: true })
+    .click();
+  await expect(
+    page.getByRole('heading', {
+      name: 'Credential ' + credentialRow(326).id,
+      exact: true,
+    }),
+  ).toBeVisible();
+  expect(seen).toEqual([rows.at(-1)!.id]);
+  await expect(
+    page.getByRole('heading', {
+      name: 'Credential ' + rows[0].id,
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  invalid = true;
+  await page
+    .getByRole('button', { name: 'First credentials page', exact: true })
+    .click();
+  await expect(page.getByText(/metadata could not be verified/)).toBeVisible();
+  await expect(
+    page.getByRole('region', { name: 'Connector credentials' }),
+  ).toHaveCount(0);
+});
+test('connector workspace refreshes rejected versions before allowing a new issuance', async ({
+  page,
+}) => {
+  await connectorSetup(page);
+  let version = 1;
+  const writes: { key: string | undefined; version: number }[] = [];
+  await page.route(
+    `**/api/v1/tenants/${deviceTenant}/attendance-entitlements`,
+    (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(allocationSnapshot(version, true)),
+      }),
+  );
+  await page.route(`**${connectorBase}/enrollment-tokens`, (route) => {
+    const req = route.request();
+    if (req.method() === 'GET')
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          items: [],
+          nextCursor: null,
+          machineAccessAvailable: false,
+        }),
+      });
+    writes.push({
+      key: req.headers()['idempotency-key'],
+      version: req.postDataJSON().expectedAllocationVersion,
+    });
+    version = 2;
+    return route.fulfill({
+      status: writes.length === 1 ? 409 : 201,
+      contentType: 'application/json',
+      body: JSON.stringify(
+        writes.length === 1
+          ? {}
+          : {
+              enrollment: { ...enrollmentRow(), allocationVersion: 2 },
+              replayed: false,
+              token: 'ke1_' + 'a'.repeat(43),
+              machineAccessAvailable: false,
+            },
+      ),
+    });
+  });
+  await page.goto('/connectors');
+  await issueFromWorkspace(page);
+  await expect(page.getByRole('status')).toContainText('Command rejected');
+  await expect(
+    page.getByRole('button', { name: 'Issue enrollment token', exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole('button', { name: 'Retry exact command', exact: true }),
+  ).toHaveCount(0);
+  await page
+    .getByRole('button', { name: 'Refresh connector metadata', exact: true })
+    .click();
+  await issueFromWorkspace(page);
+  await expect(
+    page.getByLabel('Enrollment token', { exact: true }),
+  ).toBeVisible();
+  expect(writes.map((item) => item.version)).toEqual([1, 2]);
+  expect(writes[0].key).not.toBe(writes[1].key);
+});
+test('connector workspace erases a displayed secret and metadata after access denial', async ({
+  page,
+}) => {
+  await connectorSetup(page);
+  let denied = false;
+  const row = enrollmentRow();
+  await page.route(`**${connectorBase}/enrollment-tokens`, (route) =>
+    route.request().method() === 'POST'
+      ? route.fulfill({
+          status: 201,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            enrollment: row,
+            replayed: false,
+            token: 'ke1_' + 'a'.repeat(43),
+            machineAccessAvailable: false,
+          }),
+        })
+      : route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            items: [],
+            nextCursor: null,
+            machineAccessAvailable: false,
+          }),
+        }),
+  );
+  await page.route(`**${connectorBase}/credentials**`, (route) =>
+    route.fulfill({
+      status: denied ? 403 : 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ items: [], nextCursor: null }),
+    }),
+  );
+  await page.goto('/connectors');
+  await issueFromWorkspace(page);
+  await expect(
+    page.getByLabel('Enrollment token', { exact: true }),
+  ).toBeVisible();
+  denied = true;
+  await page
+    .getByRole('button', { name: 'Refresh connector metadata', exact: true })
+    .click();
+  await expect(page.getByText(/Connector access is unavailable/)).toBeVisible();
+  await expect(
+    page.getByLabel('Enrollment token', { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole('region', { name: 'Enrollment history' }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole('button', { name: 'Issue enrollment token', exact: true }),
+  ).toHaveCount(0);
+});
+
+test('connector workspace requires a selected authorized session before requesting company records', async ({
+  page,
+}) => {
+  await connectorSetup(page);
+  let mode = 'selection',
+    reads = 0;
+  await page.route(`**${connectorBase}/credentials**`, (route) => {
+    reads++;
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ items: [], nextCursor: null }),
+    });
+  });
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({
+      status: mode === 'signed-out' ? 401 : 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        identityId: connectorIdentity,
+        csrfToken: deviceCsrf,
+        selectedTenantId: mode === 'selection' ? null : deviceTenant,
+        tenants: [
+          {
+            id: deviceTenant,
+            name: 'Synthetic device company',
+            roles: ['employee'],
+          },
+        ],
+      }),
+    }),
+  );
+  await page.goto('/connectors');
+  await expect(
+    page.getByText(/Select a company before viewing connectors/),
+  ).toBeVisible();
+  mode = 'denied';
+  await page
+    .getByRole('button', { name: 'Refresh connector metadata', exact: true })
+    .click();
+  await expect(page.getByText(/Connector access is unavailable/)).toBeVisible();
+  mode = 'signed-out';
+  await page
+    .getByRole('button', { name: 'Refresh connector metadata', exact: true })
+    .click();
+  await expect(
+    page.getByText('Sign in to view connectors.', { exact: true }),
+  ).toBeVisible();
+  expect(reads).toBe(0);
+});
+test('connector workspace cannot issue while allocation is disabled', async ({
+  page,
+}) => {
+  await connectorSetup(page);
+  await page.route(
+    `**/api/v1/tenants/${deviceTenant}/attendance-entitlements`,
+    (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(allocationSnapshot()),
+      }),
+  );
+  await page.goto('/connectors');
+  await expect(
+    page.getByText(/Attendance allocation is disabled/),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Issue enrollment token', exact: true }),
+  ).toBeDisabled();
+});
+
+test('connector workspace revokes a pending enrollment and requires a metadata refresh before new writes', async ({
+  page,
+}) => {
+  await connectorSetup(page);
+  const row = enrollmentRow();
+  let writes = 0;
+  await page.route(`**${connectorBase}/enrollment-tokens**`, (route) => {
+    const req = route.request();
+    if (req.method() === 'GET')
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          items: [row],
+          nextCursor: null,
+          machineAccessAvailable: false,
+        }),
+      });
+    writes++;
+    expect(req.url()).toContain('/' + row.id + '/revocation');
+    expect(req.postDataJSON()).toEqual({ expectedVersion: 1 });
+    expect(req.headers()['x-csrf-token']).toBe(deviceCsrf);
+    return route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ...row,
+        status: 'revoked',
+        version: 2,
+        revokedAt: new Date().toISOString(),
+      }),
+    });
+  });
+  await page.goto('/connectors');
+  page.once('dialog', (dialog) => dialog.accept());
+  await page
+    .getByRole('button', { name: 'Revoke enrollment ' + row.id, exact: true })
+    .click();
+  await expect(page.getByRole('status')).toContainText('Revocation confirmed');
+  await expect(
+    page.getByRole('button', {
+      name: 'Revoke enrollment ' + row.id,
+      exact: true,
+    }),
+  ).toBeDisabled();
+  expect(writes).toBe(1);
+});
+
+test('connector workspace never retries actor-scoped issuance under another owner in the same company', async ({
+  page,
+}) => {
+  await connectorSetup(page);
+  let identityId = connectorIdentity,
+    writes = 0;
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        identityId,
+        csrfToken: deviceCsrf,
+        selectedTenantId: deviceTenant,
+        tenants: [
+          {
+            id: deviceTenant,
+            name: 'Synthetic device company',
+            roles: ['owner'],
+          },
+        ],
+      }),
+    }),
+  );
+  await page.route(`**${connectorBase}/enrollment-tokens`, (route) =>
+    route.request().method() === 'POST'
+      ? (writes++, route.fulfill({ status: 500, body: '{}' }))
+      : route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            items: [],
+            nextCursor: null,
+            machineAccessAvailable: false,
+          }),
+        }),
+  );
+  await page.goto('/connectors');
+  await issueFromWorkspace(page);
+  await expect(page.getByRole('status')).toContainText('Outcome unknown');
+  identityId = '00000000-0000-4000-8000-000000000888';
+  await page
+    .getByRole('button', { name: 'Retry exact command', exact: true })
+    .click();
+  await expect(page.getByText(/Connector access is unavailable/)).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Retry exact command', exact: true }),
+  ).toHaveCount(0);
+  expect(writes).toBe(1);
+});
