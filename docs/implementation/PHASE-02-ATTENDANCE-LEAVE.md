@@ -162,3 +162,7 @@ The [allocation workspace](../evidence/phase-02/attendance-allocation-workspace.
 ## Connector enrollment workspace increment — 4 October 2026
 
 [Workspace evidence](../evidence/phase-02/connector-enrollment-workspace.md) records owner issuance/revocation and HR read-only metadata in `/connectors`. Tokens are disclosed only once and cleared on hiding, refresh or expiry; uncertain attempts retain exact scope/key/payload across refresh and block new writes. Fresh session/CSRF, strict tenant/version projections and bounded pagination guard UI state, while SQL remains authoritative. Production machine access and actual device communication remain unavailable. Next local work is connector client/service lifecycle preparation; actual runtime/adapter selection awaits hardware/SDK proof and deployment awaits protected host storage and production admission review.
+
+## Synthetic client lifecycle increment — 4 October 2026
+
+The [local reference client](../evidence/phase-02/local-connector-client.md) validates one-shot enrollment binding, heartbeat-only authorization, explicit transient heartbeat retry and terminal shutdown/revocation. Actual loopback HTTP tests and the existing SQL/Redis lifecycle integration exercise the client. No SDK runtime, persistent secret store, polling, attendance upload or production service is selected. P02-01/P02-02 remain partial; next bounded work is device employee mapping preparation while hardware and production admission gates remain open.

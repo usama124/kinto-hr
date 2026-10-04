@@ -131,3 +131,7 @@ The [review inventory](foundation-readiness.json) and [readiness diagnostic](../
 ### Connector enrollment workspace — 4 October 2026
 
 [The owner/HR connector screen](../evidence/phase-02/connector-enrollment-workspace.md) adds one-time token display, strict versioned issuance, metadata pagination and confirmed revocation. Uncertain commands retain their exact in-memory request across refresh, block new writes and obtain fresh session/CSRF on retry. Tokens disappear on hiding/refresh/expiry; credentials are never revealed or recovered in the browser. HR is read-only, and disabled local mode or lost access clears company display. Next: local connector client/service lifecycle preparation without choosing the hardware adapter runtime prematurely. OS-protected storage, actual K50/SDK evidence, production admission lifecycle/review, rotation and durable ingestion remain pending. P02-01 remains partial.
+
+## Local connector client preparation — 4 October 2026
+
+The [synthetic lifecycle client](../evidence/phase-02/local-connector-client.md) adds one-shot bound enrollment, private memory credentials, explicit heartbeat and abortable shutdown against the gated local-test API. Unknown enrollment outcomes require owner reconciliation rather than retry. This reference tool does not select the hardware runtime or complete P02-01/P02-02. Next: device employee mapping preparation, with production admission, OS-protected storage, rotation, SDK/device evidence and durable ingestion still pending.

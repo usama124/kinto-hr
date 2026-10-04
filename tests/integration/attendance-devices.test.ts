@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import { LocalConnectorClient } from '../../scripts/lib/local-connector-client';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { MachineController } from '../../apps/api/src/attendance/machine-controller';
@@ -1771,7 +1772,7 @@ describe('tenant attendance device inventory', () => {
     const app = module.createNestApplication();
     configureHttp(app);
     try {
-      await app.init();
+      await app.listen(0, '127.0.0.1');
       await service.ready();
       const owner = `/api/v1/tenants/${tenantId}/local-connectors`,
         machinePath = '/api/v1/local-machine/connectors';
@@ -1825,6 +1826,37 @@ describe('tenant attendance device inventory', () => {
       identityId = identities.owner;
       await revoke().expect(201);
       await heartbeat().expect(403);
+      const next = await machine.issue(
+        actor(identities.owner),
+        tenantId,
+        randomUUID(),
+        fixture.input,
+      );
+      const client = new LocalConnectorClient({
+        mode: 'local_test',
+        baseUrl: await app.getUrl(),
+        binding: {
+          tenantId,
+          deviceId: fixture.first.id,
+          enrollmentId: next.enrollment.id,
+        },
+      });
+      try {
+        await client.redeem(next.token!);
+        await client.heartbeat();
+        expect(client.state).toBe('active');
+        await machine.revokeCredential(
+          actor(identities.owner),
+          tenantId,
+          client.connector!.id,
+        );
+        await expect(client.heartbeat()).rejects.toThrow(
+          'Heartbeat not confirmed',
+        );
+        expect(client.state).toBe('denied');
+      } finally {
+        client.stop();
+      }
       await service.onModuleDestroy();
       await heartbeat().expect(503);
     } finally {
