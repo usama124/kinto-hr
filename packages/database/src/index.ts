@@ -1,6 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { PrismaClient, type Prisma } from '@prisma/client';
 import {
+  attendanceAllocationSchema,
+  attendanceAllocationSnapshotSchema,
+  attendanceAllocationResultSchema,
+  type AttendanceAllocation,
   deviceCreateSchema,
   deviceUpdateSchema,
   deviceListQuerySchema,
@@ -2530,4 +2534,55 @@ export async function updateTenantDeviceInventory(
   if (!row.resource_id || !row.resource_version)
     throw new Error('Invalid device inventory result');
   return { id: row.resource_id, version: row.resource_version };
+}
+
+export async function readAttendanceAllocation(
+  db: PrismaClient,
+  actor: OrganizationActor,
+  tenantId: string,
+  platform = false,
+) {
+  validateOrganizationActor(actor, tenantId);
+  const rows = await db.$queryRaw<
+    { outcome: string; snapshot: unknown }[]
+  >`SELECT * FROM public.read_attendance_allocation(${actor.identityId}::uuid,${actor.mfaVerified},${tenantId}::uuid,${platform})`;
+  if (rows[0]?.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (rows[0]?.outcome === 'not_found') throw new DomainError('NOT_FOUND');
+  if (rows[0]?.outcome !== 'ok')
+    throw new Error('Invalid attendance allocation');
+  return attendanceAllocationSnapshotSchema.parse(rows[0].snapshot);
+}
+export async function changeAttendanceAllocation(
+  db: PrismaClient,
+  actor: OrganizationActor,
+  tenantId: string,
+  requestId: string,
+  input: AttendanceAllocation,
+) {
+  validateOrganizationActor(actor, tenantId);
+  tenantIdSchema.parse(requestId);
+  const value = attendanceAllocationSchema.parse(input);
+  const rows = await db.$queryRaw<
+    {
+      outcome: string;
+      record_id: string | null;
+      record_version: number | null;
+    }[]
+  >`SELECT * FROM public.change_attendance_allocation(
+ ${actor.identityId}::uuid,${actor.mfaVerified},${tenantId}::uuid,${requestId}::uuid,${randomUUID()}::uuid,
+ ${value.expectedVersion}::integer,${value.enabled},${value.deviceLimit}::integer,${value.connectorLimit}::integer,
+ ${value.reason}::varchar,${randomUUID()}::uuid,${randomUUID()}::uuid,${randomUUID()}::uuid)`;
+  const row = rows[0];
+  if (row?.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (row?.outcome === 'not_found') throw new DomainError('NOT_FOUND');
+  if (row?.outcome === 'stale') throw new DomainError('STALE_VERSION');
+  if (row?.outcome === 'conflict') throw new DomainError('CONFLICT');
+  if (row?.outcome === 'invalid_state') throw new DomainError('INVALID_STATE');
+  if (!row || !['created', 'replayed'].includes(row.outcome))
+    throw new Error('Invalid attendance allocation result');
+  return attendanceAllocationResultSchema.parse({
+    id: row.record_id,
+    version: row.record_version,
+    replayed: row.outcome === 'replayed',
+  });
 }

@@ -2,6 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  readAttendanceAllocation,
+  changeAttendanceAllocation,
+  inTenant,
   activateEmployee,
   createDatabase,
   createEntitlementChange,
@@ -84,6 +87,9 @@ describe('dated entitlement grants and overrides', () => {
 
   afterEach(async () => {
     const tenantIds = [tenantId, otherTenantId];
+    await admin.attendanceAllocation.deleteMany({
+      where: { tenantId: { in: tenantIds } },
+    });
     await admin.platformAuditEvent.deleteMany({
       where: { actorId: { in: [operatorId, nonOperatorId] } },
     });
@@ -989,5 +995,348 @@ describe('dated entitlement grants and overrides', () => {
         reason: 'Seasonal approval withdrawn',
       },
     ]);
+  });
+  const allocation = {
+    expectedVersion: 0,
+    enabled: true,
+    deviceLimit: 2,
+    connectorLimit: 1,
+    reason: 'initial_setup' as const,
+  };
+
+  it('defaults every company to no attendance allocation without changing employee or billing entitlements', async () => {
+    const subscription = await admin.tenantSubscription.findFirstOrThrow({
+      where: { tenantId },
+    });
+    for (const code of ['free', 'starter', 'growth', 'business', 'scale']) {
+      const plan = await admin.planVersion.findFirstOrThrow({
+        where: { code, planVersion: 1 },
+      });
+      await admin.tenantSubscription.update({
+        where: { id: subscription.id },
+        data: {
+          planVersionId: plan.id,
+          employeeLimit: plan.employeeLimit,
+          billingMode: code === 'free' ? 'free' : 'manual_paid',
+        },
+      });
+      expect(
+        await readAttendanceAllocation(runtime, actor(ownerId), tenantId),
+      ).toMatchObject({
+        version: 0,
+        enabled: false,
+        deviceLimit: 0,
+        connectorLimit: 0,
+      });
+    }
+    await admin.tenantSubscription.update({
+      where: { id: subscription.id },
+      data: { billingMode: 'complimentary' },
+    });
+    expect(
+      (await readAttendanceAllocation(runtime, actor(ownerId), tenantId))
+        .enabled,
+    ).toBe(false);
+    const before = await readTenantEntitlements(
+      runtime,
+      actor(ownerId),
+      tenantId,
+    );
+    const initial = await readAttendanceAllocation(
+      runtime,
+      actor(ownerId),
+      tenantId,
+    );
+    expect(initial).toEqual({
+      tenantId,
+      version: 0,
+      enabled: false,
+      deviceLimit: 0,
+      connectorLimit: 0,
+      configuredAt: null,
+      machineAccessAvailable: false,
+    });
+    const changed = await changeAttendanceAllocation(
+      runtime,
+      actor(operatorId),
+      tenantId,
+      randomUUID(),
+      allocation,
+    );
+    expect(changed).toMatchObject({ version: 1, replayed: false });
+    expect(
+      await readAttendanceAllocation(
+        runtime,
+        actor(operatorId),
+        tenantId,
+        true,
+      ),
+    ).toMatchObject({
+      version: 1,
+      enabled: true,
+      deviceLimit: 2,
+      connectorLimit: 1,
+      machineAccessAvailable: false,
+    });
+    expect(
+      await readTenantEntitlements(runtime, actor(ownerId), tenantId),
+    ).toEqual(before);
+    expect(
+      await readAttendanceAllocation(
+        runtime,
+        actor(operatorId),
+        otherTenantId,
+        true,
+      ),
+    ).toMatchObject({ version: 0, enabled: false });
+  });
+
+  it('keeps allocations append-only and denies tenant-context runtime access', async () => {
+    await changeAttendanceAllocation(
+      runtime,
+      actor(operatorId),
+      tenantId,
+      randomUUID(),
+      allocation,
+    );
+    for (const sql of [
+      'SELECT * FROM attendance_allocations',
+      'INSERT INTO attendance_allocations(id) VALUES(gen_random_uuid())',
+      'UPDATE attendance_allocations SET enabled=false',
+      'DELETE FROM attendance_allocations',
+    ])
+      await expect(
+        inTenant(runtime, tenantId, (tx) => tx.$queryRawUnsafe(sql)),
+      ).rejects.toThrow();
+    const grants = await admin.$queryRaw<
+      { privilege_type: string }[]
+    >`SELECT privilege_type FROM information_schema.role_table_grants WHERE table_name='attendance_allocations' AND grantee='kinto_control_owner' ORDER BY privilege_type`;
+    expect(grants.map((row) => row.privilege_type)).toEqual([
+      'INSERT',
+      'SELECT',
+    ]);
+    for (const key of ['WORKER_DATABASE_URL', 'DISPATCHER_DATABASE_URL']) {
+      const db = createDatabase(process.env[key]!);
+      try {
+        await expect(
+          db.$queryRaw`SELECT * FROM attendance_allocations`,
+        ).rejects.toThrow();
+        await expect(
+          db.$queryRaw`SELECT * FROM read_attendance_allocation(${ownerId}::uuid,true,${tenantId}::uuid,false)`,
+        ).rejects.toThrow();
+      } finally {
+        await db.$disconnect();
+      }
+    }
+    for (const caller of [
+      actor(ownerId),
+      actor(nonOperatorId),
+      actor(operatorId, false),
+    ])
+      await expect(
+        changeAttendanceAllocation(
+          runtime,
+          caller,
+          tenantId,
+          randomUUID(),
+          allocation,
+        ),
+      ).rejects.toThrow('FORBIDDEN');
+    await expect(
+      readAttendanceAllocation(runtime, actor(ownerId), tenantId, true),
+    ).rejects.toThrow('FORBIDDEN');
+    await expect(
+      readAttendanceAllocation(runtime, actor(ownerId), otherTenantId),
+    ).rejects.toThrow('FORBIDDEN');
+    await expect(
+      readAttendanceAllocation(runtime, actor(ownerId, false), tenantId),
+    ).rejects.toThrow('FORBIDDEN');
+    await admin.membership.update({
+      where: { tenantId_identityId: { tenantId, identityId: ownerId } },
+      data: { roles: ['hr_admin'] },
+    });
+    expect(
+      (await readAttendanceAllocation(runtime, actor(ownerId), tenantId))
+        .enabled,
+    ).toBe(true);
+    await admin.membership.update({
+      where: { tenantId_identityId: { tenantId, identityId: ownerId } },
+      data: { status: 'revoked' },
+    });
+    await expect(
+      readAttendanceAllocation(runtime, actor(ownerId), tenantId),
+    ).rejects.toThrow('FORBIDDEN');
+  });
+
+  it('reconciles concurrent allocation retries once and rejects altered request reuse', async () => {
+    const key = randomUUID();
+    const results = await Promise.all(
+      Array.from({ length: 4 }, () =>
+        changeAttendanceAllocation(
+          runtime,
+          actor(operatorId),
+          tenantId,
+          key,
+          allocation,
+        ),
+      ),
+    );
+    expect(new Set(results.map((row) => row.id)).size).toBe(1);
+    expect(results.filter((row) => !row.replayed)).toHaveLength(1);
+    expect(
+      await admin.attendanceAllocation.count({ where: { tenantId } }),
+    ).toBe(1);
+    expect(
+      await admin.auditEvent.count({
+        where: { tenantId, action: 'attendance.allocation_changed' },
+      }),
+    ).toBe(1);
+    expect(
+      await admin.platformAuditEvent.count({
+        where: { actorId: operatorId, action: 'attendance.allocation_changed' },
+      }),
+    ).toBe(1);
+    expect(
+      await admin.outboxEvent.count({
+        where: { tenantId, type: 'attendance.allocation_changed.v1' },
+      }),
+    ).toBe(1);
+    await expect(
+      changeAttendanceAllocation(runtime, actor(operatorId), tenantId, key, {
+        ...allocation,
+        deviceLimit: 3,
+      }),
+    ).rejects.toThrow('CONFLICT');
+    await admin.platformOperator.update({
+      where: { identityId: operatorId },
+      data: { status: 'revoked' },
+    });
+    await expect(
+      changeAttendanceAllocation(
+        runtime,
+        actor(operatorId),
+        tenantId,
+        key,
+        allocation,
+      ),
+    ).rejects.toThrow('FORBIDDEN');
+  });
+
+  it('rejects stale concurrent changes, preserves versions and disables without erasing history', async () => {
+    const key = randomUUID();
+    const first = await changeAttendanceAllocation(
+      runtime,
+      actor(operatorId),
+      tenantId,
+      key,
+      allocation,
+    );
+    const changes = await Promise.allSettled(
+      [3, 4].map((deviceLimit) =>
+        changeAttendanceAllocation(
+          runtime,
+          actor(operatorId),
+          tenantId,
+          randomUUID(),
+          {
+            ...allocation,
+            expectedVersion: 1,
+            deviceLimit,
+            reason: 'allocation_change',
+          },
+        ),
+      ),
+    );
+    expect(changes.filter((row) => row.status === 'fulfilled')).toHaveLength(1);
+    expect(changes.filter((row) => row.status === 'rejected')).toHaveLength(1);
+    const disabled = await changeAttendanceAllocation(
+      runtime,
+      actor(operatorId),
+      tenantId,
+      randomUUID(),
+      {
+        expectedVersion: 2,
+        enabled: false,
+        deviceLimit: 0,
+        connectorLimit: 0,
+        reason: 'disable_attendance',
+      },
+    );
+    expect(disabled.version).toBe(3);
+    expect(
+      await readAttendanceAllocation(runtime, actor(ownerId), tenantId),
+    ).toMatchObject({
+      enabled: false,
+      deviceLimit: 0,
+      connectorLimit: 0,
+      version: 3,
+      machineAccessAvailable: false,
+    });
+    expect(
+      await changeAttendanceAllocation(
+        runtime,
+        actor(operatorId),
+        tenantId,
+        key,
+        allocation,
+      ),
+    ).toEqual({ ...first, replayed: true });
+    expect(
+      await admin.attendanceAllocation.count({ where: { tenantId } }),
+    ).toBe(3);
+    await expect(
+      changeAttendanceAllocation(
+        runtime,
+        actor(operatorId),
+        tenantId,
+        randomUUID(),
+        {
+          expectedVersion: 3,
+          enabled: false,
+          deviceLimit: 0,
+          connectorLimit: 0,
+          reason: 'disable_attendance',
+        },
+      ),
+    ).rejects.toThrow('CONFLICT');
+  });
+
+  it('fails closed for suspended companies and invalid direct allocation commands', async () => {
+    const direct = (
+      enabled: boolean,
+      devices: number,
+      connectors: number,
+      reason: string,
+    ) => runtime.$queryRaw`SELECT * FROM change_attendance_allocation(
+      ${operatorId}::uuid,true,${tenantId}::uuid,${randomUUID()}::uuid,${randomUUID()}::uuid,0,
+      ${enabled},${devices}::integer,${connectors}::integer,${reason}::varchar,${randomUUID()}::uuid,${randomUUID()}::uuid,${randomUUID()}::uuid)`;
+    for (const [enabled, devices, connectors, reason] of [
+      [true, 0, 1, 'initial_setup'],
+      [true, 1001, 1, 'initial_setup'],
+      [false, 0, 0, 'disable_attendance'],
+      [true, 1, 1, 'private reason'],
+    ] as const)
+      expect(await direct(enabled, devices, connectors, reason)).toEqual([
+        { outcome: 'invalid_state', record_id: null, record_version: null },
+      ]);
+    expect(
+      await admin.attendanceAllocation.count({ where: { tenantId } }),
+    ).toBe(0);
+    await admin.tenant.update({
+      where: { id: tenantId },
+      data: { status: 'suspended' },
+    });
+    await expect(
+      changeAttendanceAllocation(
+        runtime,
+        actor(operatorId),
+        tenantId,
+        randomUUID(),
+        allocation,
+      ),
+    ).rejects.toThrow('NOT_FOUND');
+    await expect(
+      readAttendanceAllocation(runtime, actor(operatorId), tenantId, true),
+    ).rejects.toThrow('NOT_FOUND');
   });
 });

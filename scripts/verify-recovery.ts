@@ -5,6 +5,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import {
+  readAttendanceAllocation,
+  changeAttendanceAllocation,
   createTenantDeviceInventory,
   updateTenantDeviceInventory,
   readTenantDeviceInventory,
@@ -72,6 +74,7 @@ async function snapshot(db: PrismaClient) {
     [
       'administrator_account_requests',
       'administrator_invitations',
+      'attendance_allocations',
       'attendance_devices',
       'audit_events',
       'auth_provider_logout_events',
@@ -214,6 +217,9 @@ async function snapshot(db: PrismaClient) {
       orderBy: { id: 'asc' },
     }),
     legalEntities: await db.legalEntity.findMany({ orderBy: { id: 'asc' } }),
+    attendanceAllocations: await db.attendanceAllocation.findMany({
+      orderBy: { id: 'asc' },
+    }),
     attendanceDevices: await db.attendanceDevice.findMany({
       orderBy: { id: 'asc' },
     }),
@@ -898,6 +904,41 @@ async function main() {
     await source.platformOperator.create({
       data: { identityId: operator.id },
     });
+    const allocationKey = randomUUID();
+    const allocationInput = {
+      expectedVersion: 0,
+      enabled: true,
+      deviceLimit: 2,
+      connectorLimit: 1,
+      reason: 'initial_setup' as const,
+    };
+    const allocationReceipt = await changeAttendanceAllocation(
+      sourceApp,
+      { identityId: operator.id, mfaVerified: true },
+      tenants[0],
+      allocationKey,
+      allocationInput,
+    );
+    await changeAttendanceAllocation(
+      sourceApp,
+      { identityId: operator.id, mfaVerified: true },
+      tenants[0],
+      randomUUID(),
+      {
+        expectedVersion: 1,
+        enabled: false,
+        deviceLimit: 0,
+        connectorLimit: 0,
+        reason: 'disable_attendance',
+      },
+    );
+    await changeAttendanceAllocation(
+      sourceApp,
+      { identityId: operator.id, mfaVerified: true },
+      tenants[1],
+      randomUUID(),
+      allocationInput,
+    );
     const provisioning = await requestCompanyProvisioning(
       sourceApp,
       { identityId: operator.id, mfaVerified: true },
@@ -1091,7 +1132,7 @@ async function main() {
     const policies = await restored.$queryRaw<
       { enabled: boolean; forced: boolean }[]
     >`SELECT relrowsecurity AS enabled, relforcerowsecurity AS forced FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND relkind='r' AND relname <> '_prisma_migrations'`;
-    assert.equal(policies.length, 44);
+    assert.equal(policies.length, 45);
     assert.ok(policies.every((row) => row.enabled && row.forced));
     assert.deepEqual(await restoredApp.employee.findMany(), []);
     stage = 'restored tenant lifecycle visibility';
@@ -1278,6 +1319,48 @@ async function main() {
         1,
       );
     }
+    stage = 'restored attendance allocations and exact retry';
+    assert.deepEqual(
+      await changeAttendanceAllocation(
+        restoredApp,
+        { identityId: operator.id, mfaVerified: true },
+        tenants[0],
+        allocationKey,
+        allocationInput,
+      ),
+      { ...allocationReceipt, replayed: true },
+    );
+    const restoredAllocation = await readAttendanceAllocation(
+      restoredApp,
+      { identityId: membershipOwners[0], mfaVerified: true },
+      tenants[0],
+    );
+    assert.equal(restoredAllocation.version, 2);
+    assert.equal(restoredAllocation.enabled, false);
+    assert.equal(restoredAllocation.machineAccessAvailable, false);
+    assert.equal(
+      (
+        await readAttendanceAllocation(
+          restoredApp,
+          { identityId: membershipOwners[1], mfaVerified: true },
+          tenants[1],
+        )
+      ).enabled,
+      true,
+    );
+    const allocationEvents = await restored.outboxEvent.findMany({
+      where: { type: 'attendance.allocation_changed.v1' },
+    });
+    assert.equal(allocationEvents.length, 3);
+    for (const event of allocationEvents) {
+      const ref = { tenantId: event.tenantId, eventId: event.id };
+      assert.equal(await processEvent(restoredWorker, ref), 'completed');
+      assert.equal(await processEvent(restoredWorker, ref), 'completed');
+      assert.equal(
+        await restored.consumerReceipt.count({ where: { eventId: event.id } }),
+        1,
+      );
+    }
     stage = 'restored migration replay';
     pnpm(['db:migrate'], restoredEnv);
     const report = {
@@ -1302,6 +1385,9 @@ async function main() {
       membershipAdministrationAuditPreserved: true,
       organizationPolicyHistoryPreserved: true,
       organizationCatalogsPreserved: true,
+      attendanceAllocationHistoryPreserved: true,
+      attendanceAllocationRetryPreserved: true,
+      attendanceAllocationEventsConsumed: true,
       attendanceDeviceInventoryPreserved: true,
       attendanceDeviceChangeEventsConsumed: true,
       employeeAssignmentsPreserved: true,

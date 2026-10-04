@@ -1477,3 +1477,5 @@ export type EmployeeBankDetailsResponse = z.infer<
 export * from './attendance';
 
 export * from './devices';
+
+export * from './attendance-entitlements';
