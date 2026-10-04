@@ -4,6 +4,8 @@ import {
   type OnModuleInit,
 } from '@nestjs/common';
 import {
+  readAttendanceAllocation,
+  changeAttendanceAllocation,
   readTenantDeviceInventory,
   createTenantDeviceInventory,
   updateTenantDeviceInventory,
@@ -88,6 +90,7 @@ import {
 } from '@kinto/database';
 import {
   type AuthenticatedIdentity,
+  type AttendanceAllocation,
   type DeviceCreate,
   type DeviceUpdate,
   type DeviceListQuery,
@@ -307,6 +310,27 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     query: SecurityAuditQuery,
   ) {
     return listTenantSecurityAudit(this.db, actor, tenantId, query);
+  }
+  readAttendanceAllocation(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    platform = false,
+  ) {
+    return readAttendanceAllocation(this.db, actor, tenantId, platform);
+  }
+  changeAttendanceAllocation(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    requestId: string,
+    input: AttendanceAllocation,
+  ) {
+    return changeAttendanceAllocation(
+      this.db,
+      actor,
+      tenantId,
+      requestId,
+      input,
+    );
   }
   readDevices(
     actor: { identityId: string; mfaVerified: boolean },

@@ -40,6 +40,7 @@ model Tenant {
   administratorAccountRequests AdministratorAccountRequest[]
   administratorInvitations     AdministratorInvitation[]
   legalEntity                  LegalEntity?
+  attendanceAllocations        AttendanceAllocation[]
   attendanceDevices            AttendanceDevice[]
   branches                     Branch[]
   departments                  Department[]
@@ -64,6 +65,7 @@ model Identity {
   memberships                  Membership[]
   entitlementCreationReceipts   EntitlementCreationReceipt[]
   entitlementRevocationReceipts EntitlementRevocationReceipt[]
+  attendanceAllocations        AttendanceAllocation[]
   platformOperator             PlatformOperator?
   companyProvisioningRequests  CompanyProvisioningRequest[]
   platformAuditEvents          PlatformAuditEvent[]
@@ -954,4 +956,24 @@ model AttendanceDevice {
   @@unique([tenantId, id])
   @@unique([tenantId, code])
   @@map("attendance_devices")
+}
+
+model AttendanceAllocation {
+  id              String   @id @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  actorId         String   @map("actor_id") @db.Uuid
+  requestId       String   @map("request_id") @db.Uuid
+  expectedVersion Int      @map("expected_version")
+  version         Int
+  enabled         Boolean
+  deviceLimit     Int      @map("device_limit")
+  connectorLimit  Int      @map("connector_limit")
+  reason          String   @db.VarChar(40)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  actor           Identity @relation(fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, version])
+  @@unique([tenantId, actorId, requestId])
+  @@map("attendance_allocations")
 }

@@ -107,3 +107,7 @@ The [review inventory](foundation-readiness.json) and [readiness diagnostic](../
 ### Device inventory workspace — 4 October 2026
 
 [The device screen](../evidence/phase-02/attendance-device-workspace.md) now exposes draft registration, versioned metadata editing and confirmed retirement for owners, plus read-only HR inventory and bounded next/first-page navigation. Uncertain/stale writes lock editing until a refreshed session/inventory is loaded; denied access discards company data and form state. Every device remains unconnected and unverified. Next: versioned device/connector feature and capacity entitlements before machine enrollment. The remaining P02-01 registry activation, credential rotation, mappings and hardware acceptance are still pending.
+
+### Explicit attendance allocation controls — 4 October 2026
+
+[Immutable operator allocations](../evidence/phase-02/attendance-entitlement-controls.md) add separate attendance device/connector limits with fresh authority, optimistic versioning, exact-request replay and transactional audit/outbox. All plans default disabled/zero; existing employee entitlements and complimentary billing remain unchanged. Allocating capacity does not activate devices or grant machine access. Next: allocation management/review workspace, then single-use enrollment with atomic usage enforcement. P02-01 remains partial; hardware and production gates remain pending.

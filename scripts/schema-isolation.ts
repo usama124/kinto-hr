@@ -163,6 +163,14 @@ export const schemaIsolationInventory: readonly Classification[] = [
       'persists verified logout across Redis failure and API restart without granting a revoked session',
     ),
   },
+  privateTenantTable(
+    'attendance_allocations',
+    regression(
+      'entitlement-controls',
+      'keeps allocations append-only and denies tenant-context runtime access',
+    ),
+    { kinto_control_owner: controlAppend },
+  ),
   tenantTable(
     'attendance_devices',
     regression(

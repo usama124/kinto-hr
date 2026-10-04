@@ -1,4 +1,9 @@
 import {
+  attendanceAllocationSchema,
+  attendanceAllocationSnapshotSchema,
+  attendanceAllocationResultSchema,
+} from './attendance-entitlements';
+import {
   deviceCreateSchema,
   deviceUpdateSchema,
   deviceListQuerySchema,
@@ -1339,4 +1344,84 @@ it('restricts device inventory to credential-free draft metadata and reviewed tr
     items: [],
     nextCursor: null,
   });
+});
+
+it('validates explicit attendance allocations without granting machine access or paid-plan defaults', () => {
+  const initial = {
+    expectedVersion: 0,
+    enabled: true,
+    deviceLimit: 2,
+    connectorLimit: 1,
+    reason: 'initial_setup',
+  };
+  expect(attendanceAllocationSchema.parse(initial)).toEqual(initial);
+  expect(
+    attendanceAllocationSchema.safeParse({
+      ...initial,
+      expectedVersion: 1,
+      reason: 'allocation_change',
+    }).success,
+  ).toBe(true);
+  expect(
+    attendanceAllocationSchema.safeParse({
+      expectedVersion: 1,
+      enabled: false,
+      deviceLimit: 0,
+      connectorLimit: 0,
+      reason: 'disable_attendance',
+    }).success,
+  ).toBe(true);
+  for (const change of [
+    { deviceLimit: 0 },
+    { connectorLimit: 0 },
+    { deviceLimit: 1001 },
+    { connectorLimit: -1 },
+    { deviceLimit: 1.5 },
+    { enabled: false },
+    { expectedVersion: 1 },
+    { reason: 'free text' },
+    { actorId: 'caller' },
+    { machineAccessAvailable: true },
+  ])
+    expect(
+      attendanceAllocationSchema.safeParse({ ...initial, ...change }).success,
+    ).toBe(false);
+  const base = {
+    tenantId: '00000000-0000-4000-8000-000000000001',
+    version: 0,
+    enabled: false,
+    deviceLimit: 0,
+    connectorLimit: 0,
+    configuredAt: null,
+    machineAccessAvailable: false,
+  };
+  expect(attendanceAllocationSnapshotSchema.parse(base)).toEqual(base);
+  expect(
+    attendanceAllocationSnapshotSchema.safeParse({
+      ...base,
+      version: 1,
+      enabled: true,
+      deviceLimit: 2,
+      connectorLimit: 1,
+      configuredAt: '2026-10-04T00:00:00Z',
+    }).success,
+  ).toBe(true);
+  for (const change of [
+    { deviceLimit: 1 },
+    { enabled: true },
+    { configuredAt: '2026-10-04T00:00:00Z' },
+    { version: 1 },
+    { machineAccessAvailable: true },
+  ])
+    expect(
+      attendanceAllocationSnapshotSchema.safeParse({ ...base, ...change })
+        .success,
+    ).toBe(false);
+  expect(
+    attendanceAllocationResultSchema.parse({
+      id: base.tenantId,
+      version: 1,
+      replayed: true,
+    }),
+  ).toEqual({ id: base.tenantId, version: 1, replayed: true });
 });

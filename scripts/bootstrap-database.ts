@@ -105,6 +105,8 @@ try {
     'CREATE POLICY platform_control ON administrator_invitations FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON legal_entities',
     'CREATE POLICY platform_control ON legal_entities FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
+    'DROP POLICY IF EXISTS platform_control ON attendance_allocations',
+    'CREATE POLICY platform_control ON attendance_allocations FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON attendance_devices',
     'CREATE POLICY platform_control ON attendance_devices FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON branches',
@@ -235,6 +237,9 @@ try {
     'GRANT SELECT ON tenant_subscriptions, entitlement_grants, entitlement_overrides TO kinto_app',
   );
   await database.$executeRawUnsafe(
+    'GRANT SELECT, INSERT ON attendance_allocations TO kinto_control_owner',
+  );
+  await database.$executeRawUnsafe(
     'GRANT SELECT, INSERT ON audit_events TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
@@ -304,6 +309,8 @@ try {
     'public.mark_administrator_invitation_delivered(uuid, timestamptz, uuid)',
     'public.discover_identity_tenants(uuid)',
     'public.list_tenant_security_audit(uuid, boolean, uuid, integer, varchar, timestamptz, timestamptz, uuid)',
+    'public.read_attendance_allocation(uuid,boolean,uuid,boolean)',
+    'public.change_attendance_allocation(uuid,boolean,uuid,uuid,uuid,integer,boolean,integer,integer,varchar,uuid,uuid,uuid)',
     'public.read_tenant_device_inventory(uuid,boolean,uuid,integer,uuid)',
     'public.mutate_tenant_device_inventory(uuid,boolean,uuid,uuid,integer,uuid,varchar,varchar,varchar,varchar,varchar,varchar,varchar,uuid,uuid)',
     'public.read_tenant_organization(uuid, boolean, uuid)',
