@@ -318,6 +318,9 @@ export default function Devices() {
   );
   return (
     <>
+      <p>
+        <Link href="/attendance-capacity">Review attendance capacity →</Link>
+      </p>
       <section className="page-heading">
         <div>
           <span className="eyebrow">PHASE 2 · DRAFT INVENTORY</span>
