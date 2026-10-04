@@ -1,6 +1,14 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { PrismaClient, type Prisma } from '@prisma/client';
 import {
+  enrollmentIssueSchema,
+  enrollmentRevokeSchema,
+  enrollmentItemSchema,
+  enrollmentIssueResultSchema,
+  enrollmentListQuerySchema,
+  enrollmentListSchema,
+  type EnrollmentIssue,
+  type EnrollmentListQuery,
   attendanceAllocationSchema,
   attendanceAllocationSnapshotSchema,
   attendanceAllocationResultSchema,
@@ -2584,5 +2592,85 @@ export async function changeAttendanceAllocation(
     id: row.record_id,
     version: row.record_version,
     replayed: row.outcome === 'replayed',
+  });
+}
+
+type EnrollmentRow = { outcome: string; snapshot: unknown };
+function enrollmentResult(row: EnrollmentRow | undefined, allowed: string[]) {
+  if (row?.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (row?.outcome === 'not_found') throw new DomainError('NOT_FOUND');
+  if (row?.outcome === 'stale') throw new DomainError('STALE_VERSION');
+  if (row?.outcome === 'conflict') throw new DomainError('CONFLICT');
+  if (row?.outcome === 'invalid_state') throw new DomainError('INVALID_STATE');
+  if (row?.outcome === 'capacity_exceeded')
+    throw new DomainError('CAPACITY_REACHED');
+  if (!row || !allowed.includes(row.outcome))
+    throw new Error('Invalid enrollment result');
+  return row;
+}
+export async function issueConnectorEnrollment(
+  db: PrismaClient,
+  actor: OrganizationActor,
+  tenantId: string,
+  requestId: string,
+  input: EnrollmentIssue,
+) {
+  validateOrganizationActor(actor, tenantId);
+  tenantIdSchema.parse(requestId);
+  const value = enrollmentIssueSchema.parse(input);
+  const token = 'ke1_' + randomBytes(32).toString('base64url');
+  const digest = createHash('sha256').update(token).digest('hex');
+  const rows = await db.$queryRaw<
+    EnrollmentRow[]
+  >`SELECT * FROM public.issue_connector_enrollment(
+    ${actor.identityId}::uuid,${actor.mfaVerified},${tenantId}::uuid,${requestId}::uuid,${randomUUID()}::uuid,
+    ${value.deviceId}::uuid,${value.expectedDeviceVersion}::integer,${value.expectedAllocationVersion}::integer,
+    ${digest}::varchar,${randomUUID()}::uuid,${randomUUID()}::uuid)`;
+  const row = enrollmentResult(rows[0], ['created', 'replayed']);
+  return enrollmentIssueResultSchema.parse({
+    enrollment: row.snapshot,
+    replayed: row.outcome === 'replayed',
+    token: row.outcome === 'created' ? token : null,
+    machineAccessAvailable: false,
+  });
+}
+export async function revokeConnectorEnrollment(
+  db: PrismaClient,
+  actor: OrganizationActor,
+  tenantId: string,
+  id: string,
+  input: { expectedVersion: 1 },
+) {
+  validateOrganizationActor(actor, tenantId);
+  tenantIdSchema.parse(id);
+  enrollmentRevokeSchema.parse(input);
+  const rows = await db.$queryRaw<
+    EnrollmentRow[]
+  >`SELECT * FROM public.revoke_connector_enrollment(
+    ${actor.identityId}::uuid,${actor.mfaVerified},${tenantId}::uuid,${id}::uuid,${input.expectedVersion}::integer,${randomUUID()}::uuid,${randomUUID()}::uuid)`;
+  return enrollmentItemSchema.parse(
+    enrollmentResult(rows[0], ['updated', 'replayed']).snapshot,
+  );
+}
+export async function listConnectorEnrollments(
+  db: PrismaClient,
+  actor: OrganizationActor,
+  tenantId: string,
+  input: EnrollmentListQuery,
+) {
+  validateOrganizationActor(actor, tenantId);
+  const query = enrollmentListQuerySchema.parse(input);
+  const rows = await db.$queryRaw<
+    EnrollmentRow[]
+  >`SELECT * FROM public.list_connector_enrollments(${actor.identityId}::uuid,${actor.mfaVerified},${tenantId}::uuid,${query.limit}::integer,${query.afterId ?? null}::uuid)`;
+  const row = enrollmentResult(rows[0], ['ok']);
+  if (!Array.isArray(row.snapshot)) throw new Error('Invalid enrollment list');
+  const items = row.snapshot
+    .slice(0, query.limit)
+    .map((item) => enrollmentItemSchema.parse(item));
+  return enrollmentListSchema.parse({
+    items,
+    nextCursor: row.snapshot.length > query.limit ? items.at(-1)!.id : null,
+    machineAccessAvailable: false,
   });
 }

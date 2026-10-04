@@ -1,7 +1,11 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  issueConnectorEnrollment,
+  revokeConnectorEnrollment,
+  listConnectorEnrollments,
+  changeAttendanceAllocation,
   createDatabase,
   readTenantDeviceInventory,
   createTenantDeviceInventory,
@@ -87,6 +91,22 @@ describe('tenant attendance device inventory', () => {
 
   afterEach(async () => {
     const tenants = [tenantId, otherTenantId];
+    await admin.connectorEnrollmentToken.deleteMany({
+      where: { tenantId: { in: tenants } },
+    });
+    await admin.attendanceAllocation.deleteMany({
+      where: { tenantId: { in: tenants } },
+    });
+    await admin.tenantSubscription.deleteMany({
+      where: { tenantId: { in: tenants } },
+    });
+    await admin.platformAuditEvent.deleteMany({
+      where: { actorId: identities.owner },
+    });
+    await admin.platformOperator.deleteMany({
+      where: { identityId: identities.owner },
+    });
+
     await admin.consumerReceipt.deleteMany({
       where: { tenantId: { in: tenants } },
     });
@@ -521,5 +541,599 @@ describe('tenant attendance device inventory', () => {
         { limit: 25 },
       ),
     ).toEqual({ items: [], nextCursor: null });
+  });
+  const enrollmentSetup = async (deviceLimit = 2, connectorLimit = 2) => {
+    const branchRecord = await setup();
+    const first = await createTenantDeviceInventory(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      input(branchRecord.id),
+    );
+    const second = await createTenantDeviceInventory(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      input(branchRecord.id, 'K50-02'),
+    );
+    const plan = await admin.planVersion.findFirstOrThrow({
+      where: { code: 'free', planVersion: 1 },
+    });
+    await admin.tenantSubscription.create({
+      data: {
+        id: randomUUID(),
+        tenantId,
+        subscriptionVersion: 1,
+        planVersionId: plan.id,
+        billingMode: 'free',
+        employeeLimit: 5,
+        reason: 'Synthetic enrollment subscription',
+      },
+    });
+    await admin.platformOperator.create({
+      data: { identityId: identities.owner },
+    });
+    await changeAttendanceAllocation(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      randomUUID(),
+      {
+        expectedVersion: 0,
+        enabled: true,
+        deviceLimit,
+        connectorLimit,
+        reason: 'initial_setup',
+      },
+    );
+    return {
+      first,
+      second,
+      branch: branchRecord,
+      input: {
+        deviceId: first.id,
+        expectedDeviceVersion: 1,
+        expectedAllocationVersion: 1,
+      },
+    };
+  };
+
+  it('issues one digest-only enrollment reservation under simultaneous exact retries without replaying secrets', async () => {
+    const fixture = await enrollmentSetup();
+    const key = randomUUID();
+    const results = await Promise.all(
+      Array.from({ length: 4 }, () =>
+        issueConnectorEnrollment(
+          runtime,
+          actor(identities.owner),
+          tenantId,
+          key,
+          fixture.input,
+        ),
+      ),
+    );
+    const first = results.find((result) => !result.replayed)!;
+    expect(results.filter((result) => result.token !== null)).toHaveLength(1);
+    expect(
+      results.every((result) => result.enrollment.id === first.enrollment.id),
+    ).toBe(true);
+    expect(first.machineAccessAvailable).toBe(false);
+    const stored = await admin.connectorEnrollmentToken.findUniqueOrThrow({
+      where: { id: first.enrollment.id },
+    });
+    expect(stored.tokenDigest).toBe(
+      createHash('sha256').update(first.token!).digest('hex'),
+    );
+    expect(stored.expiresAt.getTime() - stored.createdAt.getTime()).toBe(
+      900000,
+    );
+    expect(JSON.stringify(stored)).not.toContain(first.token!);
+    expect(
+      await admin.auditEvent.count({
+        where: { tenantId, action: 'connector.enrollment_issued' },
+      }),
+    ).toBe(1);
+    expect(
+      await admin.outboxEvent.count({
+        where: { tenantId, type: 'connector.enrollment_changed.v1' },
+      }),
+    ).toBe(1);
+    await expect(
+      issueConnectorEnrollment(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        key,
+        { ...fixture.input, deviceId: fixture.second.id },
+      ),
+    ).rejects.toThrow('CONFLICT');
+    const list = await listConnectorEnrollments(
+      runtime,
+      actor(identities.hr),
+      tenantId,
+      { limit: 25 },
+    );
+    expect(list.items).toHaveLength(1);
+    expect(JSON.stringify(list)).not.toContain(stored.tokenDigest);
+    expect(JSON.stringify(list)).not.toContain(first.token!);
+  });
+
+  it('keeps enrollment digests private and rechecks owner authority on retries', async () => {
+    const fixture = await enrollmentSetup();
+    const key = randomUUID();
+    await issueConnectorEnrollment(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      key,
+      fixture.input,
+    );
+    for (const who of [
+      identities.hr,
+      identities.employee,
+      identities.otherOwner,
+    ])
+      await expect(
+        issueConnectorEnrollment(
+          runtime,
+          actor(who),
+          tenantId,
+          randomUUID(),
+          fixture.input,
+        ),
+      ).rejects.toThrow('FORBIDDEN');
+    await expect(
+      issueConnectorEnrollment(
+        runtime,
+        actor(identities.owner, false),
+        tenantId,
+        key,
+        fixture.input,
+      ),
+    ).rejects.toThrow('FORBIDDEN');
+    for (const sql of [
+      'SELECT * FROM connector_enrollment_tokens',
+      "UPDATE connector_enrollment_tokens SET status='revoked'",
+      'SELECT enrollment_projection(gen_random_uuid())',
+    ])
+      await expect(
+        inTenant(runtime, tenantId, (db) => db.$queryRawUnsafe(sql)),
+      ).rejects.toThrow(/permission denied/);
+    const columns = await admin.$queryRaw<
+      { column_name: string }[]
+    >`SELECT column_name FROM information_schema.column_privileges WHERE table_name='connector_enrollment_tokens' AND grantee='kinto_control_owner' AND privilege_type='UPDATE' ORDER BY column_name`;
+    expect(columns.map((row) => row.column_name)).toEqual([
+      'revoked_at',
+      'status',
+      'version',
+    ]);
+    await admin.membership.updateMany({
+      where: { tenantId, identityId: identities.owner },
+      data: { status: 'revoked' },
+    });
+    await expect(
+      issueConnectorEnrollment(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        key,
+        fixture.input,
+      ),
+    ).rejects.toThrow('FORBIDDEN');
+    await expect(
+      listConnectorEnrollments(runtime, actor(identities.employee), tenantId, {
+        limit: 25,
+      }),
+    ).rejects.toThrow('FORBIDDEN');
+  });
+
+  it('serializes final connector or device capacity and refuses allocation reductions beneath live reservations', async () => {
+    const branchRecord = await setup();
+    for (const limits of [
+      [2, 1],
+      [1, 2],
+    ]) {
+      // Each iteration releases its previous reservations before changing limits.
+      const code = 'CAP-' + limits.join('-');
+      const first = await createTenantDeviceInventory(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        input(branchRecord.id, code + 'A'),
+      );
+      const second = await createTenantDeviceInventory(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        input(branchRecord.id, code + 'B'),
+      );
+      if (limits[0] === 2) {
+        const plan = await admin.planVersion.findFirstOrThrow({
+          where: { code: 'free', planVersion: 1 },
+        });
+        await admin.tenantSubscription.create({
+          data: {
+            id: randomUUID(),
+            tenantId,
+            subscriptionVersion: 1,
+            planVersionId: plan.id,
+            billingMode: 'free',
+            employeeLimit: 5,
+            reason: 'Synthetic quota race',
+          },
+        });
+        await admin.platformOperator.create({
+          data: { identityId: identities.owner },
+        });
+      }
+      const version = limits[0] === 2 ? 0 : 1;
+      await changeAttendanceAllocation(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        randomUUID(),
+        {
+          expectedVersion: version,
+          enabled: true,
+          deviceLimit: limits[0],
+          connectorLimit: limits[1],
+          reason: version === 0 ? 'initial_setup' : 'allocation_change',
+        },
+      );
+      const results = await Promise.allSettled(
+        [first, second].map((device) =>
+          issueConnectorEnrollment(
+            runtime,
+            actor(identities.owner),
+            tenantId,
+            randomUUID(),
+            {
+              deviceId: device.id,
+              expectedDeviceVersion: 1,
+              expectedAllocationVersion: version + 1,
+            },
+          ),
+        ),
+      );
+      expect(
+        results.filter((result) => result.status === 'fulfilled'),
+      ).toHaveLength(1);
+      expect(
+        results.filter((result) => result.status === 'rejected'),
+      ).toHaveLength(1);
+      const winner = results.find((result) => result.status === 'fulfilled')!;
+      if (winner.status !== 'fulfilled') throw new Error('Missing winner');
+      await expect(
+        changeAttendanceAllocation(
+          runtime,
+          actor(identities.owner),
+          tenantId,
+          randomUUID(),
+          {
+            expectedVersion: version + 1,
+            enabled: false,
+            deviceLimit: 0,
+            connectorLimit: 0,
+            reason: 'disable_attendance',
+          },
+        ),
+      ).rejects.toThrow('CONFLICT');
+      await revokeConnectorEnrollment(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        winner.value.enrollment.id,
+        { expectedVersion: 1 },
+      );
+    }
+  });
+
+  it('revokes once, releases capacity, preserves old receipts and never restores a token', async () => {
+    const fixture = await enrollmentSetup(1, 1);
+    const key = randomUUID();
+    const issued = await issueConnectorEnrollment(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      key,
+      fixture.input,
+    );
+    await expect(
+      issueConnectorEnrollment(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        randomUUID(),
+        fixture.input,
+      ),
+    ).rejects.toThrow('CONFLICT');
+    await expect(
+      revokeConnectorEnrollment(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        issued.enrollment.id,
+        { expectedVersion: 1 },
+      ),
+    ).rejects.toThrow('FORBIDDEN');
+    const results = await Promise.all(
+      Array.from({ length: 3 }, () =>
+        revokeConnectorEnrollment(
+          runtime,
+          actor(identities.owner),
+          tenantId,
+          issued.enrollment.id,
+          { expectedVersion: 1 },
+        ),
+      ),
+    );
+    expect(
+      results.every(
+        (result) => result.status === 'revoked' && result.version === 2,
+      ),
+    ).toBe(true);
+    expect(
+      await admin.auditEvent.count({
+        where: { tenantId, action: 'connector.enrollment_revoked' },
+      }),
+    ).toBe(1);
+    const retry = await issueConnectorEnrollment(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      key,
+      fixture.input,
+    );
+    expect(retry).toMatchObject({
+      token: null,
+      replayed: true,
+      enrollment: { status: 'revoked', version: 2 },
+    });
+    await issueConnectorEnrollment(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      randomUUID(),
+      { ...fixture.input, deviceId: fixture.second.id },
+    );
+    const list = await listConnectorEnrollments(
+      runtime,
+      actor(identities.hr),
+      tenantId,
+      { limit: 1 },
+    );
+    expect(list.items).toHaveLength(1);
+    expect(list.nextCursor).toBe(list.items[0].id);
+    const next = await listConnectorEnrollments(
+      runtime,
+      actor(identities.hr),
+      tenantId,
+      { limit: 1, afterId: list.nextCursor! },
+    );
+    expect(next.items).toHaveLength(1);
+    expect(next.items[0].id).not.toBe(list.items[0].id);
+    expect(next.nextCursor).toBeNull();
+  });
+
+  it('expires reservations without extending retries and refuses stale, inactive or foreign device scope', async () => {
+    const fixture = await enrollmentSetup(1, 1);
+    const key = randomUUID();
+    await expect(
+      issueConnectorEnrollment(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        key,
+        { ...fixture.input, expectedAllocationVersion: 2 },
+      ),
+    ).rejects.toThrow('STALE_VERSION');
+    await expect(
+      issueConnectorEnrollment(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        key,
+        { ...fixture.input, expectedDeviceVersion: 2 },
+      ),
+    ).rejects.toThrow('STALE_VERSION');
+    await expect(
+      issueConnectorEnrollment(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        key,
+        { ...fixture.input, deviceId: randomUUID() },
+      ),
+    ).rejects.toThrow('NOT_FOUND');
+    const issued = await issueConnectorEnrollment(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      key,
+      fixture.input,
+    );
+    // Migration-role-only synthetic time travel; preserve the exact 15-minute lifetime.
+    await admin.$executeRaw`UPDATE connector_enrollment_tokens SET created_at=created_at-interval '16 minutes',expires_at=expires_at-interval '16 minutes' WHERE id=${issued.enrollment.id}::uuid`;
+    expect(
+      await issueConnectorEnrollment(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        key,
+        fixture.input,
+      ),
+    ).toMatchObject({
+      token: null,
+      replayed: true,
+      enrollment: { status: 'expired' },
+    });
+    await issueConnectorEnrollment(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      randomUUID(),
+      fixture.input,
+    );
+    await admin.tenant.update({
+      where: { id: tenantId },
+      data: { status: 'suspended' },
+    });
+    await expect(
+      issueConnectorEnrollment(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        key,
+        fixture.input,
+      ),
+    ).rejects.toThrow('FORBIDDEN');
+    await expect(
+      revokeConnectorEnrollment(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        issued.enrollment.id,
+        { expectedVersion: 1 },
+      ),
+    ).rejects.toThrow('FORBIDDEN');
+  });
+
+  it('serializes enrollment issuance against allocation disable and rejects invalid direct SQL input', async () => {
+    const fixture = await enrollmentSetup(1, 1);
+    const results = await Promise.allSettled([
+      issueConnectorEnrollment(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        randomUUID(),
+        fixture.input,
+      ),
+      changeAttendanceAllocation(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        randomUUID(),
+        {
+          expectedVersion: 1,
+          enabled: false,
+          deviceLimit: 0,
+          connectorLimit: 0,
+          reason: 'disable_attendance',
+        },
+      ),
+    ]);
+    expect(
+      results.filter((result) => result.status === 'fulfilled'),
+    ).toHaveLength(1);
+    expect(
+      results.filter((result) => result.status === 'rejected'),
+    ).toHaveLength(1);
+    for (const [version, digest] of [
+      [null, 'a'.repeat(64)],
+      [0, 'a'.repeat(64)],
+      [1, 'not-a-digest'],
+    ] as const) {
+      const rows = await runtime.$queryRaw<
+        { outcome: string }[]
+      >`SELECT * FROM issue_connector_enrollment(${identities.owner}::uuid,true,${tenantId}::uuid,${randomUUID()}::uuid,${randomUUID()}::uuid,${fixture.first.id}::uuid,${version}::integer,1,${digest}::varchar,${randomUUID()}::uuid,${randomUUID()}::uuid)`;
+      expect(rows[0].outcome).toBe('invalid_state');
+    }
+  });
+
+  it('rejects retired devices and inactive branches before creating any reservation', async () => {
+    const fixture = await enrollmentSetup();
+    await updateTenantDeviceInventory(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      fixture.first.id,
+      {
+        ...update(fixture.branch.id),
+        name: 'Synthetic entrance',
+        firmware: null,
+        status: 'retired',
+        reason: 'retire_device',
+      },
+    );
+    await expect(
+      issueConnectorEnrollment(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        randomUUID(),
+        fixture.input,
+      ),
+    ).rejects.toThrow('INVALID_STATE');
+    await admin.branch.update({
+      where: { id: fixture.branch.id },
+      data: { status: 'inactive' },
+    });
+    await expect(
+      issueConnectorEnrollment(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        randomUUID(),
+        { ...fixture.input, deviceId: fixture.second.id },
+      ),
+    ).rejects.toThrow('INVALID_STATE');
+    expect(
+      await admin.connectorEnrollmentToken.count({ where: { tenantId } }),
+    ).toBe(0);
+  });
+  it('rolls back a failed enrollment audit and denies worker or cross-tenant access', async () => {
+    const fixture = await enrollmentSetup();
+    const duplicateAudit = await admin.auditEvent.findFirstOrThrow({
+      where: { tenantId },
+    });
+    const before = await admin.outboxEvent.count({ where: { tenantId } });
+    await expect(
+      runtime.$queryRaw`SELECT * FROM issue_connector_enrollment(${identities.owner}::uuid,true,${tenantId}::uuid,${randomUUID()}::uuid,${randomUUID()}::uuid,${fixture.first.id}::uuid,1,1,${'a'.repeat(64)}::varchar,${duplicateAudit.id}::uuid,${randomUUID()}::uuid)`,
+    ).rejects.toThrow(/23505/);
+    expect(
+      await admin.connectorEnrollmentToken.count({ where: { tenantId } }),
+    ).toBe(0);
+    expect(await admin.outboxEvent.count({ where: { tenantId } })).toBe(before);
+    const issued = await issueConnectorEnrollment(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      randomUUID(),
+      fixture.input,
+    );
+    const other = await listConnectorEnrollments(
+      runtime,
+      actor(identities.otherOwner),
+      otherTenantId,
+      { limit: 25 },
+    );
+    expect(other.items).toHaveLength(0);
+    await expect(
+      revokeConnectorEnrollment(
+        runtime,
+        actor(identities.otherOwner),
+        otherTenantId,
+        issued.enrollment.id,
+        { expectedVersion: 1 },
+      ),
+    ).rejects.toThrow('NOT_FOUND');
+    for (const url of [
+      process.env.WORKER_DATABASE_URL,
+      process.env.DISPATCHER_DATABASE_URL,
+    ]) {
+      if (!url || !new URL(url).pathname.startsWith('/kinto_test'))
+        throw new Error('Synthetic worker/dispatcher URL required');
+      const restricted = createDatabase(url);
+      try {
+        await expect(
+          restricted.$queryRaw`SELECT * FROM connector_enrollment_tokens`,
+        ).rejects.toThrow(/permission denied/);
+        await expect(
+          restricted.$queryRaw`SELECT enrollment_projection(${issued.enrollment.id}::uuid)`,
+        ).rejects.toThrow(/permission denied/);
+      } finally {
+        await restricted.$disconnect();
+      }
+    }
   });
 });

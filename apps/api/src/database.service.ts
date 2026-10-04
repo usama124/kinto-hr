@@ -4,6 +4,9 @@ import {
   type OnModuleInit,
 } from '@nestjs/common';
 import {
+  issueConnectorEnrollment,
+  revokeConnectorEnrollment,
+  listConnectorEnrollments,
   readAttendanceAllocation,
   changeAttendanceAllocation,
   readTenantDeviceInventory,
@@ -310,6 +313,29 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     query: SecurityAuditQuery,
   ) {
     return listTenantSecurityAudit(this.db, actor, tenantId, query);
+  }
+  issueConnectorEnrollment(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    requestId: string,
+    input: import('@kinto/contracts').EnrollmentIssue,
+  ) {
+    return issueConnectorEnrollment(this.db, actor, tenantId, requestId, input);
+  }
+  revokeConnectorEnrollment(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    id: string,
+    input: { expectedVersion: 1 },
+  ) {
+    return revokeConnectorEnrollment(this.db, actor, tenantId, id, input);
+  }
+  listConnectorEnrollments(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    input: import('@kinto/contracts').EnrollmentListQuery,
+  ) {
+    return listConnectorEnrollments(this.db, actor, tenantId, input);
   }
   readAttendanceAllocation(
     actor: { identityId: string; mfaVerified: boolean },

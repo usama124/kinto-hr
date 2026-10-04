@@ -115,3 +115,7 @@ The [review inventory](foundation-readiness.json) and [readiness diagnostic](../
 ### Attendance allocation workspace — 4 October 2026
 
 [Operator management and company read-only review](../evidence/phase-02/attendance-allocation-workspace.md) now expose explicit versioned attendance capacity. Review/confirmation and exact uncertain-request retry preserve the original payload/key; fresh session/CSRF and strict tenant snapshots protect refresh/retry boundaries. The web platform API forwarding gap is repaired without changing backend authority. Machine access remains unavailable. Next: single-use connector enrollment and atomic capacity reservations/binding before credential activation. P02-01 and production/hardware acceptance remain partial.
+
+### Connector enrollment reservations — 4 October 2026
+
+[Owner-issued enrollment tokens and reservations](../evidence/phase-02/connector-enrollment-reservations.md) now provide 15-minute digest-only issuance, non-secret exact retry, metadata history and terminal revocation. Shared-lock capacity prevents oversubscription or allocation reductions beneath live reservations; expiry/revocation release slots. Token redemption and machine credentials remain unavailable. Next: single-use redemption, conversion to actual usage and revocable credentials with fail-closed restore semantics, then owner/local connector workflows. P02-01 and hardware/production acceptance remain partial.

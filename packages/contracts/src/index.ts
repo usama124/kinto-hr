@@ -1479,3 +1479,5 @@ export * from './attendance';
 export * from './devices';
 
 export * from './attendance-entitlements';
+
+export * from './enrollment';

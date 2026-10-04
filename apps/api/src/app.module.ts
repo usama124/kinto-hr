@@ -15,6 +15,7 @@ import { EmployeeAccountsController } from './employee-accounts/controller';
 import { MembershipsController } from './memberships/controller';
 import { AdministratorInvitationsController } from './administrator-invitations/controller';
 import { SecurityAuditController } from './security-audit/controller';
+import { ConnectorEnrollmentController } from './attendance/enrollment-controller';
 import { AttendanceAllocationController } from './attendance/allocation-controller';
 import { DeviceInventoryController } from './attendance/device-controller';
 import { OrganizationController } from './organization/controller';
@@ -59,6 +60,7 @@ export class HealthController {
     OrganizationController,
     DeviceInventoryController,
     AttendanceAllocationController,
+    ConnectorEnrollmentController,
     EntitlementsController,
     EmployeesController,
     EmployeeImportsController,
