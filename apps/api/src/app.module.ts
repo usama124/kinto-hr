@@ -1,3 +1,6 @@
+import { MachineService } from './attendance/machine-service';
+import { MachineController } from './attendance/machine-controller';
+import { LocalConnectorOwnerController } from './attendance/local-owner-controller';
 import {
   Controller,
   Get,
@@ -34,6 +37,7 @@ export class HealthController {
   constructor(
     @Inject(DatabaseService) private readonly database: DatabaseService,
     @Inject(AuthService) private readonly auth: AuthService,
+    @Inject(MachineService) private readonly machine: MachineService,
   ) {}
   @Get('live') live(): Health {
     return { status: 'ok', service: 'kinto-api' };
@@ -42,6 +46,7 @@ export class HealthController {
     try {
       await this.database.ready();
       await this.auth.ready();
+      await this.machine.ready();
       return this.live();
     } catch {
       throw new ServiceUnavailableException('Service is not ready');
@@ -61,6 +66,8 @@ export class HealthController {
     DeviceInventoryController,
     AttendanceAllocationController,
     ConnectorEnrollmentController,
+    MachineController,
+    LocalConnectorOwnerController,
     EntitlementsController,
     EmployeesController,
     EmployeeImportsController,
@@ -72,6 +79,7 @@ export class HealthController {
     ReportExportsController,
   ],
   providers: [
+    MachineService,
     DatabaseService,
     AuthService,
     OwnerProvisioningService,

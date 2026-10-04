@@ -1,3 +1,4 @@
+import { readMachineConfig } from './attendance/machine-config';
 import { expect, it } from 'vitest';
 import { readConfig } from './config';
 import { readAuthConfig } from './auth/config';
@@ -91,4 +92,29 @@ it('validates port and listen host', () => {
       API_HOST: 'untrusted',
     }),
   ).toThrow();
+});
+
+it('gates connector HTTP to explicitly configured synthetic loopback mode', () => {
+  const config = {
+    CONNECTOR_HTTP_MODE: 'local_test',
+    DATABASE_URL: 'postgresql://127.0.0.1/kinto_test',
+    CONNECTOR_REDIS_URL: 'redis://127.0.0.1/2',
+    CONNECTOR_NAMESPACE: '00000000-0000-4000-8000-000000000001',
+  };
+  expect(readMachineConfig({})).toBeUndefined();
+  expect(readMachineConfig(config)?.namespace).toBe(config.CONNECTOR_NAMESPACE);
+  for (const change of [
+    { CONNECTOR_HTTP_MODE: 'production' },
+    { DATABASE_URL: 'https://127.0.0.1/kinto_test' },
+    { CONNECTOR_REDIS_URL: 'rediss://127.0.0.1/2' },
+    { CONNECTOR_REDIS_URL: 'redis://127.0.0.1/16' },
+    { NODE_ENV: 'production' },
+    { API_HOST: '0.0.0.0' },
+    { DATABASE_URL: 'postgresql://remote.example/kinto_test' },
+    { DATABASE_URL: 'postgresql://127.0.0.1/kinto' },
+    { CONNECTOR_REDIS_URL: 'redis://127.0.0.1/0' },
+    { CONNECTOR_REDIS_URL: 'redis://remote.example/2' },
+    { CONNECTOR_NAMESPACE: 'invalid' },
+  ])
+    expect(() => readMachineConfig({ ...config, ...change })).toThrow();
 });

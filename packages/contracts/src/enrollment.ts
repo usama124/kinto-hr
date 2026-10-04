@@ -105,3 +105,11 @@ export const connectorListSchema = z.strictObject({
   items: z.array(connectorRecordSchema).max(50),
   nextCursor: uuid.nullable(),
 });
+
+export const connectorRedemptionRequestSchema = z.strictObject({
+  token: z.string().regex(/^ke1_[A-Za-z0-9_-]{43}$/),
+});
+export const connectorHeartbeatRequestSchema = z.strictObject({});
+export const connectorHeartbeatResultSchema = z.strictObject({
+  connector: connectorRecordSchema,
+});
