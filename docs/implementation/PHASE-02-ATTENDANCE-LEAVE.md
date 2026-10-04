@@ -136,11 +136,11 @@ An attendance-only pilot requires approved data terms, functioning permissions/b
 
 ## Implementation record
 
-- Work packages: P02-01/P02-02 preparatory schemas, pure preflight and tenant-scoped draft inventory API locally implemented; owner/HR inventory UI locally implemented; explicit attendance allocation API/UI and preparatory token issuance/reservation/revocation locally implemented; single-use redemption, activation/actual usage enforcement, machine credentials, mappings, authentication and durable ingestion pending. P02-03 through P02-05 not started.
+- Work packages: P02-01/P02-02 preparatory schemas, pure preflight and tenant-scoped draft inventory API locally implemented; owner/HR inventory UI locally implemented; explicit attendance allocation API/UI and preparatory token issuance/reservation/revocation locally implemented; internal synthetic single-use redemption/revocable credentials and reservation-to-usage enforcement locally implemented; public/production machine admission, rotation, activation, mappings and durable ingestion pending. P02-03 through P02-05 not started.
 - Hardware/firmware/SDK evidence: pending, not replaced by a simulator.
 - Code and synthetic tests: [attendance ingestion contracts/preflight](../evidence/phase-02/attendance-ingestion-contracts.md). Draft registry API: [device inventory evidence](../evidence/phase-02/attendance-device-inventory.md). No mounted ingestion endpoint, durable attendance acknowledgment, hardware reconciliation or rollout evidence.
 - Device workspace: [owner/HR inventory screen](../evidence/phase-02/attendance-device-workspace.md), still draft-only and never connected.
-- Allocation controls: [operator-only immutable capacity versions](../evidence/phase-02/attendance-entitlement-controls.md), default disabled for every plan; no machine access or quota-consuming activation exists.
+- Allocation controls: [operator-only immutable capacity versions](../evidence/phase-02/attendance-entitlement-controls.md), default disabled for every plan; public machine access and device activation remain unavailable. Internal reservations/credential usage are described below.
 - Customer attendance-pilot approval: pending.
 
 ## Local allocation workspace increment — 4 October 2026
@@ -149,4 +149,8 @@ The [allocation workspace](../evidence/phase-02/attendance-allocation-workspace.
 
 ## Local enrollment reservation increment — 4 October 2026
 
-[Enrollment issuance and revocation](../evidence/phase-02/connector-enrollment-reservations.md) add owner-issued 15-minute digest-only tokens, metadata-only retry/history and shared-lock device/connector reservations. Allocations cannot be lowered below live reservations; expiry/revocation release capacity. There is no redemption, machine credential, device activation or actual connector usage yet. Next: single-use redemption with usage conversion, credential lifecycle and fail-closed recovery generations, then the owner/local connector workflow. P02-01 remains partial; hardware and production approvals remain pending.
+[Enrollment issuance and revocation](../evidence/phase-02/connector-enrollment-reservations.md) add owner-issued 15-minute digest-only tokens, metadata-only retry/history and shared-lock device/connector reservations. Allocations cannot be lowered below live reservations; expiry/revocation release capacity. At delivery of this reservation increment there was no redemption or credential usage. The following internal increment adds synthetic redemption/usage without public machine access or device activation. P02-01 remains partial; hardware and production approvals remain pending.
+
+## Internal machine credential increment — 4 October 2026
+
+[Internal credential evidence](../evidence/phase-02/connector-machine-credentials.md) records generation-bound, digest-only redemption/revocation, shared-lock usage conversion and independent positive Redis admission permits. Consumed-token seals and credential revocation tombstones survive older PostgreSQL snapshots; admission-state loss denies old tokens/credentials. This loopback synthetic authority is deliberately unmounted; no actual heartbeat, attendance upload, credential rotation, device activation or production machine access is implemented. Next: approved production admission state/restore lifecycle plus protected machine and owner metadata/revocation endpoints, followed by enrollment UI/local connector workflow. P02-01 remains partial.

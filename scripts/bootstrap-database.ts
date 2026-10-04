@@ -105,6 +105,8 @@ try {
     'CREATE POLICY platform_control ON administrator_invitations FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON legal_entities',
     'CREATE POLICY platform_control ON legal_entities FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
+    'DROP POLICY IF EXISTS platform_control ON connector_credentials',
+    'CREATE POLICY platform_control ON connector_credentials FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON connector_enrollment_tokens',
     'CREATE POLICY platform_control ON connector_enrollment_tokens FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON attendance_allocations',
@@ -239,10 +241,16 @@ try {
     'GRANT SELECT ON tenant_subscriptions, entitlement_grants, entitlement_overrides TO kinto_app',
   );
   await database.$executeRawUnsafe(
+    'GRANT SELECT, INSERT ON connector_credentials TO kinto_control_owner',
+  );
+  await database.$executeRawUnsafe(
+    'GRANT UPDATE(status,version,revoked_at) ON connector_credentials TO kinto_control_owner',
+  );
+  await database.$executeRawUnsafe(
     'GRANT SELECT, INSERT ON connector_enrollment_tokens TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
-    'GRANT UPDATE(status,version,revoked_at) ON connector_enrollment_tokens TO kinto_control_owner',
+    'GRANT UPDATE(status,version,revoked_at,generation_digest,redeemed_at) ON connector_enrollment_tokens TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
     'GRANT SELECT, INSERT ON attendance_allocations TO kinto_control_owner',
@@ -317,6 +325,13 @@ try {
     'public.mark_administrator_invitation_delivered(uuid, timestamptz, uuid)',
     'public.discover_identity_tenants(uuid)',
     'public.list_tenant_security_audit(uuid, boolean, uuid, integer, varchar, timestamptz, timestamptz, uuid)',
+    'public.issue_bound_connector_enrollment(uuid,boolean,uuid,uuid,uuid,uuid,integer,integer,varchar,uuid,uuid,varchar)',
+    'public.redeem_connector_enrollment(varchar,varchar,uuid,varchar,uuid,uuid,uuid)',
+    'public.authenticate_connector(varchar,varchar)',
+    'public.connector_security_record(uuid,boolean,uuid,uuid,varchar)',
+    'public.revoke_connector_credential(uuid,boolean,uuid,uuid,integer,uuid,uuid)',
+    'public.revoke_bound_connector_enrollment(uuid,boolean,uuid,uuid,integer,uuid,uuid)',
+    'public.list_connector_credentials(uuid,boolean,uuid,integer,uuid)',
     'public.issue_connector_enrollment(uuid,boolean,uuid,uuid,uuid,uuid,integer,integer,varchar,uuid,uuid)',
     'public.revoke_connector_enrollment(uuid,boolean,uuid,uuid,integer,uuid,uuid)',
     'public.list_connector_enrollments(uuid,boolean,uuid,integer,uuid)',
@@ -395,6 +410,7 @@ try {
     'public.workforce_headcount_report_json(uuid, date, date, date)',
     'public.workforce_report_export_json(public.workforce_report_exports)',
     'public.generate_tenant_workforce_report_export(uuid, uuid)',
+    'public.connector_projection(uuid)',
     'public.enrollment_projection(uuid)',
     'public.tenant_employee_private_authorized(uuid, boolean, uuid, varchar)',
     'public.tenant_employee_bank_authorized(uuid, boolean, uuid, boolean)',

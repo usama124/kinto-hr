@@ -1,3 +1,5 @@
+import { LocalMachineAuthority } from '../apps/api/src/attendance/local-machine-authority';
+import { AuthStore } from '../apps/api/src/auth/store';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
@@ -87,6 +89,7 @@ async function snapshot(db: PrismaClient) {
       'company_provisioning_requests',
       'compensation_agreements',
       'compensation_component_versions',
+      'connector_credentials',
       'connector_enrollment_tokens',
       'consumer_receipts',
       'departments',
@@ -221,6 +224,9 @@ async function snapshot(db: PrismaClient) {
       orderBy: { id: 'asc' },
     }),
     legalEntities: await db.legalEntity.findMany({ orderBy: { id: 'asc' } }),
+    connectorCredentials: await db.connectorCredential.findMany({
+      orderBy: { id: 'asc' },
+    }),
     connectorEnrollmentTokens: await db.connectorEnrollmentToken.findMany({
       orderBy: { id: 'asc' },
     }),
@@ -294,6 +300,21 @@ async function main() {
   const restored = createDatabase(restoredEnv.MIGRATION_DATABASE_URL!);
   const restoredApp = createDatabase(restoredEnv.DATABASE_URL!);
   const restoredWorker = createDatabase(restoredEnv.WORKER_DATABASE_URL!);
+  const redisUrl = new URL(process.env.REDIS_URL!);
+  redisUrl.pathname = '/2';
+  const machineNamespace = randomUUID();
+  const sourceMachine = new LocalMachineAuthority(
+    sourceEnv.DATABASE_URL!,
+    redisUrl.toString(),
+    machineNamespace,
+  );
+  const restoredMachine = new LocalMachineAuthority(
+    restoredEnv.DATABASE_URL!,
+    redisUrl.toString(),
+    machineNamespace,
+  );
+  const machineStore = new AuthStore(redisUrl.toString());
+  let machineStoreConnected = false;
   const created: string[] = [];
   const directory = resolve('.local/recovery', id);
   let stage = 'container identity';
@@ -972,8 +993,10 @@ async function main() {
     const liveEnrollmentDevice = await source.attendanceDevice.findFirstOrThrow(
       { where: { tenantId: tenants[1], status: 'draft' } },
     );
-    await issueConnectorEnrollment(
-      sourceApp,
+    await sourceMachine.connect();
+    await machineStore.connect();
+    machineStoreConnected = true;
+    const machineEnrollment = await sourceMachine.issue(
       { identityId: membershipOwners[1], mfaVerified: true },
       tenants[1],
       randomUUID(),
@@ -982,6 +1005,13 @@ async function main() {
         expectedDeviceVersion: liveEnrollmentDevice.version,
         expectedAllocationVersion: 1,
       },
+    );
+    const machineCredential = await sourceMachine.redeem(
+      machineEnrollment.token!,
+    );
+    assert.equal(
+      (await sourceMachine.authorize(machineCredential.credential)).id,
+      machineCredential.connector.id,
     );
     const provisioning = await requestCompanyProvisioning(
       sourceApp,
@@ -1090,6 +1120,12 @@ async function main() {
     const checksum = digest(archive);
     const path = join(directory, 'synthetic.dump');
     await writeFile(path, archive, { mode: 0o600 });
+    // Redis is deliberately NOT backed up/restored with PostgreSQL.
+    await sourceMachine.revokeCredential(
+      { identityId: membershipOwners[1], mfaVerified: true },
+      tenants[1],
+      machineCredential.connector.id,
+    );
     // The source changes after the snapshot; this record must NOT appear in the restore.
     await createEmployeeDraft(
       sourceApp,
@@ -1176,7 +1212,7 @@ async function main() {
     const policies = await restored.$queryRaw<
       { enabled: boolean; forced: boolean }[]
     >`SELECT relrowsecurity AS enabled, relforcerowsecurity AS forced FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND relkind='r' AND relname <> '_prisma_migrations'`;
-    assert.equal(policies.length, 46);
+    assert.equal(policies.length, 47);
     assert.ok(policies.every((row) => row.enabled && row.forced));
     assert.deepEqual(await restoredApp.employee.findMany(), []);
     stage = 'restored tenant lifecycle visibility';
@@ -1435,8 +1471,39 @@ async function main() {
     const enrollmentEvents = await restored.outboxEvent.findMany({
       where: { type: 'connector.enrollment_changed.v1' },
     });
-    assert.equal(enrollmentEvents.length, 3);
+    assert.equal(enrollmentEvents.length, 4);
     for (const event of enrollmentEvents) {
+      const ref = { tenantId: event.tenantId, eventId: event.id };
+      assert.equal(await processEvent(restoredWorker, ref), 'completed');
+      assert.equal(await processEvent(restoredWorker, ref), 'completed');
+      assert.equal(
+        await restored.consumerReceipt.count({ where: { eventId: event.id } }),
+        1,
+      );
+    }
+    stage = 'restored connector credential admission';
+    await restoredMachine.connect();
+    const oldCredential = await restored.connectorCredential.findUniqueOrThrow({
+      where: { id: machineCredential.connector.id },
+    });
+    assert.equal(oldCredential.status, 'active');
+    await assert.rejects(
+      restoredMachine.authorize(machineCredential.credential),
+      /FORBIDDEN/,
+    );
+    await assert.rejects(
+      restoredMachine.redeem(machineEnrollment.token!),
+      /FORBIDDEN/,
+    );
+    await assert.rejects(
+      restoredApp.connectorCredential.findMany(),
+      /permission denied/,
+    );
+    const credentialEvents = await restored.outboxEvent.findMany({
+      where: { type: 'connector.credential_changed.v1' },
+    });
+    assert.equal(credentialEvents.length, 1);
+    for (const event of credentialEvents) {
       const ref = { tenantId: event.tenantId, eventId: event.id };
       assert.equal(await processEvent(restoredWorker, ref), 'completed');
       assert.equal(await processEvent(restoredWorker, ref), 'completed');
@@ -1469,6 +1536,8 @@ async function main() {
       membershipAdministrationAuditPreserved: true,
       organizationPolicyHistoryPreserved: true,
       organizationCatalogsPreserved: true,
+      connectorCredentialRevocationSurvivesDatabaseRestore: true,
+      connectorCredentialEventsConsumed: true,
       connectorEnrollmentHistoryPreserved: true,
       connectorEnrollmentSecretNotReplayed: true,
       connectorEnrollmentEventsConsumed: true,
@@ -1509,6 +1578,23 @@ async function main() {
   } catch {
     throw new Error(`Recovery drill failed at ${stage}`);
   } finally {
+    await sourceMachine.close();
+    await restoredMachine.close();
+    if (machineStoreConnected) {
+      let cursor = '0';
+      do {
+        const page = await machineStore.redis.scan(
+          cursor,
+          'MATCH',
+          sourceMachine.prefix + '*',
+          'COUNT',
+          100,
+        );
+        cursor = page[0];
+        if (page[1].length) await machineStore.redis.unlink(...page[1]);
+      } while (cursor !== '0');
+    }
+    machineStore.close();
     await Promise.all(
       [
         source,

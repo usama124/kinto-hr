@@ -1,6 +1,11 @@
+import { z } from 'zod';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { PrismaClient, type Prisma } from '@prisma/client';
 import {
+  connectorCredentialSchema,
+  connectorRecordSchema,
+  connectorRedemptionResultSchema,
+  connectorListSchema,
   enrollmentIssueSchema,
   enrollmentRevokeSchema,
   enrollmentItemSchema,
@@ -885,7 +890,7 @@ export async function listTenantSecurityAudit(
   };
 }
 
-type OrganizationActor = { identityId: string; mfaVerified: boolean };
+export type OrganizationActor = { identityId: string; mfaVerified: boolean };
 type OrganizationMutationRow = {
   outcome:
     | 'created'
@@ -2672,5 +2677,141 @@ export async function listConnectorEnrollments(
     items,
     nextCursor: row.snapshot.length > query.limit ? items.at(-1)!.id : null,
     machineAccessAvailable: false,
+  });
+}
+
+const connectorDigestSchema = z.string().regex(/^[a-f0-9]{64}$/);
+export async function issueBoundConnectorEnrollment(
+  db: PrismaClient,
+  actor: OrganizationActor,
+  tenantId: string,
+  requestId: string,
+  input: EnrollmentIssue,
+  generation: string,
+) {
+  validateOrganizationActor(actor, tenantId);
+  tenantIdSchema.parse(requestId);
+  connectorDigestSchema.parse(generation);
+  const value = enrollmentIssueSchema.parse(input),
+    token = 'ke1_' + randomBytes(32).toString('base64url');
+  const digest = createHash('sha256').update(token).digest('hex');
+  const rows = await db.$queryRaw<
+    EnrollmentRow[]
+  >`SELECT * FROM public.issue_bound_connector_enrollment(${actor.identityId}::uuid,${actor.mfaVerified},${tenantId}::uuid,${requestId}::uuid,${randomUUID()}::uuid,${value.deviceId}::uuid,${value.expectedDeviceVersion}::integer,${value.expectedAllocationVersion}::integer,${digest}::varchar,${randomUUID()}::uuid,${randomUUID()}::uuid,${generation}::varchar)`;
+  const row = enrollmentResult(rows[0], ['created', 'replayed']);
+  return enrollmentIssueResultSchema.parse({
+    enrollment: row.snapshot,
+    replayed: row.outcome === 'replayed',
+    token: row.outcome === 'created' ? token : null,
+    machineAccessAvailable: false,
+  });
+}
+// Persistence primitives only: callers MUST enforce external consumed-token/permit state.
+// Neither this command nor the candidate read constitutes machine admission.
+export async function redeemConnectorEnrollment(
+  db: PrismaClient,
+  token: string,
+  generation: string,
+) {
+  z.string()
+    .regex(/^ke1_[A-Za-z0-9_-]{43}$/)
+    .parse(token);
+  connectorDigestSchema.parse(generation);
+  const digest = createHash('sha256').update(token).digest('hex');
+  const credential = 'kc1_' + randomBytes(32).toString('base64url'),
+    credentialDigest = createHash('sha256').update(credential).digest('hex');
+  const rows = await db.$queryRaw<
+    EnrollmentRow[]
+  >`SELECT * FROM public.redeem_connector_enrollment(${digest}::varchar,${generation}::varchar,${randomUUID()}::uuid,${credentialDigest}::varchar,${randomUUID()}::uuid,${randomUUID()}::uuid,${randomUUID()}::uuid)`;
+  return connectorRedemptionResultSchema.parse({
+    connector: enrollmentResult(rows[0], ['created']).snapshot,
+    credential,
+  });
+}
+export async function readConnectorCredentialCandidate(
+  db: PrismaClient,
+  credential: string,
+  generation: string,
+) {
+  connectorCredentialSchema.parse(credential);
+  connectorDigestSchema.parse(generation);
+  const digest = createHash('sha256').update(credential).digest('hex');
+  const rows = await db.$queryRaw<
+    EnrollmentRow[]
+  >`SELECT * FROM public.authenticate_connector(${digest}::varchar,${generation}::varchar)`;
+  return connectorRecordSchema.parse(
+    enrollmentResult(rows[0], ['ok']).snapshot,
+  );
+}
+export async function readConnectorSecurityRecord(
+  db: PrismaClient,
+  actor: OrganizationActor,
+  tenantId: string,
+  id: string,
+  kind: 'enrollment' | 'credential',
+) {
+  validateOrganizationActor(actor, tenantId);
+  tenantIdSchema.parse(id);
+  z.enum(['enrollment', 'credential']).parse(kind);
+  const rows = await db.$queryRaw<
+    EnrollmentRow[]
+  >`SELECT * FROM public.connector_security_record(${actor.identityId}::uuid,${actor.mfaVerified},${tenantId}::uuid,${id}::uuid,${kind}::varchar)`;
+  return z
+    .strictObject({
+      id: tenantIdSchema,
+      digest: connectorDigestSchema,
+      generation: connectorDigestSchema.nullable(),
+    })
+    .parse(enrollmentResult(rows[0], ['ok']).snapshot);
+}
+export async function revokeBoundConnectorEnrollment(
+  db: PrismaClient,
+  actor: OrganizationActor,
+  tenantId: string,
+  id: string,
+) {
+  validateOrganizationActor(actor, tenantId);
+  tenantIdSchema.parse(id);
+  const rows = await db.$queryRaw<
+    EnrollmentRow[]
+  >`SELECT * FROM public.revoke_bound_connector_enrollment(${actor.identityId}::uuid,${actor.mfaVerified},${tenantId}::uuid,${id}::uuid,1,${randomUUID()}::uuid,${randomUUID()}::uuid)`;
+  return enrollmentItemSchema.parse(
+    enrollmentResult(rows[0], ['updated', 'replayed']).snapshot,
+  );
+}
+export async function revokeConnectorCredential(
+  db: PrismaClient,
+  actor: OrganizationActor,
+  tenantId: string,
+  id: string,
+) {
+  validateOrganizationActor(actor, tenantId);
+  tenantIdSchema.parse(id);
+  const rows = await db.$queryRaw<
+    EnrollmentRow[]
+  >`SELECT * FROM public.revoke_connector_credential(${actor.identityId}::uuid,${actor.mfaVerified},${tenantId}::uuid,${id}::uuid,1,${randomUUID()}::uuid,${randomUUID()}::uuid)`;
+  return connectorRecordSchema.parse(
+    enrollmentResult(rows[0], ['updated', 'replayed']).snapshot,
+  );
+}
+export async function listConnectorCredentials(
+  db: PrismaClient,
+  actor: OrganizationActor,
+  tenantId: string,
+  input: EnrollmentListQuery,
+) {
+  validateOrganizationActor(actor, tenantId);
+  const query = enrollmentListQuerySchema.parse(input);
+  const rows = await db.$queryRaw<
+    EnrollmentRow[]
+  >`SELECT * FROM public.list_connector_credentials(${actor.identityId}::uuid,${actor.mfaVerified},${tenantId}::uuid,${query.limit}::integer,${query.afterId ?? null}::uuid)`;
+  const row = enrollmentResult(rows[0], ['ok']);
+  if (!Array.isArray(row.snapshot)) throw new Error('Invalid connector list');
+  const items = row.snapshot
+    .slice(0, query.limit)
+    .map((item) => connectorRecordSchema.parse(item));
+  return connectorListSchema.parse({
+    items,
+    nextCursor: row.snapshot.length > query.limit ? items.at(-1)!.id : null,
   });
 }

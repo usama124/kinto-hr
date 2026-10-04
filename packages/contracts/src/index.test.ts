@@ -1,4 +1,7 @@
 import {
+  connectorCredentialSchema,
+  connectorRecordSchema,
+  connectorRedemptionResultSchema,
   enrollmentIssueSchema,
   enrollmentRevokeSchema,
   enrollmentItemSchema,
@@ -1531,4 +1534,76 @@ it('validates enrollment reservations and never accepts replayed or projected se
       machineAccessAvailable: false,
     }).items,
   ).toHaveLength(1);
+});
+
+it('validates redeemed enrollment and bounded secret-free connector projections', () => {
+  const id = '00000000-0000-4000-8000-000000000001';
+  const connector = {
+    id,
+    tenantId: id,
+    deviceId: id,
+    enrollmentId: id,
+    version: 1,
+    status: 'active',
+    createdAt: '2026-10-04T00:00:00Z',
+    expiresAt: '2026-11-03T00:00:00Z',
+    revokedAt: null,
+    scope: 'heartbeat_only',
+    attendanceIngestionAvailable: false,
+  };
+  expect(connectorRecordSchema.parse(connector)).toEqual(connector);
+  expect(
+    connectorRecordSchema.parse({ ...connector, status: 'expired' }).status,
+  ).toBe('expired');
+  expect(
+    connectorRecordSchema.parse({
+      ...connector,
+      status: 'revoked',
+      version: 2,
+      revokedAt: '2026-10-04T01:00:00Z',
+    }).version,
+  ).toBe(2);
+  for (const change of [
+    { version: 2 },
+    { status: 'revoked' },
+    { expiresAt: '2026-11-04T00:00:00Z' },
+    { credential: 'secret' },
+    { credentialDigest: 'a'.repeat(64) },
+    { scope: 'attendance' },
+    { attendanceIngestionAvailable: true },
+  ])
+    expect(
+      connectorRecordSchema.safeParse({ ...connector, ...change }).success,
+    ).toBe(false);
+  const credential = 'kc1_' + 'a'.repeat(43);
+  expect(
+    connectorRedemptionResultSchema.parse({ connector, credential }).credential,
+  ).toBe(credential);
+  expect(
+    connectorCredentialSchema.safeParse('ke1_' + 'a'.repeat(43)).success,
+  ).toBe(false);
+  const redeemed = {
+    id,
+    deviceId: id,
+    expectedDeviceVersion: 1,
+    allocationVersion: 1,
+    version: 2,
+    status: 'redeemed',
+    createdAt: '2026-10-04T00:00:00Z',
+    expiresAt: '2026-10-04T00:15:00Z',
+    revokedAt: null,
+    redeemedAt: '2026-10-04T00:01:00Z',
+    connectorId: id,
+  };
+  expect(enrollmentItemSchema.parse(redeemed)).toEqual(redeemed);
+  for (const change of [
+    { redeemedAt: undefined },
+    { connectorId: undefined },
+    { version: 1 },
+    { status: 'issued' },
+    { revokedAt: '2026-10-04T00:02:00Z' },
+  ])
+    expect(
+      enrollmentItemSchema.safeParse({ ...redeemed, ...change }).success,
+    ).toBe(false);
 });
