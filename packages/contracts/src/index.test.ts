@@ -1,4 +1,12 @@
 import {
+  enrollmentIssueSchema,
+  enrollmentRevokeSchema,
+  enrollmentItemSchema,
+  enrollmentIssueResultSchema,
+  enrollmentListQuerySchema,
+  enrollmentListSchema,
+} from './enrollment';
+import {
   attendanceAllocationSchema,
   attendanceAllocationSnapshotSchema,
   attendanceAllocationResultSchema,
@@ -1424,4 +1432,103 @@ it('validates explicit attendance allocations without granting machine access or
       replayed: true,
     }),
   ).toEqual({ id: base.tenantId, version: 1, replayed: true });
+});
+
+it('validates enrollment reservations and never accepts replayed or projected secrets', () => {
+  const id = '11111111-1111-4111-8111-111111111111';
+  const input = {
+    deviceId: id,
+    expectedDeviceVersion: 1,
+    expectedAllocationVersion: 1,
+  };
+  expect(enrollmentIssueSchema.parse(input)).toEqual(input);
+  for (const change of [
+    { deviceId: 'bad' },
+    { expectedDeviceVersion: 0 },
+    { expectedAllocationVersion: 0 },
+    { tenantId: id },
+    { token: 'secret' },
+  ])
+    expect(
+      enrollmentIssueSchema.safeParse({ ...input, ...change }).success,
+    ).toBe(false);
+  expect(enrollmentRevokeSchema.parse({ expectedVersion: 1 })).toEqual({
+    expectedVersion: 1,
+  });
+  expect(enrollmentRevokeSchema.safeParse({ expectedVersion: 2 }).success).toBe(
+    false,
+  );
+  const item = {
+    id,
+    deviceId: id,
+    expectedDeviceVersion: 1,
+    allocationVersion: 1,
+    version: 1,
+    status: 'issued',
+    createdAt: '2026-10-04T00:00:00Z',
+    expiresAt: '2026-10-04T00:15:00Z',
+    revokedAt: null,
+  };
+  expect(enrollmentItemSchema.parse(item)).toEqual(item);
+  expect(
+    enrollmentItemSchema.parse({ ...item, status: 'expired' }).status,
+  ).toBe('expired');
+  expect(
+    enrollmentItemSchema.parse({
+      ...item,
+      status: 'revoked',
+      version: 2,
+      revokedAt: '2026-10-04T00:01:00Z',
+    }).version,
+  ).toBe(2);
+  for (const change of [
+    { expiresAt: '2026-10-04T00:16:00Z' },
+    { status: 'revoked' },
+    { version: 2 },
+    { revokedAt: '2026-10-04T00:01:00Z' },
+    { status: 'redeemed' },
+    { tokenDigest: 'a'.repeat(64) },
+  ])
+    expect(enrollmentItemSchema.safeParse({ ...item, ...change }).success).toBe(
+      false,
+    );
+  const result = {
+    enrollment: item,
+    replayed: false,
+    token: 'ke1_' + 'a'.repeat(43),
+    machineAccessAvailable: false,
+  };
+  expect(enrollmentIssueResultSchema.parse(result)).toEqual(result);
+  expect(
+    enrollmentIssueResultSchema.parse({
+      ...result,
+      replayed: true,
+      token: null,
+    }).token,
+  ).toBeNull();
+  for (const change of [
+    { replayed: true },
+    { token: null },
+    { token: 'bad' },
+    { machineAccessAvailable: true },
+    { enrollment: { ...item, status: 'expired' } },
+  ])
+    expect(
+      enrollmentIssueResultSchema.safeParse({ ...result, ...change }).success,
+    ).toBe(false);
+  expect(enrollmentListQuerySchema.parse({})).toEqual({ limit: 25 });
+  expect(enrollmentListQuerySchema.parse({ limit: '1', afterId: id })).toEqual({
+    limit: 1,
+    afterId: id,
+  });
+  expect(enrollmentListQuerySchema.safeParse({ limit: 51 }).success).toBe(
+    false,
+  );
+  expect(
+    enrollmentListSchema.parse({
+      items: [item],
+      nextCursor: null,
+      machineAccessAvailable: false,
+    }).items,
+  ).toHaveLength(1);
 });

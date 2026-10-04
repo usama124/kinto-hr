@@ -5,6 +5,9 @@ import { createHash, randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import {
+  issueConnectorEnrollment,
+  revokeConnectorEnrollment,
+  listConnectorEnrollments,
   readAttendanceAllocation,
   changeAttendanceAllocation,
   createTenantDeviceInventory,
@@ -84,6 +87,7 @@ async function snapshot(db: PrismaClient) {
       'company_provisioning_requests',
       'compensation_agreements',
       'compensation_component_versions',
+      'connector_enrollment_tokens',
       'consumer_receipts',
       'departments',
       'designations',
@@ -217,6 +221,9 @@ async function snapshot(db: PrismaClient) {
       orderBy: { id: 'asc' },
     }),
     legalEntities: await db.legalEntity.findMany({ orderBy: { id: 'asc' } }),
+    connectorEnrollmentTokens: await db.connectorEnrollmentToken.findMany({
+      orderBy: { id: 'asc' },
+    }),
     attendanceAllocations: await db.attendanceAllocation.findMany({
       orderBy: { id: 'asc' },
     }),
@@ -919,6 +926,29 @@ async function main() {
       allocationKey,
       allocationInput,
     );
+    const enrollmentDevice = await source.attendanceDevice.findFirstOrThrow({
+      where: { tenantId: tenants[0], status: 'draft' },
+    });
+    const enrollmentKey = randomUUID();
+    const enrollmentInput = {
+      deviceId: enrollmentDevice.id,
+      expectedDeviceVersion: enrollmentDevice.version,
+      expectedAllocationVersion: 1,
+    };
+    const enrollmentReceipt = await issueConnectorEnrollment(
+      sourceApp,
+      { identityId: membershipOwners[0], mfaVerified: true },
+      tenants[0],
+      enrollmentKey,
+      enrollmentInput,
+    );
+    await revokeConnectorEnrollment(
+      sourceApp,
+      { identityId: membershipOwners[0], mfaVerified: true },
+      tenants[0],
+      enrollmentReceipt.enrollment.id,
+      { expectedVersion: 1 },
+    );
     await changeAttendanceAllocation(
       sourceApp,
       { identityId: operator.id, mfaVerified: true },
@@ -938,6 +968,20 @@ async function main() {
       tenants[1],
       randomUUID(),
       allocationInput,
+    );
+    const liveEnrollmentDevice = await source.attendanceDevice.findFirstOrThrow(
+      { where: { tenantId: tenants[1], status: 'draft' } },
+    );
+    await issueConnectorEnrollment(
+      sourceApp,
+      { identityId: membershipOwners[1], mfaVerified: true },
+      tenants[1],
+      randomUUID(),
+      {
+        deviceId: liveEnrollmentDevice.id,
+        expectedDeviceVersion: liveEnrollmentDevice.version,
+        expectedAllocationVersion: 1,
+      },
     );
     const provisioning = await requestCompanyProvisioning(
       sourceApp,
@@ -1132,7 +1176,7 @@ async function main() {
     const policies = await restored.$queryRaw<
       { enabled: boolean; forced: boolean }[]
     >`SELECT relrowsecurity AS enabled, relforcerowsecurity AS forced FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND relkind='r' AND relname <> '_prisma_migrations'`;
-    assert.equal(policies.length, 45);
+    assert.equal(policies.length, 46);
     assert.ok(policies.every((row) => row.enabled && row.forced));
     assert.deepEqual(await restoredApp.employee.findMany(), []);
     stage = 'restored tenant lifecycle visibility';
@@ -1361,6 +1405,46 @@ async function main() {
         1,
       );
     }
+    stage = 'restored connector enrollment reservations';
+    const replayedEnrollment = await issueConnectorEnrollment(
+      restoredApp,
+      { identityId: membershipOwners[0], mfaVerified: true },
+      tenants[0],
+      enrollmentKey,
+      enrollmentInput,
+    );
+    assert.equal(replayedEnrollment.token, null);
+    assert.equal(replayedEnrollment.replayed, true);
+    assert.equal(replayedEnrollment.enrollment.status, 'revoked');
+    assert.equal(
+      replayedEnrollment.enrollment.id,
+      enrollmentReceipt.enrollment.id,
+    );
+    const liveEnrollments = await listConnectorEnrollments(
+      restoredApp,
+      { identityId: membershipOwners[1], mfaVerified: true },
+      tenants[1],
+      { limit: 25 },
+    );
+    assert.equal(liveEnrollments.items.length, 1);
+    assert.equal(liveEnrollments.machineAccessAvailable, false);
+    await assert.rejects(
+      restoredApp.connectorEnrollmentToken.findMany(),
+      /permission denied/,
+    );
+    const enrollmentEvents = await restored.outboxEvent.findMany({
+      where: { type: 'connector.enrollment_changed.v1' },
+    });
+    assert.equal(enrollmentEvents.length, 3);
+    for (const event of enrollmentEvents) {
+      const ref = { tenantId: event.tenantId, eventId: event.id };
+      assert.equal(await processEvent(restoredWorker, ref), 'completed');
+      assert.equal(await processEvent(restoredWorker, ref), 'completed');
+      assert.equal(
+        await restored.consumerReceipt.count({ where: { eventId: event.id } }),
+        1,
+      );
+    }
     stage = 'restored migration replay';
     pnpm(['db:migrate'], restoredEnv);
     const report = {
@@ -1385,6 +1469,9 @@ async function main() {
       membershipAdministrationAuditPreserved: true,
       organizationPolicyHistoryPreserved: true,
       organizationCatalogsPreserved: true,
+      connectorEnrollmentHistoryPreserved: true,
+      connectorEnrollmentSecretNotReplayed: true,
+      connectorEnrollmentEventsConsumed: true,
       attendanceAllocationHistoryPreserved: true,
       attendanceAllocationRetryPreserved: true,
       attendanceAllocationEventsConsumed: true,

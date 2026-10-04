@@ -136,7 +136,7 @@ An attendance-only pilot requires approved data terms, functioning permissions/b
 
 ## Implementation record
 
-- Work packages: P02-01/P02-02 preparatory schemas, pure preflight and tenant-scoped draft inventory API locally implemented; owner/HR inventory UI locally implemented; explicit attendance allocation API locally implemented; allocation UI, activation/usage enforcement, enrollment, mappings, authentication and durable ingestion pending. P02-03 through P02-05 not started.
+- Work packages: P02-01/P02-02 preparatory schemas, pure preflight and tenant-scoped draft inventory API locally implemented; owner/HR inventory UI locally implemented; explicit attendance allocation API/UI and preparatory token issuance/reservation/revocation locally implemented; single-use redemption, activation/actual usage enforcement, machine credentials, mappings, authentication and durable ingestion pending. P02-03 through P02-05 not started.
 - Hardware/firmware/SDK evidence: pending, not replaced by a simulator.
 - Code and synthetic tests: [attendance ingestion contracts/preflight](../evidence/phase-02/attendance-ingestion-contracts.md). Draft registry API: [device inventory evidence](../evidence/phase-02/attendance-device-inventory.md). No mounted ingestion endpoint, durable attendance acknowledgment, hardware reconciliation or rollout evidence.
 - Device workspace: [owner/HR inventory screen](../evidence/phase-02/attendance-device-workspace.md), still draft-only and never connected.
@@ -146,3 +146,7 @@ An attendance-only pilot requires approved data terms, functioning permissions/b
 ## Local allocation workspace increment — 4 October 2026
 
 The [allocation workspace](../evidence/phase-02/attendance-allocation-workspace.md) provides operator review/confirmation, explicit exact-request reconciliation and company owner/HR read-only state. Allocated limits still grant no machine access; the draft inventory and allocation UI do not complete P02-01. Next bounded implementation is single-use enrollment with atomic capacity reservation, verified binding and revocable credentials. Actual hardware validation and SDK rights remain separate release gates.
+
+## Local enrollment reservation increment — 4 October 2026
+
+[Enrollment issuance and revocation](../evidence/phase-02/connector-enrollment-reservations.md) add owner-issued 15-minute digest-only tokens, metadata-only retry/history and shared-lock device/connector reservations. Allocations cannot be lowered below live reservations; expiry/revocation release capacity. There is no redemption, machine credential, device activation or actual connector usage yet. Next: single-use redemption with usage conversion, credential lifecycle and fail-closed recovery generations, then the owner/local connector workflow. P02-01 remains partial; hardware and production approvals remain pending.

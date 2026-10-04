@@ -40,6 +40,7 @@ model Tenant {
   administratorAccountRequests AdministratorAccountRequest[]
   administratorInvitations     AdministratorInvitation[]
   legalEntity                  LegalEntity?
+  connectorEnrollmentTokens    ConnectorEnrollmentToken[]
   attendanceAllocations        AttendanceAllocation[]
   attendanceDevices            AttendanceDevice[]
   branches                     Branch[]
@@ -65,6 +66,7 @@ model Identity {
   memberships                  Membership[]
   entitlementCreationReceipts   EntitlementCreationReceipt[]
   entitlementRevocationReceipts EntitlementRevocationReceipt[]
+  connectorEnrollmentTokens    ConnectorEnrollmentToken[]
   attendanceAllocations        AttendanceAllocation[]
   platformOperator             PlatformOperator?
   companyProvisioningRequests  CompanyProvisioningRequest[]
@@ -953,6 +955,8 @@ model AttendanceDevice {
   tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   branch         Branch   @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict)
 
+  enrollmentTokens ConnectorEnrollmentToken[]
+
   @@unique([tenantId, id])
   @@unique([tenantId, code])
   @@map("attendance_devices")
@@ -973,7 +977,32 @@ model AttendanceAllocation {
   tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   actor           Identity @relation(fields: [actorId], references: [id], onDelete: Restrict)
 
+  enrollmentTokens ConnectorEnrollmentToken[]
+
   @@unique([tenantId, version])
   @@unique([tenantId, actorId, requestId])
   @@map("attendance_allocations")
+}
+
+model ConnectorEnrollmentToken {
+  id                String           @id @db.Uuid
+  tenantId          String           @map("tenant_id") @db.Uuid
+  tenant            Tenant           @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  deviceId          String           @map("device_id") @db.Uuid
+  device            AttendanceDevice @relation(fields: [tenantId, deviceId], references: [tenantId, id], onDelete: Restrict)
+  actorId           String           @map("actor_id") @db.Uuid
+  actor             Identity         @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  requestId         String           @map("request_id") @db.Uuid
+  deviceVersion     Int              @map("device_version")
+  allocationVersion Int              @map("allocation_version")
+  allocation        AttendanceAllocation @relation(fields: [tenantId, allocationVersion], references: [tenantId, version], onDelete: Restrict)
+  tokenDigest       String           @unique @map("token_digest") @db.VarChar(64)
+  status            String           @default("issued") @db.VarChar(20)
+  version           Int              @default(1)
+  createdAt         DateTime         @map("created_at") @db.Timestamptz()
+  expiresAt         DateTime         @map("expires_at") @db.Timestamptz()
+  revokedAt         DateTime?        @map("revoked_at") @db.Timestamptz()
+
+  @@unique([tenantId, actorId, requestId])
+  @@map("connector_enrollment_tokens")
 }

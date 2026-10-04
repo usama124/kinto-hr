@@ -163,6 +163,23 @@ export const schemaIsolationInventory: readonly Classification[] = [
       'persists verified logout across Redis failure and API restart without granting a revoked session',
     ),
   },
+  {
+    ...privateTenantTable(
+      'connector_enrollment_tokens',
+      regression(
+        'attendance-devices',
+        'keeps enrollment digests private and rechecks owner authority on retries',
+      ),
+      { kinto_control_owner: ['INSERT', 'SELECT'] },
+    ),
+    columnGrants: [
+      {
+        role: 'kinto_control_owner',
+        privilege: 'UPDATE',
+        columns: ['status', 'version', 'revoked_at'],
+      },
+    ],
+  },
   privateTenantTable(
     'attendance_allocations',
     regression(
