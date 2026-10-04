@@ -1414,3 +1414,31 @@ footer span:last-child {
   width: auto;
   margin: 0;
 }
+
+.connector-secret,
+.connector-record {
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.connector-secret label {
+  display: grid;
+  gap: 0.5rem;
+}
+.connector-secret input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  font-family: monospace;
+}
+.connector-secret button {
+  margin-top: 0.75rem;
+}
+.connector-record button {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
