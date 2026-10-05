@@ -55,6 +55,9 @@ import {
   registerTenantEmployeeDocument,
   transitionTenantEmployeeDocumentScan,
   activateTenantEmployeeDocumentReplacement,
+  createTenantDeviceMapping,
+  endTenantDeviceMapping,
+  resolveTenantDeviceMapping,
   type PrismaClient,
 } from '@kinto/database';
 import { processEvent } from '../apps/worker/src/processor';
@@ -94,6 +97,8 @@ async function snapshot(db: PrismaClient) {
       'consumer_receipts',
       'departments',
       'designations',
+      'device_employee_mappings',
+      'device_mapping_receipts',
       'employee_account_requests',
       'employee_assignments',
       'employee_bank_details',
@@ -232,6 +237,12 @@ async function snapshot(db: PrismaClient) {
     }),
     attendanceAllocations: await db.attendanceAllocation.findMany({
       orderBy: { id: 'asc' },
+    }),
+    deviceEmployeeMappings: await db.deviceEmployeeMapping.findMany({
+      orderBy: { id: 'asc' },
+    }),
+    deviceMappingReceipts: await db.deviceMappingReceipt.findMany({
+      orderBy: [{ tenantId: 'asc' }, { actorId: 'asc' }, { requestId: 'asc' }],
     }),
     attendanceDevices: await db.attendanceDevice.findMany({
       orderBy: { id: 'asc' },
@@ -950,6 +961,55 @@ async function main() {
     const enrollmentDevice = await source.attendanceDevice.findFirstOrThrow({
       where: { tenantId: tenants[0], status: 'draft' },
     });
+    const mappingEmployees = await source.employee.findMany({
+      where: { tenantId: tenants[0], archivedAt: null },
+      orderBy: { id: 'asc' },
+      take: 2,
+    });
+    assert.equal(mappingEmployees.length, 2);
+    const mappingKey = randomUUID(),
+      mappingEndKey = randomUUID();
+    const mappingInput = {
+      employeeId: mappingEmployees[0].id,
+      sourceUserId: '0007',
+      effectiveFrom: '2026-10-01T00:00:00Z',
+      effectiveUntil: null,
+      reason: 'initial_mapping' as const,
+    };
+    const mappingReceipt = await createTenantDeviceMapping(
+      sourceApp,
+      { identityId: membershipOwners[0], mfaVerified: true },
+      tenants[0],
+      enrollmentDevice.id,
+      mappingKey,
+      mappingInput,
+    );
+    const mappingEndInput = {
+      expectedVersion: 1,
+      effectiveUntil: '2026-10-02T00:00:00Z',
+      reason: 'end_mapping' as const,
+    };
+    const mappingEndReceipt = await endTenantDeviceMapping(
+      sourceApp,
+      { identityId: membershipOwners[0], mfaVerified: true },
+      tenants[0],
+      enrollmentDevice.id,
+      mappingReceipt.id,
+      mappingEndKey,
+      mappingEndInput,
+    );
+    await createTenantDeviceMapping(
+      sourceApp,
+      { identityId: membershipOwners[0], mfaVerified: true },
+      tenants[0],
+      enrollmentDevice.id,
+      randomUUID(),
+      {
+        ...mappingInput,
+        employeeId: mappingEmployees[1].id,
+        effectiveFrom: mappingEndInput.effectiveUntil,
+      },
+    );
     const enrollmentKey = randomUUID();
     const enrollmentInput = {
       deviceId: enrollmentDevice.id,
@@ -1177,6 +1237,56 @@ async function main() {
     assert.equal(monitorPrivileges.safe, true);
     assert.deepEqual(await snapshot(restored), expected);
 
+    stage = 'restored mapping history and exact command retries';
+    assert.deepEqual(
+      await createTenantDeviceMapping(
+        restoredApp,
+        { identityId: membershipOwners[0], mfaVerified: true },
+        tenants[0],
+        enrollmentDevice.id,
+        mappingKey,
+        mappingInput,
+      ),
+      { ...mappingReceipt, replayed: true },
+    );
+    assert.deepEqual(
+      await endTenantDeviceMapping(
+        restoredApp,
+        { identityId: membershipOwners[0], mfaVerified: true },
+        tenants[0],
+        enrollmentDevice.id,
+        mappingReceipt.id,
+        mappingEndKey,
+        mappingEndInput,
+      ),
+      { ...mappingEndReceipt, replayed: true },
+    );
+    for (const [at, employeeId] of [
+      ['2026-10-01T23:59:59.999Z', mappingEmployees[0].id],
+      ['2026-10-02T00:00:00Z', mappingEmployees[1].id],
+    ]) {
+      assert.equal(
+        (
+          await resolveTenantDeviceMapping(
+            restoredApp,
+            { identityId: membershipOwners[0], mfaVerified: true },
+            tenants[0],
+            enrollmentDevice.id,
+            { sourceUserId: '0007', at },
+          )
+        ).employeeId,
+        employeeId,
+      );
+    }
+    await assert.rejects(
+      restoredApp.deviceEmployeeMapping.findMany(),
+      /permission denied/,
+    );
+    await assert.rejects(
+      restoredApp.deviceMappingReceipt.findMany(),
+      /permission denied/,
+    );
+    assert.deepEqual(await snapshot(restored), expected);
     stage = 'restored entitlement creation retry';
     assert.deepEqual(
       await createEntitlementChange(
@@ -1212,7 +1322,7 @@ async function main() {
     const policies = await restored.$queryRaw<
       { enabled: boolean; forced: boolean }[]
     >`SELECT relrowsecurity AS enabled, relforcerowsecurity AS forced FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND relkind='r' AND relname <> '_prisma_migrations'`;
-    assert.equal(policies.length, 47);
+    assert.equal(policies.length, 49);
     assert.ok(policies.every((row) => row.enabled && row.forced));
     assert.deepEqual(await restoredApp.employee.findMany(), []);
     stage = 'restored tenant lifecycle visibility';
@@ -1441,6 +1551,20 @@ async function main() {
         1,
       );
     }
+    stage = 'restored device mapping change events';
+    const mappingEvents = await restored.outboxEvent.findMany({
+      where: { type: 'device.mapping_changed.v1' },
+    });
+    assert.equal(mappingEvents.length, 3);
+    for (const event of mappingEvents) {
+      const ref = { tenantId: event.tenantId, eventId: event.id };
+      assert.equal(await processEvent(restoredWorker, ref), 'completed');
+      assert.equal(await processEvent(restoredWorker, ref), 'completed');
+      assert.equal(
+        await restored.consumerReceipt.count({ where: { eventId: event.id } }),
+        1,
+      );
+    }
     stage = 'restored connector enrollment reservations';
     const replayedEnrollment = await issueConnectorEnrollment(
       restoredApp,
@@ -1544,6 +1668,10 @@ async function main() {
       attendanceAllocationHistoryPreserved: true,
       attendanceAllocationRetryPreserved: true,
       attendanceAllocationEventsConsumed: true,
+      deviceMappingHistoryPreserved: true,
+      deviceMappingRetryPreserved: true,
+      deviceMappingBoundaryResolutionPreserved: true,
+      deviceMappingEventsConsumed: true,
       attendanceDeviceInventoryPreserved: true,
       attendanceDeviceChangeEventsConsumed: true,
       employeeAssignmentsPreserved: true,

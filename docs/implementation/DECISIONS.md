@@ -342,3 +342,7 @@ Engineering adds an owner/HR workspace over the opt-in synthetic HTTP boundary. 
 ## Synthetic lifecycle reference client — 4 October 2026
 
 Prepare a local HTTP client in the existing TypeScript toolchain without selecting the K50 service/SDK runtime. Restrict it to literal loopback and non-production mode; keep credentials private in memory only. Never retry uncertain redemption or recover credentials from SQL. Host restart therefore requires owner reconciliation/revocation and new enrollment until an approved OS-protected storage adapter exists. This is not production service restart acceptance. See [evidence](../evidence/phase-02/local-connector-client.md).
+
+## Preparatory mapping windows and database exclusion — 5 October 2026
+
+Device mappings use exact case-sensitive source strings and UTC half-open effective windows. Owners manage them; HR reads under the existing device permission boundary. Use PostgreSQL btree_gist exclusion constraints for non-overlap, composite tenant FKs, private forced-RLS tables and actor-scoped exact-command receipts. Ending only shortens an existing interval; no source/employee rewrites or deletion endpoint. Owner/HR event-time resolution examines full history, never a paginated subset. This draft-only API adds no machine data access or attendance effects. Locked-period safeguards and unresolved-event reprocessing must precede live ingestion. See [mapping evidence](../evidence/phase-02/device-employee-mappings.md).

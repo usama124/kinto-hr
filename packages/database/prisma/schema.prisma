@@ -44,6 +44,8 @@ model Tenant {
   connectorEnrollmentTokens    ConnectorEnrollmentToken[]
   attendanceAllocations        AttendanceAllocation[]
   attendanceDevices            AttendanceDevice[]
+  deviceEmployeeMappings       DeviceEmployeeMapping[]
+  deviceMappingReceipts        DeviceMappingReceipt[]
   branches                     Branch[]
   departments                  Department[]
   designations                 Designation[]
@@ -97,6 +99,8 @@ model Identity {
   submittedProfileChangeRequests EmployeeProfileChangeRequest[]      @relation("ProfileChangeRequestedBy")
   decidedProfileChangeRequests   EmployeeProfileChangeRequest[]      @relation("ProfileChangeDecidedBy")
   createdWorkforceReportExports  WorkforceReportExport[]              @relation("WorkforceReportExportCreatedBy")
+
+  deviceMappingReceipts DeviceMappingReceipt[]
 
   @@unique([issuer, subject])
   @@map("identities")
@@ -440,6 +444,8 @@ model Employee {
   importedByRows         EmployeeImportRow[]     @relation("ImportedEmployee")
   documents              EmployeeDocument[]      @relation("EmployeeDocuments")
   profileChangeRequests  EmployeeProfileChangeRequest[]
+
+  deviceMappings DeviceEmployeeMapping[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, employeeNumber])
@@ -959,6 +965,8 @@ model AttendanceDevice {
   connectorCredentials ConnectorCredential[]
   enrollmentTokens ConnectorEnrollmentToken[]
 
+  employeeMappings DeviceEmployeeMapping[]
+
   @@unique([tenantId, id])
   @@unique([tenantId, code])
   @@map("attendance_devices")
@@ -1031,4 +1039,40 @@ model ConnectorCredential {
 
   @@unique([tenantId, enrollmentId])
   @@map("connector_credentials")
+}
+
+model DeviceEmployeeMapping {
+  id             String    @id @db.Uuid
+  tenantId       String    @map("tenant_id") @db.Uuid
+  deviceId       String    @map("device_id") @db.Uuid
+  employeeId     String    @map("employee_id") @db.Uuid
+  sourceUserId   String    @map("source_user_id") @db.VarChar(64)
+  effectiveFrom  DateTime  @map("effective_from") @db.Timestamptz()
+  effectiveUntil DateTime? @map("effective_until") @db.Timestamptz()
+  version        Int       @default(1)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz()
+  tenant         Tenant           @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  device         AttendanceDevice @relation(fields: [tenantId, deviceId], references: [tenantId, id], onDelete: Restrict)
+  employee       Employee         @relation(fields: [tenantId, employeeId], references: [tenantId, id], onDelete: Restrict)
+  receipts       DeviceMappingReceipt[]
+
+  @@unique([tenantId, id])
+  @@index([tenantId, deviceId, id], map: "device_mapping_page")
+  @@map("device_employee_mappings")
+}
+
+model DeviceMappingReceipt {
+  tenantId       String @map("tenant_id") @db.Uuid
+  actorId        String @map("actor_id") @db.Uuid
+  requestId      String @map("request_id") @db.Uuid
+  input          Json
+  mappingId      String @map("mapping_id") @db.Uuid
+  mappingVersion Int    @map("mapping_version")
+  tenant         Tenant                @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  actor          Identity              @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  mapping        DeviceEmployeeMapping @relation(fields: [tenantId, mappingId], references: [tenantId, id], onDelete: Restrict)
+
+  @@id([tenantId, actorId, requestId])
+  @@map("device_mapping_receipts")
 }

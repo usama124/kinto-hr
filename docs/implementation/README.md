@@ -135,3 +135,7 @@ The [review inventory](foundation-readiness.json) and [readiness diagnostic](../
 ## Local connector client preparation — 4 October 2026
 
 The [synthetic lifecycle client](../evidence/phase-02/local-connector-client.md) adds one-shot bound enrollment, private memory credentials, explicit heartbeat and abortable shutdown against the gated local-test API. Unknown enrollment outcomes require owner reconciliation rather than retry. This reference tool does not select the hardware runtime or complete P02-01/P02-02. Next: device employee mapping preparation, with production admission, OS-protected storage, rotation, SDK/device evidence and durable ingestion still pending.
+
+## Device employee mapping API — 5 October 2026
+
+[Preparatory mapping API and persistence](../evidence/phase-02/device-employee-mappings.md) add owner-only keyed create/end commands, owner/HR bounded history and full-history event-time resolution. Exact string IDs and half-open intervals preserve leading zeros and ID reuse; database exclusion/FK constraints, fresh authority, atomic audit/outbox and private receipts protect conflicts/retries. Synthetic recovery includes mappings and receipts. P02-01 remains partial. Next: mapping workspace; hardware, production admission, rotation, durable ingestion and locked-period reprocessing safeguards remain pending.

@@ -7,6 +7,7 @@ import request from 'supertest';
 import { AuthService } from '../auth/service';
 import { DatabaseService } from '../database.service';
 import { configureHttp } from '../http';
+import { DeviceMappingController } from './mapping-controller';
 import { DeviceInventoryController } from './device-controller';
 import { DomainError } from '@kinto/domain';
 
@@ -31,6 +32,10 @@ const session = {
 };
 const methods = {
   readDevices: vi.fn(),
+  readDeviceMappings: vi.fn(),
+  resolveDeviceMapping: vi.fn(),
+  createDeviceMapping: vi.fn(),
+  endDeviceMapping: vi.fn(),
   createDevice: vi.fn(),
   updateDevice: vi.fn(),
 };
@@ -40,7 +45,7 @@ let app: INestApplication;
 
 beforeAll(async () => {
   const module = await Test.createTestingModule({
-    controllers: [DeviceInventoryController],
+    controllers: [DeviceInventoryController, DeviceMappingController],
     providers: [
       {
         provide: AuthService,
@@ -186,4 +191,147 @@ it('passes stale MFA as false and maps database authorization and version errors
   await mutate('put', base + '/' + branchId)
     .send(revision)
     .expect(404);
+});
+
+const mappingBase = base + '/' + branchId + '/employee-mappings';
+const mappingInput = {
+  employeeId: identityId,
+  sourceUserId: '0007',
+  effectiveFrom: '2026-10-01T00:00:00Z',
+  effectiveUntil: null,
+  reason: 'initial_mapping',
+};
+it('routes mapping reads, event-time resolution and keyed writes with selected company and server authority', async () => {
+  methods.readDeviceMappings.mockResolvedValueOnce({ items: [] });
+  await authenticated('get', mappingBase + '?limit=10').expect(200);
+  expect(methods.readDeviceMappings).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+    branchId,
+    { limit: 10 },
+  );
+  methods.resolveDeviceMapping.mockResolvedValueOnce({ status: 'unmapped' });
+  await authenticated(
+    'get',
+    mappingBase + '/resolve?sourceUserId=0007&at=2026-10-01T00%3A00%3A00Z',
+  ).expect(200);
+  expect(methods.resolveDeviceMapping).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+    branchId,
+    { sourceUserId: '0007', at: '2026-10-01T00:00:00.000Z' },
+  );
+  const key = randomUUID();
+  methods.createDeviceMapping.mockResolvedValueOnce({
+    id: identityId,
+    version: 1,
+    replayed: false,
+  });
+  await mutate('post', mappingBase)
+    .set('Idempotency-Key', key)
+    .send(mappingInput)
+    .expect(201);
+  expect(methods.createDeviceMapping).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+    branchId,
+    key,
+    { ...mappingInput, effectiveFrom: '2026-10-01T00:00:00.000Z' },
+  );
+  methods.endDeviceMapping.mockResolvedValueOnce({
+    id: identityId,
+    version: 2,
+    replayed: false,
+  });
+  const end = {
+    expectedVersion: 1,
+    effectiveUntil: '2026-11-01T00:00:00Z',
+    reason: 'end_mapping',
+  };
+  await mutate('post', mappingBase + '/' + identityId + '/end')
+    .set('Idempotency-Key', key)
+    .send(end)
+    .expect(201);
+  expect(methods.endDeviceMapping).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+    branchId,
+    identityId,
+    key,
+    { ...end, effectiveUntil: '2026-11-01T00:00:00.000Z' },
+  );
+});
+it('rejects malformed mapping IDs, unkeyed requests, authority fields and invalid effective intervals', async () => {
+  await mutate('post', mappingBase).send(mappingInput).expect(400);
+  await mutate('post', mappingBase)
+    .set('Idempotency-Key', 'bad')
+    .send(mappingInput)
+    .expect(400);
+  for (const change of [
+    { tenantId },
+    { sourceUserId: 7 },
+    { effectiveUntil: mappingInput.effectiveFrom },
+    { employeeId: 'bad' },
+    { credential: 'secret' },
+  ])
+    await mutate('post', mappingBase)
+      .set('Idempotency-Key', randomUUID())
+      .send({ ...mappingInput, ...change })
+      .expect(400);
+  await authenticated('get', mappingBase + '?limit=51').expect(400);
+  await authenticated(
+    'get',
+    mappingBase + '/resolve?sourceUserId=0007&at=bad',
+  ).expect(400);
+  await authenticated('get', base + '/bad/employee-mappings').expect(400);
+  await mutate('post', mappingBase + '/bad/end')
+    .set('Idempotency-Key', randomUUID())
+    .send({
+      expectedVersion: 1,
+      effectiveUntil: '2026-11-01T00:00:00Z',
+      reason: 'end_mapping',
+    })
+    .expect(400);
+  expect(methods.createDeviceMapping).not.toHaveBeenCalled();
+  expect(methods.endDeviceMapping).not.toHaveBeenCalled();
+});
+it('enforces mapping session, company, CSRF and recent MFA on reads and writes', async () => {
+  await request(app.getHttpServer()).get(mappingBase).expect(401);
+  await authenticated('post', mappingBase)
+    .set('Idempotency-Key', randomUUID())
+    .send(mappingInput)
+    .expect(403);
+  getSession.mockResolvedValueOnce({
+    ...session,
+    selectedTenantId: randomUUID(),
+  });
+  await authenticated('get', mappingBase).expect(403);
+  getSession.mockResolvedValueOnce({ ...session, authTime: now - 301 });
+  methods.createDeviceMapping.mockRejectedValueOnce(
+    new DomainError('FORBIDDEN'),
+  );
+  await mutate('post', mappingBase)
+    .set('Idempotency-Key', randomUUID())
+    .send(mappingInput)
+    .expect(403);
+  expect(methods.createDeviceMapping).toHaveBeenCalledWith(
+    { identityId, mfaVerified: false },
+    tenantId,
+    branchId,
+    expect.any(String),
+    expect.any(Object),
+  );
+});
+it('preserves mapping conflict, stale and forbidden database outcomes with safe HTTP responses', async () => {
+  for (const [code, status] of [
+    ['CONFLICT', 409],
+    ['STALE_VERSION', 409],
+    ['FORBIDDEN', 403],
+  ] as const) {
+    methods.createDeviceMapping.mockRejectedValueOnce(new DomainError(code));
+    await mutate('post', mappingBase)
+      .set('Idempotency-Key', randomUUID())
+      .send(mappingInput)
+      .expect(status);
+  }
 });

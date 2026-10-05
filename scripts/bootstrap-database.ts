@@ -111,6 +111,10 @@ try {
     'CREATE POLICY platform_control ON connector_enrollment_tokens FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON attendance_allocations',
     'CREATE POLICY platform_control ON attendance_allocations FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
+    'DROP POLICY IF EXISTS platform_control ON device_employee_mappings',
+    'CREATE POLICY platform_control ON device_employee_mappings FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
+    'DROP POLICY IF EXISTS platform_control ON device_mapping_receipts',
+    'CREATE POLICY platform_control ON device_mapping_receipts FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON attendance_devices',
     'CREATE POLICY platform_control ON attendance_devices FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON branches',
@@ -306,6 +310,12 @@ try {
   await database.$executeRawUnsafe(
     'REVOKE EXECUTE ON FUNCTION public.revoke_entitlement_change(uuid, boolean, uuid, varchar, uuid, integer, varchar, uuid, uuid) FROM kinto_app',
   );
+  await database.$executeRawUnsafe(
+    'GRANT SELECT, INSERT ON device_mapping_receipts, device_employee_mappings TO kinto_control_owner',
+  );
+  await database.$executeRawUnsafe(
+    'GRANT UPDATE(effective_until,version,updated_at) ON device_employee_mappings TO kinto_control_owner',
+  );
   for (const signature of [
     'public.accept_provider_logout(text,text,text,text,bigint)',
     'public.pending_provider_logouts(text)',
@@ -337,6 +347,9 @@ try {
     'public.list_connector_enrollments(uuid,boolean,uuid,integer,uuid)',
     'public.read_attendance_allocation(uuid,boolean,uuid,boolean)',
     'public.change_attendance_allocation(uuid,boolean,uuid,uuid,uuid,integer,boolean,integer,integer,varchar,uuid,uuid,uuid)',
+    'public.read_tenant_device_mappings(uuid,boolean,uuid,uuid,integer,uuid)',
+    'public.resolve_tenant_device_mapping(uuid,boolean,uuid,uuid,varchar,timestamptz)',
+    'public.mutate_tenant_device_mapping(uuid,boolean,uuid,uuid,uuid,uuid,integer,uuid,varchar,timestamptz,timestamptz,varchar,uuid,uuid)',
     'public.read_tenant_device_inventory(uuid,boolean,uuid,integer,uuid)',
     'public.mutate_tenant_device_inventory(uuid,boolean,uuid,uuid,integer,uuid,varchar,varchar,varchar,varchar,varchar,varchar,varchar,uuid,uuid)',
     'public.read_tenant_organization(uuid, boolean, uuid)',

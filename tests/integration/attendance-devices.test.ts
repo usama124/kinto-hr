@@ -21,6 +21,10 @@ import {
   vi,
 } from 'vitest';
 import {
+  readTenantDeviceMappings,
+  resolveTenantDeviceMapping,
+  createTenantDeviceMapping,
+  endTenantDeviceMapping,
   listConnectorCredentials,
   readConnectorCredentialCandidate,
   issueConnectorEnrollment,
@@ -128,6 +132,12 @@ describe('tenant attendance device inventory', () => {
       await machine.close();
     }
     const tenants = [tenantId, otherTenantId];
+    await admin.deviceMappingReceipt.deleteMany({
+      where: { tenantId: { in: tenants } },
+    });
+    await admin.deviceEmployeeMapping.deleteMany({
+      where: { tenantId: { in: tenants } },
+    });
     await admin.connectorCredential.deleteMany({
       where: { tenantId: { in: tenants } },
     });
@@ -171,6 +181,7 @@ describe('tenant attendance device inventory', () => {
     await admin.legalEntity.deleteMany({
       where: { tenantId: { in: tenants } },
     });
+    await admin.employee.deleteMany({ where: { tenantId: { in: tenants } } });
     await admin.membership.deleteMany({ where: { tenantId: { in: tenants } } });
     await admin.tenant.deleteMany({ where: { id: { in: tenants } } });
     await admin.identity.deleteMany({
@@ -1863,5 +1874,577 @@ describe('tenant attendance device inventory', () => {
       await app.close();
       vi.unstubAllEnvs();
     }
+  });
+
+  const mappingSetup = async () => {
+    const branch = await setup();
+    const first = await createTenantDeviceInventory(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      input(branch.id, 'MAP-01'),
+    );
+    const second = await createTenantDeviceInventory(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      input(branch.id, 'MAP-02'),
+    );
+    const employee = await admin.employee.create({
+      data: {
+        tenantId,
+        employeeNumber: 'MAP-01',
+        name: 'Synthetic mapping employee',
+      },
+    });
+    const replacement = await admin.employee.create({
+      data: {
+        tenantId,
+        employeeNumber: 'MAP-02',
+        name: 'Synthetic replacement employee',
+      },
+    });
+    const foreign = await admin.employee.create({
+      data: {
+        tenantId: otherTenantId,
+        employeeNumber: 'MAP-03',
+        name: 'Synthetic other tenant',
+      },
+    });
+    const mapping = {
+      employeeId: employee.id,
+      sourceUserId: '0007',
+      effectiveFrom: '2026-10-01T00:00:00Z',
+      effectiveUntil: null,
+      reason: 'initial_mapping' as const,
+    };
+    return { branch, first, second, employee, replacement, foreign, mapping };
+  };
+  it('keeps device mappings and receipts private behind constrained functions', async () => {
+    const f = await mappingSetup();
+    await createTenantDeviceMapping(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      f.first.id,
+      randomUUID(),
+      f.mapping,
+    );
+    for (const method of [
+      () => runtime.deviceEmployeeMapping.findMany(),
+      () => runtime.deviceMappingReceipt.findMany(),
+      () =>
+        inTenant(runtime, tenantId, (tx) =>
+          tx.deviceEmployeeMapping.findMany(),
+        ),
+    ])
+      await expect(method()).rejects.toThrow(/permission denied/);
+    for (const inputActor of [
+      actor(identities.employee),
+      actor(identities.otherOwner),
+      actor(identities.owner, false),
+    ]) {
+      await expect(
+        readTenantDeviceMappings(runtime, inputActor, tenantId, f.first.id, {
+          limit: 25,
+        }),
+      ).rejects.toThrow('FORBIDDEN');
+      await expect(
+        resolveTenantDeviceMapping(runtime, inputActor, tenantId, f.first.id, {
+          sourceUserId: '0007',
+          at: '2026-10-02T00:00:00Z',
+        }),
+      ).rejects.toThrow('FORBIDDEN');
+    }
+    const listed = await readTenantDeviceMappings(
+      runtime,
+      actor(identities.hr),
+      tenantId,
+      f.first.id,
+      { limit: 25 },
+    );
+    expect(listed.items).toHaveLength(1);
+    expect(listed.attendanceProcessingAvailable).toBe(false);
+    await expect(
+      createTenantDeviceMapping(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        f.second.id,
+        randomUUID(),
+        f.mapping,
+      ),
+    ).rejects.toThrow('FORBIDDEN');
+    const owners = await admin.$queryRaw<{ safe: boolean }[]>`
+      SELECT p.prosecdef AND r.rolname='kinto_control_owner' AND p.proconfig=ARRAY['search_path=pg_catalog, public']
+      AND NOT has_function_privilege('kinto_worker',p.oid,'EXECUTE') AND NOT has_function_privilege('kinto_dispatcher',p.oid,'EXECUTE') AS safe
+      FROM pg_proc p JOIN pg_roles r ON r.oid=p.proowner WHERE p.proname IN ('read_tenant_device_mappings','resolve_tenant_device_mapping','mutate_tenant_device_mapping')`;
+    expect(owners).toHaveLength(3);
+    expect(owners.every((r) => r.safe)).toBe(true);
+  });
+  it('resolves exact source strings by device and half-open event-time windows without guessing', async () => {
+    const f = await mappingSetup();
+    const initial = await createTenantDeviceMapping(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      f.first.id,
+      randomUUID(),
+      f.mapping,
+    );
+    await createTenantDeviceMapping(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      f.second.id,
+      randomUUID(),
+      { ...f.mapping, employeeId: f.replacement.id },
+    );
+    await createTenantDeviceMapping(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      f.first.id,
+      randomUUID(),
+      { ...f.mapping, sourceUserId: '7', employeeId: f.replacement.id },
+    );
+    const resolve = (
+      deviceId: string,
+      sourceUserId = '0007',
+      at = '2026-10-01T00:00:00Z',
+    ) =>
+      resolveTenantDeviceMapping(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        deviceId,
+        { sourceUserId, at },
+      );
+    expect(await resolve(f.first.id)).toMatchObject({
+      status: 'mapped',
+      employeeId: f.employee.id,
+    });
+    expect(await resolve(f.second.id)).toMatchObject({
+      status: 'mapped',
+      employeeId: f.replacement.id,
+    });
+    expect(await resolve(f.first.id, '7')).toMatchObject({
+      employeeId: f.replacement.id,
+    });
+    expect(await resolve(f.first.id, 'unknown')).toEqual({
+      status: 'unmapped',
+      mappingId: null,
+      mappingVersion: null,
+      employeeId: null,
+    });
+    expect(
+      (await resolve(f.first.id, '0007', '2026-09-30T23:59:59.999Z')).status,
+    ).toBe('unmapped');
+    await endTenantDeviceMapping(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      f.first.id,
+      initial.id,
+      randomUUID(),
+      {
+        expectedVersion: 1,
+        effectiveUntil: '2026-10-02T00:00:00Z',
+        reason: 'end_mapping',
+      },
+    );
+    await createTenantDeviceMapping(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      f.first.id,
+      randomUUID(),
+      {
+        ...f.mapping,
+        employeeId: f.replacement.id,
+        effectiveFrom: '2026-10-02T00:00:00Z',
+      },
+    );
+    expect(
+      (await resolve(f.first.id, '0007', '2026-10-01T23:59:59.999Z'))
+        .employeeId,
+    ).toBe(f.employee.id);
+    expect(
+      (await resolve(f.first.id, '0007', '2026-10-02T00:00:00Z')).employeeId,
+    ).toBe(f.replacement.id);
+  });
+  it('rejects overlapping windows even on concurrent creation and direct database writes', async () => {
+    const f = await mappingSetup();
+    const results = await Promise.allSettled(
+      [f.employee.id, f.replacement.id].map((employeeId) =>
+        createTenantDeviceMapping(
+          runtime,
+          actor(identities.owner),
+          tenantId,
+          f.first.id,
+          randomUUID(),
+          { ...f.mapping, employeeId },
+        ),
+      ),
+    );
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((r) => r.status === 'rejected')).toHaveLength(1);
+    await expect(
+      admin.deviceEmployeeMapping.create({
+        data: {
+          id: randomUUID(),
+          tenantId,
+          deviceId: f.first.id,
+          employeeId: f.replacement.id,
+          sourceUserId: '0007',
+          effectiveFrom: new Date('2026-10-02T00:00:00Z'),
+        },
+      }),
+    ).rejects.toThrow(/exclusion constraint/);
+    expect(
+      await admin.deviceEmployeeMapping.count({ where: { tenantId } }),
+    ).toBe(1);
+    expect(
+      await admin.auditEvent.count({
+        where: { tenantId, action: 'device.mapping_created' },
+      }),
+    ).toBe(1);
+    expect(
+      await admin.outboxEvent.count({
+        where: { tenantId, type: 'device.mapping_changed.v1' },
+      }),
+    ).toBe(1);
+  });
+  it('reconciles concurrent mapping retries exactly and rejects changed payloads or lost owner authority', async () => {
+    const f = await mappingSetup(),
+      key = randomUUID();
+    const results = await Promise.all(
+      [0, 1].map(() =>
+        createTenantDeviceMapping(
+          runtime,
+          actor(identities.owner),
+          tenantId,
+          f.first.id,
+          key,
+          f.mapping,
+        ),
+      ),
+    );
+    expect(results[0].id).toBe(results[1].id);
+    expect(results.map((r) => r.replayed).sort()).toEqual([false, true]);
+    expect(
+      await admin.deviceMappingReceipt.count({ where: { tenantId } }),
+    ).toBe(1);
+    expect(
+      await createTenantDeviceMapping(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        f.first.id,
+        key,
+        { ...f.mapping, effectiveFrom: '2026-10-01T05:00:00+05:00' },
+      ),
+    ).toEqual({ ...results[0], replayed: true });
+    await expect(
+      createTenantDeviceMapping(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        f.first.id,
+        key,
+        { ...f.mapping, sourceUserId: '8' },
+      ),
+    ).rejects.toThrow('CONFLICT');
+    await admin.membership.update({
+      where: {
+        tenantId_identityId: { tenantId, identityId: identities.owner },
+      },
+      data: { status: 'revoked' },
+    });
+    await expect(
+      createTenantDeviceMapping(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        f.first.id,
+        key,
+        f.mapping,
+      ),
+    ).rejects.toThrow('FORBIDDEN');
+  });
+  it('ends mappings with optimistic versions and exact replay without rewriting source identity', async () => {
+    const f = await mappingSetup();
+    const initial = await createTenantDeviceMapping(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      f.first.id,
+      randomUUID(),
+      f.mapping,
+    );
+    const key = randomUUID(),
+      end = {
+        expectedVersion: 1,
+        effectiveUntil: '2026-10-05T00:00:00Z',
+        reason: 'end_mapping' as const,
+      };
+    const result = await endTenantDeviceMapping(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      f.first.id,
+      initial.id,
+      key,
+      end,
+    );
+    expect(result).toMatchObject({ version: 2, replayed: false });
+    expect(
+      await endTenantDeviceMapping(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        f.first.id,
+        initial.id,
+        key,
+        end,
+      ),
+    ).toEqual({ ...result, replayed: true });
+    await expect(
+      endTenantDeviceMapping(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        f.first.id,
+        initial.id,
+        randomUUID(),
+        end,
+      ),
+    ).rejects.toThrow('STALE_VERSION');
+    for (const effectiveUntil of [
+      '2026-10-01T00:00:00Z',
+      '2026-10-05T00:00:00Z',
+      '2026-10-06T00:00:00Z',
+    ])
+      await expect(
+        endTenantDeviceMapping(
+          runtime,
+          actor(identities.owner),
+          tenantId,
+          f.first.id,
+          initial.id,
+          randomUUID(),
+          { ...end, expectedVersion: 2, effectiveUntil },
+        ),
+      ).rejects.toThrow('INVALID_STATE');
+    await expect(
+      endTenantDeviceMapping(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        f.second.id,
+        initial.id,
+        randomUUID(),
+        end,
+      ),
+    ).rejects.toThrow('NOT_FOUND');
+    const saved = await admin.deviceEmployeeMapping.findUniqueOrThrow({
+      where: { id: initial.id },
+    });
+    expect(saved.sourceUserId).toBe('0007');
+    expect(saved.employeeId).toBe(f.employee.id);
+    expect(saved.effectiveFrom.toISOString()).toBe('2026-10-01T00:00:00.000Z');
+    expect(
+      await admin.auditEvent.count({
+        where: { tenantId, action: 'device.mapping_ended' },
+      }),
+    ).toBe(1);
+  });
+  it('rejects foreign employees and devices and preserves historical reads after retirement', async () => {
+    const f = await mappingSetup();
+    await expect(
+      createTenantDeviceMapping(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        f.first.id,
+        randomUUID(),
+        { ...f.mapping, employeeId: f.foreign.id },
+      ),
+    ).rejects.toThrow('INVALID_STATE');
+    await expect(
+      createTenantDeviceMapping(
+        runtime,
+        actor(identities.otherOwner),
+        otherTenantId,
+        f.first.id,
+        randomUUID(),
+        { ...f.mapping, employeeId: f.foreign.id },
+      ),
+    ).rejects.toThrow('NOT_FOUND');
+    await expect(
+      admin.deviceEmployeeMapping.create({
+        data: {
+          id: randomUUID(),
+          tenantId,
+          deviceId: f.first.id,
+          employeeId: f.foreign.id,
+          sourceUserId: '0007',
+          effectiveFrom: new Date(f.mapping.effectiveFrom),
+        },
+      }),
+    ).rejects.toThrow(/Foreign key constraint/);
+    const initial = await createTenantDeviceMapping(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      f.first.id,
+      randomUUID(),
+      f.mapping,
+    );
+    await updateTenantDeviceInventory(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      f.first.id,
+      {
+        branchId: f.branch.id,
+        name: 'Synthetic entrance',
+        model: 'ZKTeco_K50',
+        firmware: null,
+        sourceTimezone: 'Asia/Karachi',
+        expectedVersion: 1,
+        status: 'retired',
+        reason: 'retire_device',
+      },
+    );
+    await expect(
+      createTenantDeviceMapping(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        f.first.id,
+        randomUUID(),
+        { ...f.mapping, sourceUserId: '8' },
+      ),
+    ).rejects.toThrow('INVALID_STATE');
+    await endTenantDeviceMapping(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      f.first.id,
+      initial.id,
+      randomUUID(),
+      {
+        expectedVersion: 1,
+        effectiveUntil: '2026-10-03T00:00:00Z',
+        reason: 'end_mapping',
+      },
+    );
+    expect(
+      (
+        await readTenantDeviceMappings(
+          runtime,
+          actor(identities.hr),
+          tenantId,
+          f.first.id,
+          { limit: 25 },
+        )
+      ).items,
+    ).toHaveLength(1);
+    await admin.employee.update({
+      where: { id: f.replacement.id },
+      data: {
+        archivedAt: new Date(),
+        archivedByIdentityId: identities.owner,
+        archiveReason: 'Synthetic archive',
+      },
+    });
+    await expect(
+      createTenantDeviceMapping(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        f.second.id,
+        randomUUID(),
+        { ...f.mapping, employeeId: f.replacement.id },
+      ),
+    ).rejects.toThrow('INVALID_STATE');
+    await expect(
+      readTenantDeviceMappings(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        randomUUID(),
+        { limit: 25 },
+      ),
+    ).rejects.toThrow('NOT_FOUND');
+  });
+  it('paginates mapping history while resolving from the complete history rather than one page', async () => {
+    const f = await mappingSetup();
+    for (const sourceUserId of ['01', '02', '03'])
+      await createTenantDeviceMapping(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        f.first.id,
+        randomUUID(),
+        { ...f.mapping, sourceUserId },
+      );
+    const first = await readTenantDeviceMappings(
+      runtime,
+      actor(identities.hr),
+      tenantId,
+      f.first.id,
+      { limit: 2 },
+    );
+    expect(first.items).toHaveLength(2);
+    const second = await readTenantDeviceMappings(
+      runtime,
+      actor(identities.hr),
+      tenantId,
+      f.first.id,
+      { limit: 2, afterId: first.nextCursor! },
+    );
+    expect(second.items).toHaveLength(1);
+    expect(second.nextCursor).toBeNull();
+    expect(
+      new Set([...first.items, ...second.items].map((i) => i.id)).size,
+    ).toBe(3);
+    expect(
+      (
+        await resolveTenantDeviceMapping(
+          runtime,
+          actor(identities.hr),
+          tenantId,
+          f.first.id,
+          {
+            sourceUserId: second.items[0].sourceUserId,
+            at: f.mapping.effectiveFrom,
+          },
+        )
+      ).status,
+    ).toBe('mapped');
+  });
+  it('rolls back mappings, receipts and outbox when audit insertion fails', async () => {
+    const f = await mappingSetup();
+    const duplicate = await admin.auditEvent.findFirstOrThrow({
+      where: { tenantId },
+    });
+    const request = randomUUID(),
+      mapping = randomUUID();
+    await expect(
+      runtime.$queryRaw`SELECT * FROM public.mutate_tenant_device_mapping(${identities.owner}::uuid,true,${tenantId}::uuid,${f.first.id}::uuid,${request}::uuid,${mapping}::uuid,NULL::integer,${f.employee.id}::uuid,'0007'::varchar,${new Date(f.mapping.effectiveFrom)}::timestamptz,NULL::timestamptz,'initial_mapping'::varchar,${duplicate.id}::uuid,${randomUUID()}::uuid)`,
+    ).rejects.toThrow(/23505/);
+    expect(
+      await admin.deviceEmployeeMapping.count({ where: { tenantId } }),
+    ).toBe(0);
+    expect(
+      await admin.deviceMappingReceipt.count({ where: { tenantId } }),
+    ).toBe(0);
+    expect(
+      await admin.outboxEvent.count({
+        where: { tenantId, type: 'device.mapping_changed.v1' },
+      }),
+    ).toBe(0);
   });
 });
