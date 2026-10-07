@@ -229,6 +229,30 @@ export const schemaIsolationInventory: readonly Classification[] = [
     ],
   },
   privateTenantTable(
+    'synthetic_attendance_events',
+    regression(
+      'attendance-devices',
+      'keeps synthetic inbox private behind constrained fixture functions',
+    ),
+    { kinto_control_owner: controlAppend },
+  ),
+  privateTenantTable(
+    'synthetic_attendance_transports',
+    regression(
+      'attendance-devices',
+      'keeps synthetic inbox private behind constrained fixture functions',
+    ),
+    { kinto_control_owner: controlAppend },
+  ),
+  privateTenantTable(
+    'synthetic_attendance_batches',
+    regression(
+      'attendance-devices',
+      'keeps synthetic inbox private behind constrained fixture functions',
+    ),
+    { kinto_control_owner: controlAppend },
+  ),
+  privateTenantTable(
     'device_mapping_receipts',
     regression(
       'attendance-devices',

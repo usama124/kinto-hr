@@ -115,6 +115,12 @@ try {
     'CREATE POLICY platform_control ON device_employee_mappings FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON device_mapping_receipts',
     'CREATE POLICY platform_control ON device_mapping_receipts FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
+    'DROP POLICY IF EXISTS platform_control ON synthetic_attendance_events',
+    'CREATE POLICY platform_control ON synthetic_attendance_events FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
+    'DROP POLICY IF EXISTS platform_control ON synthetic_attendance_transports',
+    'CREATE POLICY platform_control ON synthetic_attendance_transports FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
+    'DROP POLICY IF EXISTS platform_control ON synthetic_attendance_batches',
+    'CREATE POLICY platform_control ON synthetic_attendance_batches FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON attendance_devices',
     'CREATE POLICY platform_control ON attendance_devices FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON branches',
@@ -311,6 +317,9 @@ try {
     'REVOKE EXECUTE ON FUNCTION public.revoke_entitlement_change(uuid, boolean, uuid, varchar, uuid, integer, varchar, uuid, uuid) FROM kinto_app',
   );
   await database.$executeRawUnsafe(
+    'GRANT SELECT, INSERT ON synthetic_attendance_events, synthetic_attendance_transports, synthetic_attendance_batches TO kinto_control_owner',
+  );
+  await database.$executeRawUnsafe(
     'GRANT SELECT, INSERT ON device_mapping_receipts, device_employee_mappings TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
@@ -349,6 +358,7 @@ try {
     'public.change_attendance_allocation(uuid,boolean,uuid,uuid,uuid,integer,boolean,integer,integer,varchar,uuid,uuid,uuid)',
     'public.read_tenant_device_mappings(uuid,boolean,uuid,uuid,integer,uuid)',
     'public.resolve_tenant_device_mapping(uuid,boolean,uuid,uuid,varchar,timestamptz)',
+    'public.store_synthetic_attendance_batch(uuid,boolean,uuid,uuid,uuid,uuid,jsonb,uuid,uuid,uuid)',
     'public.mutate_tenant_device_mapping(uuid,boolean,uuid,uuid,uuid,uuid,integer,uuid,varchar,timestamptz,timestamptz,varchar,uuid,uuid)',
     'public.read_tenant_device_inventory(uuid,boolean,uuid,integer,uuid)',
     'public.mutate_tenant_device_inventory(uuid,boolean,uuid,uuid,integer,uuid,varchar,varchar,varchar,varchar,varchar,varchar,varchar,uuid,uuid)',

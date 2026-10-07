@@ -46,6 +46,9 @@ model Tenant {
   attendanceDevices            AttendanceDevice[]
   deviceEmployeeMappings       DeviceEmployeeMapping[]
   deviceMappingReceipts        DeviceMappingReceipt[]
+  syntheticAttendanceEvents SyntheticAttendanceEvent[]
+  syntheticAttendanceTransports SyntheticAttendanceTransport[]
+  syntheticAttendanceBatches SyntheticAttendanceBatch[]
   branches                     Branch[]
   departments                  Department[]
   designations                 Designation[]
@@ -966,6 +969,8 @@ model AttendanceDevice {
   enrollmentTokens ConnectorEnrollmentToken[]
 
   employeeMappings DeviceEmployeeMapping[]
+  syntheticEvents SyntheticAttendanceEvent[]
+  syntheticBatches SyntheticAttendanceBatch[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, code])
@@ -1075,4 +1080,45 @@ model DeviceMappingReceipt {
 
   @@id([tenantId, actorId, requestId])
   @@map("device_mapping_receipts")
+}
+
+model SyntheticAttendanceEvent {
+ id String @id @db.Uuid
+ tenantId String @map("tenant_id") @db.Uuid
+ deviceId String @map("device_id") @db.Uuid
+ sourceKey String? @map("source_key") @db.VarChar(64)
+ payload Json
+ quarantineCode String @default("source_identity_unverified") @map("quarantine_code") @db.VarChar(40)
+ createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+ tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+ device AttendanceDevice @relation(fields: [tenantId, deviceId], references: [tenantId, id], onDelete: Restrict)
+ transports SyntheticAttendanceTransport[]
+ @@unique([tenantId, deviceId, id])
+ @@unique([tenantId, deviceId, sourceKey])
+ @@map("synthetic_attendance_events")
+}
+model SyntheticAttendanceTransport {
+ tenantId String @map("tenant_id") @db.Uuid
+ connectorId String @map("connector_id") @db.Uuid
+ connectorEventId String @map("connector_event_id") @db.Uuid
+ deviceId String @map("device_id") @db.Uuid
+ eventId String @map("event_id") @db.Uuid
+ tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+ event SyntheticAttendanceEvent @relation(fields: [tenantId, deviceId, eventId], references: [tenantId, deviceId, id], onDelete: Restrict)
+ @@id([tenantId, connectorId, connectorEventId])
+ @@map("synthetic_attendance_transports")
+}
+model SyntheticAttendanceBatch {
+ id String @id @db.Uuid
+ tenantId String @map("tenant_id") @db.Uuid
+ connectorId String @map("connector_id") @db.Uuid
+ batchId String @map("batch_id") @db.Uuid
+ deviceId String @map("device_id") @db.Uuid
+ input Json
+ receipt Json
+ createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+ tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+ device AttendanceDevice @relation(fields: [tenantId, deviceId], references: [tenantId, id], onDelete: Restrict)
+ @@unique([tenantId, connectorId, batchId])
+ @@map("synthetic_attendance_batches")
 }

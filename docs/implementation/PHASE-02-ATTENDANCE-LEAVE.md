@@ -1,6 +1,6 @@
 # Phase 2 — K50 attendance, shifts and leave
 
-Version 1.0 · 28 August 2026 · Status: draft inventory and synthetic preflight started · Estimate: 4–6 weeks
+Version 1.0 · 28 August 2026 · Status: draft inventory, mappings and synthetic durable inbox prepared · Estimate: 4–6 weeks
 
 Dependencies: [Phase 1](PHASE-01-PLATFORM-PEOPLE.md), P00 K50 evidence and [shared spec](SYSTEM-SPEC.md). Next: [Phase 3](PHASE-03-PAKISTAN-PAYROLL.md).
 
@@ -174,3 +174,7 @@ The [mapping API](../evidence/phase-02/device-employee-mappings.md) adds tenant/
 ## Device mapping workspace increment — 7 October 2026
 
 The [mapping workspace](../evidence/phase-02/device-mapping-workspace.md) provides owner create/end, HR read-only history/lookup, retired history handling, explicit offset timestamps, independently bounded device/history navigation and strict company/device/actor boundaries. Unknown requests remain locked for exact reconciliation across in-page refresh; no lookup or mutation changes attendance/payroll. Mapping UI is locally implemented; exception reprocessing and finalized-period safeguards are still pending. P02-01 remains partial. Next: synthetic durable raw ingestion preparation while SDK/hardware, production admission and source deduplication gates remain open.
+
+## Synthetic durable raw inbox preparation — 7 October 2026
+
+The [internal inbox proof](../evidence/phase-02/synthetic-attendance-inbox.md) adds append-only canonical quarantine, transport aliases, ordered batch receipts, atomic audit/outbox and synthetic SQL recovery. Stable transport/source fixture identities cover concurrent retries, re-polls, connector replacement and reset boundaries without timestamp deduplication. Invalid records are rejected without storing their payloads; all accepted fixture records remain quarantined. No live device, machine upload endpoint, employee resolution, attendance effect or production acceptance is claimed. P02-01/P02-02 remain partial. Next: synthetic connector durable capture/queue and receipt reconciliation; production admission, OS-protected credential storage, rotation, K50/SDK/source evidence, mapping reprocessing and finalized-period safety remain prerequisites for live ingestion.

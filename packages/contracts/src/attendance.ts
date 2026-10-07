@@ -56,6 +56,7 @@ export const attendanceEventDispositionSchema = z.discriminatedUnion(
         'duplicate_transport_id',
         'source_identity_missing',
         'source_identity_conflict',
+        'transport_identity_conflict',
       ]),
     }),
   ],

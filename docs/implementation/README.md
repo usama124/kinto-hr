@@ -143,3 +143,7 @@ The [synthetic lifecycle client](../evidence/phase-02/local-connector-client.md)
 ## Device mapping workspace — 7 October 2026
 
 The [owner/HR mapping screen](../evidence/phase-02/device-mapping-workspace.md) adds selected-device history, independent keyset pagination, exact string/date assignment, confirmed versioned ending and full-history event-time lookup. Unknown commands retain the original actor/company/device/key/payload across in-page refresh and use fresh CSRF on explicit retry; malformed/denied reads erase data/forms and new writes remain blocked until reconciliation. Retired history stays readable/endable, HR stays read-only, and no attendance effect is claimed. P02-01 remains partial. Next: synthetic durable raw ingestion preparation; hardware/source identity, production admission, rotation, reprocessing and locked-period gates remain pending.
+
+## Synthetic durable attendance inbox — 7 October 2026
+
+The [internal synthetic inbox](../evidence/phase-02/synthetic-attendance-inbox.md) persists sanitized quarantined records, transport/source fixture deduplication and exact ordered receipts with atomic audit/outbox. Concurrent retries, re-polls, connector replacement, conflicts, permission loss, rollback and SQL restore are tested. No HTTP upload route or machine permission is added; P02-01/P02-02 remain partial. Next: synthetic connector durable capture/queue and receipt reconciliation, while hardware/source identity, secure host storage, production admission/rotation, mapping reprocessing and locked-period gates remain pending.
