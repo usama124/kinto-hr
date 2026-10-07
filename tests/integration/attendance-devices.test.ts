@@ -1,3 +1,6 @@
+import { SyntheticAttendanceInbox } from '../../apps/api/src/attendance/synthetic-inbox';
+import { processEvent } from '../../apps/worker/src/processor';
+import type { AttendanceConnectorScope } from '../../apps/api/src/attendance/preflight';
 import 'reflect-metadata';
 import { LocalConnectorClient } from '../../scripts/lib/local-connector-client';
 import { Test } from '@nestjs/testing';
@@ -114,7 +117,9 @@ describe('tenant attendance device inventory', () => {
     });
   });
 
+  const inboxes: SyntheticAttendanceInbox[] = [];
   afterEach(async () => {
+    for (const inbox of inboxes.splice(0)) await inbox.close();
     for (const { machine, store } of machines.splice(0)) {
       let cursor = '0';
       do {
@@ -132,6 +137,15 @@ describe('tenant attendance device inventory', () => {
       await machine.close();
     }
     const tenants = [tenantId, otherTenantId];
+    await admin.syntheticAttendanceBatch.deleteMany({
+      where: { tenantId: { in: tenants } },
+    });
+    await admin.syntheticAttendanceTransport.deleteMany({
+      where: { tenantId: { in: tenants } },
+    });
+    await admin.syntheticAttendanceEvent.deleteMany({
+      where: { tenantId: { in: tenants } },
+    });
     await admin.deviceMappingReceipt.deleteMany({
       where: { tenantId: { in: tenants } },
     });
@@ -2446,5 +2460,438 @@ describe('tenant attendance device inventory', () => {
         where: { tenantId, type: 'device.mapping_changed.v1' },
       }),
     ).toBe(0);
+  });
+  const fixtureEvent = (sourceEventId = '1') => ({
+    connectorEventId: randomUUID(),
+    sourceUserId: '0007',
+    sourceLocalTimestamp: '2026-10-07T09:00:00',
+    sourceEventId,
+    direction: 'in' as const,
+  });
+  const fixtureInbox = async (verified = false) => {
+    const br = await setup();
+    const device = await createTenantDeviceInventory(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      input(br.id),
+    );
+    const inbox = new SyntheticAttendanceInbox(runtimeUrl!);
+    inboxes.push(inbox);
+    const scope: AttendanceConnectorScope = {
+      tenantId,
+      deviceId: device.id,
+      connectorId: randomUUID(),
+      status: 'active',
+      adapterVersion: 'synthetic-1',
+      sourceIdentity: verified
+        ? { kind: 'vendor_event_id', resetEpoch: randomUUID() }
+        : { kind: 'unverified' },
+    };
+    const batch = (events: unknown[] = [fixtureEvent()]) => ({
+      batchId: randomUUID(),
+      deviceId: device.id,
+      schemaVersion: 1,
+      adapterVersion: 'synthetic-1',
+      events,
+    });
+    return { inbox, scope, batch, br, device };
+  };
+
+  it('keeps synthetic inbox private behind constrained fixture functions', async () => {
+    const f = await fixtureInbox();
+    await f.inbox.store(actor(identities.owner), f.batch(), f.scope);
+    for (const key of [
+      'DATABASE_URL',
+      'WORKER_DATABASE_URL',
+      'DISPATCHER_DATABASE_URL',
+    ]) {
+      const db = createDatabase(process.env[key]!);
+      try {
+        await expect(
+          inTenant(db, tenantId, (tx) =>
+            tx.syntheticAttendanceEvent.findMany(),
+          ),
+        ).rejects.toThrow('permission denied');
+        await expect(
+          db.syntheticAttendanceTransport.findMany(),
+        ).rejects.toThrow('permission denied');
+        await expect(db.syntheticAttendanceBatch.findMany()).rejects.toThrow(
+          'permission denied',
+        );
+      } finally {
+        await db.$disconnect();
+      }
+    }
+    const [grant] = await admin.$queryRaw<{ safe: boolean }[]>`SELECT
+      NOT has_function_privilege('kinto_worker','public.store_synthetic_attendance_batch(uuid,boolean,uuid,uuid,uuid,uuid,jsonb,uuid,uuid,uuid)','EXECUTE')
+      AND NOT has_function_privilege('kinto_dispatcher','public.store_synthetic_attendance_batch(uuid,boolean,uuid,uuid,uuid,uuid,jsonb,uuid,uuid,uuid)','EXECUTE') AS safe`;
+    expect(grant.safe).toBe(true);
+  });
+  it('persists quarantined events and exact receipts before retry after restart', async () => {
+    const f = await fixtureInbox();
+    const request = f.batch();
+    const receipt = await f.inbox.store(
+      actor(identities.owner),
+      request,
+      f.scope,
+    );
+    expect(receipt.events[0]).toMatchObject({
+      disposition: 'quarantined',
+      code: 'source_identity_unverified',
+    });
+    expect(
+      await admin.syntheticAttendanceEvent.count({ where: { tenantId } }),
+    ).toBe(1);
+    await f.inbox.close();
+    const reopened = new SyntheticAttendanceInbox(runtimeUrl!);
+    inboxes.push(reopened);
+    expect(
+      await reopened.store(actor(identities.owner), request, f.scope),
+    ).toEqual(receipt);
+    expect(
+      await admin.syntheticAttendanceBatch.count({ where: { tenantId } }),
+    ).toBe(1);
+    expect(
+      await admin.outboxEvent.count({
+        where: { tenantId, type: 'attendance.synthetic_inbox_changed.v1' },
+      }),
+    ).toBe(1);
+    await expect(
+      reopened.store(
+        actor(identities.owner),
+        { ...request, events: [fixtureEvent()] },
+        f.scope,
+      ),
+    ).rejects.toThrow('CONFLICT');
+  });
+  it('deduplicates concurrent batches and source identities across connector replacement', async () => {
+    const f = await fixtureInbox(true);
+    const e = fixtureEvent();
+    const request = f.batch([e]);
+    const receipts = await Promise.all(
+      Array.from({ length: 6 }, () =>
+        f.inbox.store(actor(identities.owner), request, f.scope),
+      ),
+    );
+    expect(receipts.every((r) => r.receiptId === receipts[0].receiptId)).toBe(
+      true,
+    );
+    const overlap = await Promise.all(
+      Array.from({ length: 4 }, () =>
+        f.inbox.store(actor(identities.owner), f.batch([e]), f.scope),
+      ),
+    );
+    expect(overlap.every((r) => r.events[0].disposition === 'duplicate')).toBe(
+      true,
+    );
+    const replaced = await f.inbox.store(
+      actor(identities.owner),
+      f.batch([{ ...e, connectorEventId: randomUUID() }]),
+      { ...f.scope, connectorId: randomUUID() },
+    );
+    expect(replaced.events[0].disposition).toBe('duplicate');
+    expect(
+      await admin.syntheticAttendanceEvent.count({ where: { tenantId } }),
+    ).toBe(1);
+    expect(
+      await admin.syntheticAttendanceTransport.count({ where: { tenantId } }),
+    ).toBe(2);
+  });
+  it('retains distinct same-time punches and isolates reset epochs without timestamp deduplication', async () => {
+    const f = await fixtureInbox(true);
+    const events = [fixtureEvent('1'), fixtureEvent('2')];
+    const first = await f.inbox.store(
+      actor(identities.owner),
+      f.batch(events),
+      f.scope,
+    );
+    expect(first.events.map((e) => e.disposition)).toEqual([
+      'quarantined',
+      'quarantined',
+    ]);
+    const repoll = await f.inbox.store(
+      actor(identities.owner),
+      f.batch(events.map((e) => ({ ...e, connectorEventId: randomUUID() }))),
+      f.scope,
+    );
+    expect(repoll.events.map((e) => e.disposition)).toEqual([
+      'duplicate',
+      'duplicate',
+    ]);
+    await f.inbox.store(actor(identities.owner), f.batch([fixtureEvent('1')]), {
+      ...f.scope,
+      sourceIdentity: { kind: 'vendor_event_id', resetEpoch: randomUUID() },
+    });
+    expect(
+      await admin.syntheticAttendanceEvent.count({ where: { tenantId } }),
+    ).toBe(3);
+  });
+  it('does not collapse unverified source IDs across separate transport identities', async () => {
+    const f = await fixtureInbox();
+    const e = fixtureEvent();
+    await f.inbox.store(
+      actor(identities.owner),
+      f.batch([e, { ...e, connectorEventId: randomUUID() }]),
+      f.scope,
+    );
+    await f.inbox.store(
+      actor(identities.owner),
+      f.batch([{ ...e, connectorEventId: randomUUID() }]),
+      { ...f.scope, connectorId: randomUUID() },
+    );
+    expect(
+      await admin.syntheticAttendanceEvent.count({ where: { tenantId } }),
+    ).toBe(3);
+  });
+  it('rejects changed transport or source content without overwriting canonical events', async () => {
+    const f = await fixtureInbox(true);
+    const e = fixtureEvent();
+    await f.inbox.store(actor(identities.owner), f.batch([e]), f.scope);
+    const transport = await f.inbox.store(
+      actor(identities.owner),
+      f.batch([{ ...e, sourceUserId: '8' }]),
+      f.scope,
+    );
+    expect(transport.events[0]).toMatchObject({
+      disposition: 'rejected_unstored',
+      code: 'transport_identity_conflict',
+    });
+    const source = await f.inbox.store(
+      actor(identities.owner),
+      f.batch([{ ...e, connectorEventId: randomUUID(), direction: 'out' }]),
+      f.scope,
+    );
+    expect(source.events[0]).toMatchObject({
+      disposition: 'rejected_unstored',
+      code: 'source_identity_conflict',
+    });
+    expect(
+      await admin.syntheticAttendanceEvent.count({ where: { tenantId } }),
+    ).toBe(1);
+    expect(
+      await admin.syntheticAttendanceTransport.count({ where: { tenantId } }),
+    ).toBe(1);
+  });
+  it('stores only sanitized partial-batch dispositions and never rejected biometric payloads', async () => {
+    const f = await fixtureInbox();
+    const secret = 'SYNTHETIC-FINGERPRINT-NOT-TO-PERSIST';
+    const request = f.batch([
+      fixtureEvent(),
+      { ...fixtureEvent(), fingerprint: secret },
+      null,
+    ]);
+    const receipt = await f.inbox.store(
+      actor(identities.owner),
+      request,
+      f.scope,
+    );
+    expect(receipt.events.map((e) => e.disposition)).toEqual([
+      'quarantined',
+      'rejected_unstored',
+      'rejected_unstored',
+    ]);
+    const saved = await admin.syntheticAttendanceBatch.findMany({
+      where: { tenantId },
+    });
+    expect(JSON.stringify(saved)).not.toContain(secret);
+    expect(JSON.stringify(saved)).not.toContain(
+      createHash('sha256').update(secret).digest('hex'),
+    );
+    expect(
+      await f.inbox.store(
+        actor(identities.owner),
+        {
+          ...request,
+          events: [
+            request.events[0],
+            {
+              ...(request.events[1] as object),
+              fingerprint: 'ignored-invalid-payload',
+            },
+            null,
+          ],
+        },
+        f.scope,
+      ),
+    ).toEqual(receipt);
+  });
+  it('requires fresh owner permission for every write and replay and isolates foreign devices', async () => {
+    const f = await fixtureInbox();
+    const request = f.batch();
+    await f.inbox.store(actor(identities.owner), request, f.scope);
+    for (const who of [
+      actor(identities.owner, false),
+      actor(identities.hr),
+      actor(identities.employee),
+      actor(identities.otherOwner),
+    ])
+      await expect(f.inbox.store(who, request, f.scope)).rejects.toThrow(
+        'FORBIDDEN',
+      );
+    await expect(
+      f.inbox.store(actor(identities.otherOwner), request, {
+        ...f.scope,
+        tenantId: otherTenantId,
+      }),
+    ).rejects.toThrow('INVALID_STATE');
+    await admin.membership.update({
+      where: {
+        tenantId_identityId: { tenantId, identityId: identities.owner },
+      },
+      data: { status: 'revoked' },
+    });
+    await expect(
+      f.inbox.store(actor(identities.owner), request, f.scope),
+    ).rejects.toThrow('FORBIDDEN');
+  });
+  it('allows exact reconciliation after retirement but refuses new synthetic records', async () => {
+    const f = await fixtureInbox();
+    const request = f.batch();
+    const receipt = await f.inbox.store(
+      actor(identities.owner),
+      request,
+      f.scope,
+    );
+    await updateTenantDeviceInventory(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      f.device.id,
+      {
+        ...update(f.br.id),
+        name: 'Synthetic entrance',
+        firmware: null,
+        status: 'retired',
+        reason: 'retire_device',
+      },
+    );
+    expect(
+      await f.inbox.store(actor(identities.owner), request, f.scope),
+    ).toEqual(receipt);
+    await expect(
+      f.inbox.store(actor(identities.owner), f.batch(), f.scope),
+    ).rejects.toThrow('INVALID_STATE');
+  });
+  it('rolls back raw records and receipts when audit insertion fails', async () => {
+    const f = await fixtureInbox();
+    const blocked = await admin.auditEvent.findFirstOrThrow({
+      where: { tenantId },
+    });
+    const e = fixtureEvent();
+    const packet = [
+      {
+        index: 0,
+        state: 'candidate',
+        connectorEventId: e.connectorEventId,
+        event: e,
+        sourceKey: null,
+      },
+    ];
+    await expect(
+      runtime.$queryRaw`SELECT * FROM public.store_synthetic_attendance_batch(${identities.owner}::uuid,true,${tenantId}::uuid,${f.device.id}::uuid,${f.scope.connectorId}::uuid,${randomUUID()}::uuid,${JSON.stringify(packet)}::jsonb,${randomUUID()}::uuid,${blocked.id}::uuid,${randomUUID()}::uuid)`,
+    ).rejects.toThrow(/23505/);
+    expect(
+      await admin.syntheticAttendanceEvent.count({ where: { tenantId } }),
+    ).toBe(0);
+    expect(
+      await admin.syntheticAttendanceTransport.count({ where: { tenantId } }),
+    ).toBe(0);
+    expect(
+      await admin.syntheticAttendanceBatch.count({ where: { tenantId } }),
+    ).toBe(0);
+  });
+  it('rejects injected raw fields at the SQL boundary and durably receipts all-invalid batches', async () => {
+    const f = await fixtureInbox();
+    const e = fixtureEvent();
+    const injected = [
+      {
+        index: 0,
+        state: 'candidate',
+        connectorEventId: e.connectorEventId,
+        event: { ...e, photo: 'SYNTHETIC-NO-PHOTO' },
+        sourceKey: null,
+      },
+    ];
+    const [result] = await runtime.$queryRaw<
+      { outcome: string }[]
+    >`SELECT * FROM public.store_synthetic_attendance_batch(${identities.owner}::uuid,true,${tenantId}::uuid,${f.device.id}::uuid,${f.scope.connectorId}::uuid,${randomUUID()}::uuid,${JSON.stringify(injected)}::jsonb,${randomUUID()}::uuid,${randomUUID()}::uuid,${randomUUID()}::uuid)`;
+    expect(result.outcome).toBe('invalid_state');
+    const request = f.batch([
+      null,
+      { ...e, fingerprint: 'SYNTHETIC-NO-TEMPLATE' },
+    ]);
+    const receipt = await f.inbox.store(
+      actor(identities.owner),
+      request,
+      f.scope,
+    );
+    expect(
+      receipt.events.every((e) => e.disposition === 'rejected_unstored'),
+    ).toBe(true);
+    expect(
+      await f.inbox.store(actor(identities.owner), request, f.scope),
+    ).toEqual(receipt);
+    expect(
+      await admin.syntheticAttendanceEvent.count({ where: { tenantId } }),
+    ).toBe(0);
+    expect(
+      await admin.syntheticAttendanceTransport.count({ where: { tenantId } }),
+    ).toBe(0);
+    expect(
+      await admin.syntheticAttendanceBatch.count({ where: { tenantId } }),
+    ).toBe(1);
+  });
+  it('rolls back the complete synthetic batch when outbox insertion fails', async () => {
+    const f = await fixtureInbox();
+    const e = fixtureEvent();
+    const existing = await admin.outboxEvent.findFirstOrThrow({
+      where: { tenantId },
+    });
+    const packet = [
+      {
+        index: 0,
+        state: 'candidate',
+        connectorEventId: e.connectorEventId,
+        event: e,
+        sourceKey: null,
+      },
+    ];
+    const audits = await admin.auditEvent.count({ where: { tenantId } });
+    await expect(
+      runtime.$queryRaw`SELECT * FROM public.store_synthetic_attendance_batch(${identities.owner}::uuid,true,${tenantId}::uuid,${f.device.id}::uuid,${f.scope.connectorId}::uuid,${randomUUID()}::uuid,${JSON.stringify(packet)}::jsonb,${randomUUID()}::uuid,${randomUUID()}::uuid,${existing.id}::uuid)`,
+    ).rejects.toThrow(/23505/);
+    expect(
+      await admin.syntheticAttendanceEvent.count({ where: { tenantId } }),
+    ).toBe(0);
+    expect(
+      await admin.syntheticAttendanceTransport.count({ where: { tenantId } }),
+    ).toBe(0);
+    expect(
+      await admin.syntheticAttendanceBatch.count({ where: { tenantId } }),
+    ).toBe(0);
+    expect(await admin.auditEvent.count({ where: { tenantId } })).toBe(audits);
+  });
+  it('observes synthetic inbox facts once without access to raw attendance', async () => {
+    const f = await fixtureInbox();
+    await f.inbox.store(actor(identities.owner), f.batch(), f.scope);
+    const event = await admin.outboxEvent.findFirstOrThrow({
+      where: { tenantId, type: 'attendance.synthetic_inbox_changed.v1' },
+    });
+    const db = createDatabase(process.env.WORKER_DATABASE_URL!);
+    try {
+      await processEvent(db, { tenantId, eventId: event.id });
+      await processEvent(db, { tenantId, eventId: event.id });
+      expect(
+        await admin.consumerReceipt.count({
+          where: { tenantId, eventId: event.id },
+        }),
+      ).toBe(1);
+      await expect(db.syntheticAttendanceEvent.findMany()).rejects.toThrow(
+        'permission denied',
+      );
+    } finally {
+      await db.$disconnect();
+    }
   });
 });

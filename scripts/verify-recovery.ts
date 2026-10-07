@@ -1,3 +1,4 @@
+import { SyntheticAttendanceInbox } from '../apps/api/src/attendance/synthetic-inbox';
 import { LocalMachineAuthority } from '../apps/api/src/attendance/local-machine-authority';
 import { AuthStore } from '../apps/api/src/auth/store';
 import { existsSync } from 'node:fs';
@@ -125,6 +126,9 @@ async function snapshot(db: PrismaClient) {
       'platform_audit_events',
       'platform_operators',
       'salary_components',
+      'synthetic_attendance_batches',
+      'synthetic_attendance_events',
+      'synthetic_attendance_transports',
       'tenant_entitlement_states',
       'tenant_subscriptions',
       'tenants',
@@ -243,6 +247,20 @@ async function snapshot(db: PrismaClient) {
     }),
     deviceMappingReceipts: await db.deviceMappingReceipt.findMany({
       orderBy: [{ tenantId: 'asc' }, { actorId: 'asc' }, { requestId: 'asc' }],
+    }),
+    syntheticAttendanceEvents: await db.syntheticAttendanceEvent.findMany({
+      orderBy: { id: 'asc' },
+    }),
+    syntheticAttendanceTransports:
+      await db.syntheticAttendanceTransport.findMany({
+        orderBy: [
+          { tenantId: 'asc' },
+          { connectorId: 'asc' },
+          { connectorEventId: 'asc' },
+        ],
+      }),
+    syntheticAttendanceBatches: await db.syntheticAttendanceBatch.findMany({
+      orderBy: { id: 'asc' },
     }),
     attendanceDevices: await db.attendanceDevice.findMany({
       orderBy: { id: 'asc' },
@@ -961,6 +979,46 @@ async function main() {
     const enrollmentDevice = await source.attendanceDevice.findFirstOrThrow({
       where: { tenantId: tenants[0], status: 'draft' },
     });
+    stage = 'source synthetic attendance inbox fixture';
+    const syntheticScope = {
+      tenantId: tenants[0],
+      deviceId: enrollmentDevice.id,
+      connectorId: randomUUID(),
+      status: 'active' as const,
+      adapterVersion: 'synthetic-1',
+      sourceIdentity: {
+        kind: 'vendor_event_id' as const,
+        resetEpoch: randomUUID(),
+      },
+    };
+    const syntheticBatch = {
+      batchId: randomUUID(),
+      deviceId: enrollmentDevice.id,
+      schemaVersion: 1,
+      adapterVersion: 'synthetic-1',
+      events: [
+        {
+          connectorEventId: randomUUID(),
+          sourceUserId: '0007',
+          sourceLocalTimestamp: '2026-10-07T09:00:00',
+          sourceEventId: '1',
+        },
+      ],
+    };
+    const syntheticInbox = new SyntheticAttendanceInbox(
+      sourceEnv.DATABASE_URL!,
+    );
+    let syntheticReceipt;
+    try {
+      syntheticReceipt = await syntheticInbox.store(
+        { identityId: membershipOwners[0], mfaVerified: true },
+        syntheticBatch,
+        syntheticScope,
+      );
+    } finally {
+      await syntheticInbox.close();
+    }
+    stage = 'source mapping fixture';
     const mappingEmployees = await source.employee.findMany({
       where: { tenantId: tenants[0], archivedAt: null },
       orderBy: { id: 'asc' },
@@ -1010,6 +1068,7 @@ async function main() {
         effectiveFrom: mappingEndInput.effectiveUntil,
       },
     );
+    stage = 'source enrollment fixture';
     const enrollmentKey = randomUUID();
     const enrollmentInput = {
       deviceId: enrollmentDevice.id,
@@ -1073,6 +1132,7 @@ async function main() {
       (await sourceMachine.authorize(machineCredential.credential)).id,
       machineCredential.connector.id,
     );
+    stage = 'source provisioning fixture';
     const provisioning = await requestCompanyProvisioning(
       sourceApp,
       { identityId: operator.id, mfaVerified: true },
@@ -1167,6 +1227,7 @@ async function main() {
         },
       ],
     });
+    stage = 'source snapshot inventory';
     const expected = await snapshot(source);
     stage = 'backup';
     await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -1287,6 +1348,35 @@ async function main() {
       /permission denied/,
     );
     assert.deepEqual(await snapshot(restored), expected);
+    stage = 'restored synthetic attendance inbox exact receipt';
+    const restoredInbox = new SyntheticAttendanceInbox(
+      restoredEnv.DATABASE_URL!,
+    );
+    try {
+      assert.deepEqual(
+        await restoredInbox.store(
+          { identityId: membershipOwners[0], mfaVerified: true },
+          syntheticBatch,
+          syntheticScope,
+        ),
+        syntheticReceipt,
+      );
+    } finally {
+      await restoredInbox.close();
+    }
+    await assert.rejects(
+      restoredApp.syntheticAttendanceEvent.findMany(),
+      /permission denied/,
+    );
+    await assert.rejects(
+      restoredApp.syntheticAttendanceTransport.findMany(),
+      /permission denied/,
+    );
+    await assert.rejects(
+      restoredApp.syntheticAttendanceBatch.findMany(),
+      /permission denied/,
+    );
+    assert.deepEqual(await snapshot(restored), expected);
     stage = 'restored entitlement creation retry';
     assert.deepEqual(
       await createEntitlementChange(
@@ -1322,7 +1412,7 @@ async function main() {
     const policies = await restored.$queryRaw<
       { enabled: boolean; forced: boolean }[]
     >`SELECT relrowsecurity AS enabled, relforcerowsecurity AS forced FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND relkind='r' AND relname <> '_prisma_migrations'`;
-    assert.equal(policies.length, 49);
+    assert.equal(policies.length, 52);
     assert.ok(policies.every((row) => row.enabled && row.forced));
     assert.deepEqual(await restoredApp.employee.findMany(), []);
     stage = 'restored tenant lifecycle visibility';
@@ -1605,6 +1695,20 @@ async function main() {
         1,
       );
     }
+    stage = 'restored synthetic inbox observer';
+    const inboxEvents = await restored.outboxEvent.findMany({
+      where: { type: 'attendance.synthetic_inbox_changed.v1' },
+    });
+    assert.equal(inboxEvents.length, 1);
+    for (const event of inboxEvents) {
+      const ref = { tenantId: event.tenantId, eventId: event.id };
+      assert.equal(await processEvent(restoredWorker, ref), 'completed');
+      assert.equal(await processEvent(restoredWorker, ref), 'completed');
+      assert.equal(
+        await restored.consumerReceipt.count({ where: { eventId: event.id } }),
+        1,
+      );
+    }
     stage = 'restored connector credential admission';
     await restoredMachine.connect();
     const oldCredential = await restored.connectorCredential.findUniqueOrThrow({
@@ -1672,6 +1776,8 @@ async function main() {
       deviceMappingRetryPreserved: true,
       deviceMappingBoundaryResolutionPreserved: true,
       deviceMappingEventsConsumed: true,
+      syntheticAttendanceInboxAndExactReceiptPreserved: true,
+      syntheticAttendanceInboxObserverConsumedOnce: true,
       attendanceDeviceInventoryPreserved: true,
       attendanceDeviceChangeEventsConsumed: true,
       employeeAssignmentsPreserved: true,
@@ -1703,8 +1809,19 @@ async function main() {
       `Recovery drill passed; private evidence: .local/recovery/${id}/report.json`,
     );
     console.log(JSON.stringify(report));
-  } catch {
-    throw new Error(`Recovery drill failed at ${stage}`);
+  } catch (error) {
+    // Keep diagnostics useful without logging SQL parameters, URLs or credentials.
+    const label = error instanceof Error ? error.name : 'unknown';
+    const domain =
+      error instanceof Error &&
+      /^(FORBIDDEN|INVALID_STATE|CONFLICT|STALE_VERSION|NOT_FOUND)$/.test(
+        error.message,
+      )
+        ? `/${error.message}`
+        : '';
+    throw new Error(`Recovery drill failed at ${stage} (${label}${domain})`, {
+      cause: error,
+    });
   } finally {
     await sourceMachine.close();
     await restoredMachine.close();
