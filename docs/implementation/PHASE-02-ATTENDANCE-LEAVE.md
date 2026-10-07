@@ -1,6 +1,6 @@
 # Phase 2 — K50 attendance, shifts and leave
 
-Version 1.0 · 28 August 2026 · Status: draft inventory, mappings and synthetic durable inbox prepared · Estimate: 4–6 weeks
+Version 1.0 · 28 August 2026 · Status: draft inventory, mappings, synthetic inbox and local queue prepared · Estimate: 4–6 weeks
 
 Dependencies: [Phase 1](PHASE-01-PLATFORM-PEOPLE.md), P00 K50 evidence and [shared spec](SYSTEM-SPEC.md). Next: [Phase 3](PHASE-03-PAKISTAN-PAYROLL.md).
 
@@ -178,3 +178,7 @@ The [mapping workspace](../evidence/phase-02/device-mapping-workspace.md) provid
 ## Synthetic durable raw inbox preparation — 7 October 2026
 
 The [internal inbox proof](../evidence/phase-02/synthetic-attendance-inbox.md) adds append-only canonical quarantine, transport aliases, ordered batch receipts, atomic audit/outbox and synthetic SQL recovery. Stable transport/source fixture identities cover concurrent retries, re-polls, connector replacement and reset boundaries without timestamp deduplication. Invalid records are rejected without storing their payloads; all accepted fixture records remain quarantined. No live device, machine upload endpoint, employee resolution, attendance effect or production acceptance is claimed. P02-01/P02-02 remain partial. Next: synthetic connector durable capture/queue and receipt reconciliation; production admission, OS-protected credential storage, rotation, K50/SDK/source evidence, mapping reprocessing and finalized-period safety remain prerequisites for live ingestion.
+
+## Synthetic durable local capture and reconciliation — 8 October 2026
+
+The [synthetic queue proof](../evidence/phase-02/synthetic-connector-queue.md) adds durable sanitized capture, persisted bounded upload batches and atomic local receipt reconciliation. Actual subprocess termination/concurrent writers and synthetic PostgreSQL inbox integration cover restart, lost ACKs, re-poll duplicates and retained source conflicts. Rejected records remain held; queue/storage failure never reports capture/acknowledgement success. A bounded retained identity ledger prevents later transport UUID overwrite, without timestamp/source-ID guesswork. There is no SDK polling, network uploader, persistent credential store or live attendance permission. P02-01/P02-02 remain partial. Next: synthetic delivery/retry coordination over trusted fixtures, with production admission, host storage, source/reset proof, mapping reprocessing and finalized-period safety still gating live uploads.
