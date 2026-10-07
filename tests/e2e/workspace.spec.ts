@@ -5341,3 +5341,593 @@ test('connector workspace never retries actor-scoped issuance under another owne
   ).toHaveCount(0);
   expect(writes).toBe(1);
 });
+
+const mappingEmployeeId = '00000000-0000-4000-8000-000000000601';
+const mappingHistory = (n = 701) => ({
+  id: `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`,
+  deviceId: inventoryRow().id,
+  employeeId: mappingEmployeeId,
+  sourceUserId: '0007',
+  effectiveFrom: '2026-10-01T00:00:00.000Z',
+  effectiveUntil: null as string | null,
+  version: 1,
+  createdAt: '2026-10-07T00:00:00Z',
+  updatedAt: '2026-10-07T00:00:00Z',
+});
+async function mappingFixture(page: Page) {
+  const state = {
+    selected: deviceTenant as string | null,
+    identity: connectorIdentity,
+    roles: ['owner'],
+    csrf: deviceCsrf,
+    sessionStatus: 200,
+    readStatus: 200,
+    writeStatus: 201,
+    badList: false,
+    badReceipt: false,
+    resolveStatus: 'mapped',
+    devices: [inventoryRow()],
+    rows: [] as ReturnType<typeof mappingHistory>[],
+    employees: [
+      {
+        id: mappingEmployeeId,
+        employeeNumber: 'MAP-01',
+        name: 'Synthetic Mapping Employee',
+        legalName: null,
+        status: 'draft',
+        version: 1,
+        joiningDate: '2026-10-01',
+        employmentType: 'monthly_salaried',
+        payrollSetup: 'incomplete',
+        accountAccess: { status: 'not_provisioned', membershipVersion: null },
+        finalWorkingDate: null,
+        archivedAt: null as string | null,
+        employmentHistory: [],
+        currentAssignment: null,
+        assignmentHistory: [],
+      },
+    ],
+    writes: [] as {
+      key: string;
+      csrf: string;
+      url: string;
+      body: Record<string, unknown>;
+    }[],
+  };
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({
+      status: state.sessionStatus,
+      json: {
+        identityId: state.identity,
+        csrfToken: state.csrf,
+        selectedTenantId: state.selected,
+        tenants: [
+          {
+            id: state.selected ?? deviceTenant,
+            name: 'Synthetic Mapping Company',
+            roles: state.roles,
+          },
+        ],
+      },
+    }),
+  );
+  await page.route('**/api/v1/tenants/**', async (route) => {
+    const req = route.request(),
+      url = new URL(req.url());
+    if (req.method() === 'POST') {
+      state.writes.push({
+        key: req.headers()['idempotency-key'],
+        csrf: req.headers()['x-csrf-token'],
+        url: url.pathname,
+        body: req.postDataJSON(),
+      });
+      if (state.writeStatus !== 201)
+        return route.fulfill({ status: state.writeStatus, json: {} });
+      if (state.badReceipt)
+        return route.fulfill({
+          json: { id: mappingHistory().id, version: 99, replayed: false },
+        });
+      const last = state.writes.at(-1)!,
+        replayed = state.writes.slice(0, -1).some((w) => w.key === last.key);
+      const body = last.body;
+      const ending = url.pathname.endsWith('/end');
+      if (!replayed) {
+        if (ending) {
+          const row = state.rows.find((v) => url.pathname.includes(v.id))!;
+          row.version++;
+          row.effectiveUntil = body.effectiveUntil as string;
+        } else
+          state.rows.push({
+            ...mappingHistory(),
+            employeeId: body.employeeId as string,
+            sourceUserId: body.sourceUserId as string,
+            effectiveFrom: body.effectiveFrom as string,
+            effectiveUntil: body.effectiveUntil as string | null,
+          });
+      }
+      return route.fulfill({
+        status: 201,
+        json: {
+          id: mappingHistory().id,
+          version: ending ? Number(body.expectedVersion) + 1 : 1,
+          replayed,
+        },
+      });
+    }
+    if (state.readStatus !== 200)
+      return route.fulfill({ status: state.readStatus, json: {} });
+    if (url.pathname.endsWith('/employees'))
+      return route.fulfill({ json: { employees: state.employees } });
+    const after = url.searchParams.get('afterId');
+    if (url.pathname.endsWith('/devices')) {
+      const items = state.devices
+        .filter((v) => !after || v.id > after)
+        .sort((a, b) => a.id.localeCompare(b.id));
+      return route.fulfill({
+        json: {
+          items: items.slice(0, 25),
+          nextCursor: items.length > 25 ? items[24].id : null,
+        },
+      });
+    }
+    const deviceId = url.pathname.split('/')[6];
+    if (url.pathname.endsWith('/resolve')) {
+      expect(url.searchParams.get('sourceUserId')).toBe('0007');
+      expect(url.searchParams.get('at')).toBe('2026-10-02T00:00:00.000Z');
+      return route.fulfill({
+        json:
+          state.resolveStatus === 'mapped'
+            ? {
+                status: 'mapped',
+                mappingId: mappingHistory().id,
+                mappingVersion: 1,
+                employeeId: mappingEmployeeId,
+              }
+            : {
+                status: state.resolveStatus,
+                mappingId: null,
+                mappingVersion: null,
+                employeeId: null,
+              },
+      });
+    }
+    const items = state.rows
+      .filter((v) => v.deviceId === deviceId && (!after || v.id > after))
+      .sort((a, b) => a.id.localeCompare(b.id));
+    return route.fulfill({
+      json: {
+        tenantId: state.badList ? mappingEmployeeId : deviceTenant,
+        deviceId,
+        items: items.slice(0, 25),
+        nextCursor: items.length > 25 ? items[24].id : null,
+        attendanceProcessingAvailable: false,
+      },
+    });
+  });
+  return state;
+}
+async function fillMapping(page: Page) {
+  await page
+    .getByRole('combobox', { name: 'Employee', exact: true })
+    .selectOption(mappingEmployeeId);
+  await page.getByLabel('Source user ID', { exact: true }).fill('0007');
+  await page
+    .getByLabel('Effective start (UTC or explicit offset)', { exact: true })
+    .fill('2026-10-01T05:00:00+05:00');
+}
+test('mapping workspace creates exact string assignments, ends with confirmation and resolves event-time history', async ({
+  page,
+}) => {
+  const state = await mappingFixture(page);
+  await page.goto('/device-mappings');
+  await fillMapping(page);
+  await page
+    .getByRole('button', { name: 'Create employee mapping', exact: true })
+    .click();
+  await expect(
+    page.getByText('Change confirmed. Refresh history before another change.', {
+      exact: true,
+    }),
+  ).toBeVisible();
+  expect(state.writes[0].body).toEqual({
+    employeeId: mappingEmployeeId,
+    sourceUserId: '0007',
+    effectiveFrom: '2026-10-01T00:00:00.000Z',
+    effectiveUntil: null,
+    reason: 'initial_mapping',
+  });
+  expect(state.writes[0].key).toMatch(/^[a-f0-9-]{36}$/);
+  await expect(
+    page.getByRole('button', { name: 'Create employee mapping', exact: true }),
+  ).toBeDisabled();
+  await page.getByRole('button', { name: 'Refresh mapping metadata' }).click();
+  await expect(
+    page.getByRole('heading', { name: 'Source ID 0007' }),
+  ).toBeVisible();
+  await page
+    .getByRole('combobox', { name: 'Mapping to end', exact: true })
+    .selectOption(mappingHistory().id);
+  await page
+    .getByLabel('New exclusive end (UTC or explicit offset)', { exact: true })
+    .fill('2026-10-02T05:00:00+05:00');
+  page.once('dialog', (d) => d.dismiss());
+  await page
+    .getByRole('button', { name: 'End employee mapping', exact: true })
+    .click();
+  expect(state.writes).toHaveLength(1);
+  page.once('dialog', (d) => d.accept());
+  await page
+    .getByRole('button', { name: 'End employee mapping', exact: true })
+    .click();
+  await expect(
+    page.getByText('Change confirmed. Refresh history before another change.', {
+      exact: true,
+    }),
+  ).toBeVisible();
+  expect(state.writes[1].body).toEqual({
+    expectedVersion: 1,
+    effectiveUntil: '2026-10-02T00:00:00.000Z',
+    reason: 'end_mapping',
+  });
+  await page.getByRole('button', { name: 'Refresh mapping metadata' }).click();
+  await page.getByLabel('Lookup source ID', { exact: true }).fill('0007');
+  await page
+    .getByLabel('Event instant (UTC or explicit offset)', { exact: true })
+    .fill('2026-10-02T05:00:00+05:00');
+  await page
+    .getByRole('button', { name: 'Resolve employee mapping', exact: true })
+    .click();
+  await expect(page.getByRole('status')).toContainText(
+    'Mapped to Synthetic Mapping Employee',
+  );
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  expect(
+    await page.evaluate(() => ({
+      local: localStorage.length,
+      session: sessionStorage.length,
+    })),
+  ).toEqual({ local: 0, session: 0 });
+});
+test('mapping workspace keeps HR read-only and retains retired history without creating new assignments', async ({
+  page,
+}) => {
+  const state = await mappingFixture(page);
+  state.roles = ['hr_admin'];
+  state.rows = [mappingHistory()];
+  state.devices[0].status = 'retired';
+  await page.goto('/device-mappings');
+  await expect(
+    page.getByText('Synthetic Mapping Company · HR read-only'),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'Source ID 0007' }),
+  ).toBeVisible();
+  await expect(page.getByRole('form', { name: 'Create mapping' })).toHaveCount(
+    0,
+  );
+  await expect(page.getByRole('form', { name: 'End mapping' })).toHaveCount(0);
+  state.roles = ['owner'];
+  await page.getByRole('button', { name: 'Refresh mapping metadata' }).click();
+  await expect(
+    page.getByRole('button', { name: 'Create employee mapping', exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole('button', { name: 'End employee mapping', exact: true }),
+  ).toBeEnabled();
+  expect(state.writes).toHaveLength(0);
+});
+test('mapping workspace retains exact uncertain requests across refresh with fresh CSRF and no new writes', async ({
+  page,
+}) => {
+  const state = await mappingFixture(page);
+  state.writeStatus = 503;
+  await page.goto('/device-mappings');
+  await fillMapping(page);
+  await page
+    .getByRole('button', { name: 'Create employee mapping', exact: true })
+    .click();
+  await expect(page.getByText(/Outcome unknown/)).toBeVisible();
+  const original = state.writes[0];
+  state.csrf = 'e'.repeat(43);
+  await page.getByRole('button', { name: 'Refresh mapping metadata' }).click();
+  await expect(
+    page.getByRole('button', { name: 'Create employee mapping', exact: true }),
+  ).toBeDisabled();
+  state.writeStatus = 201;
+  await page
+    .getByRole('button', { name: 'Retry exact mapping request' })
+    .click();
+  await expect(
+    page.getByText(
+      'Exact request reconciled. Refresh history before another change.',
+    ),
+  ).toBeVisible();
+  expect(state.writes[1]).toEqual({ ...original, csrf: state.csrf });
+});
+for (const change of ['company', 'actor', 'role'] as const) {
+  test(`mapping workspace will not retry uncertain writes after ${change} changes`, async ({
+    page,
+  }) => {
+    const state = await mappingFixture(page);
+    state.writeStatus = 503;
+    await page.goto('/device-mappings');
+    await fillMapping(page);
+    await page
+      .getByRole('button', { name: 'Create employee mapping', exact: true })
+      .click();
+    await expect(page.getByText(/Outcome unknown/)).toBeVisible();
+    if (change === 'company') state.selected = mappingEmployeeId;
+    if (change === 'actor') state.identity = mappingEmployeeId;
+    if (change === 'role') state.roles = ['hr_admin'];
+    await page
+      .getByRole('button', { name: 'Retry exact mapping request' })
+      .click();
+    await expect(
+      page.getByText(/Mapping access denied or context changed/),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: 'Retry exact mapping request' }),
+    ).toHaveCount(0);
+    expect(state.writes).toHaveLength(1);
+  });
+}
+test('mapping workspace rejects stale commands and invalid receipts until fresh metadata is loaded', async ({
+  page,
+}) => {
+  const state = await mappingFixture(page);
+  state.writeStatus = 409;
+  await page.goto('/device-mappings');
+  await fillMapping(page);
+  await page
+    .getByRole('button', { name: 'Create employee mapping', exact: true })
+    .click();
+  await expect(page.getByText(/Change rejected/)).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Create employee mapping', exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole('button', { name: 'Retry exact mapping request' }),
+  ).toHaveCount(0);
+  await page.getByRole('button', { name: 'Refresh mapping metadata' }).click();
+  state.writeStatus = 201;
+  state.badReceipt = true;
+  await fillMapping(page);
+  await page
+    .getByRole('button', { name: 'Create employee mapping', exact: true })
+    .click();
+  await expect(page.getByText(/Outcome unknown/)).toBeVisible();
+  expect(state.writes).toHaveLength(2);
+});
+test('mapping workspace clears company data and forms on denied reads and rejects wrong-company lists', async ({
+  page,
+}) => {
+  const state = await mappingFixture(page);
+  state.rows = [mappingHistory()];
+  await page.goto('/device-mappings');
+  await fillMapping(page);
+  state.readStatus = 403;
+  await page.getByRole('button', { name: 'Refresh mapping metadata' }).click();
+  await expect(page.getByText(/Mapping access denied/)).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'Source ID 0007' }),
+  ).toHaveCount(0);
+  state.readStatus = 200;
+  state.badList = true;
+  await page.getByRole('button', { name: 'Refresh mapping metadata' }).click();
+  await expect(
+    page.getByText(/Mapping data is unavailable or invalid/),
+  ).toBeVisible();
+  state.badList = false;
+  await page.getByRole('button', { name: 'Refresh mapping metadata' }).click();
+  await expect(page.getByLabel('Source user ID', { exact: true })).toHaveValue(
+    '',
+  );
+});
+test('mapping workspace paginates bounded device and mapping history without mixing device scopes', async ({
+  page,
+}) => {
+  const state = await mappingFixture(page);
+  state.devices = Array.from({ length: 26 }, (_, i) => inventoryRow(i + 1));
+  state.rows = Array.from({ length: 26 }, (_, i) => ({
+    ...mappingHistory(701 + i),
+    sourceUserId: String(i + 1),
+  }));
+  state.rows.push({
+    ...mappingHistory(801),
+    deviceId: inventoryRow(26).id,
+    sourceUserId: 'other-device',
+  });
+  await page.goto('/device-mappings');
+  await expect(
+    page.getByRole('heading', { name: 'Source ID 1', exact: true }),
+  ).toBeVisible();
+  await page.getByRole('button', { name: 'Next mappings page' }).click();
+  await expect(
+    page.getByRole('heading', { name: 'Source ID 26', exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'Source ID 1', exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole('button', { name: 'Next devices page' }).click();
+  await expect(
+    page.getByRole('heading', { name: 'Source ID other-device', exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'Source ID 26', exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole('button', { name: 'First devices page' }).click();
+  await expect(
+    page.getByRole('heading', { name: 'Source ID 1', exact: true }),
+  ).toBeVisible();
+});
+for (const status of ['unmapped', 'ambiguous']) {
+  test(`mapping workspace displays ${status} without an employee guess and clears lookup after input edits`, async ({
+    page,
+  }) => {
+    const state = await mappingFixture(page);
+    state.roles = ['hr_admin'];
+    state.resolveStatus = status;
+    await page.goto('/device-mappings');
+    await page.getByLabel('Lookup source ID', { exact: true }).fill('0007');
+    await page
+      .getByLabel('Event instant (UTC or explicit offset)', { exact: true })
+      .fill('2026-10-02T00:00:00Z');
+    await page
+      .getByRole('button', { name: 'Resolve employee mapping', exact: true })
+      .click();
+    await expect(page.getByRole('status')).toContainText(
+      'no employee is guessed',
+    );
+    await page.getByLabel('Lookup source ID', { exact: true }).fill('0008');
+    await expect(page.getByRole('status')).toHaveCount(0);
+  });
+}
+test('mapping workspace rejects invalid inputs locally and excludes archived employees', async ({
+  page,
+}) => {
+  const state = await mappingFixture(page);
+  state.employees.push({
+    ...state.employees[0],
+    id: '00000000-0000-4000-8000-000000000602',
+    status: 'archived',
+    name: 'Synthetic Archived',
+    archivedAt: '2026-10-01T00:00:00Z',
+  });
+  await page.goto('/device-mappings');
+  await fillMapping(page);
+  await expect(
+    page.getByRole('option', { name: /Synthetic Archived/ }),
+  ).toHaveCount(0);
+  await page.getByLabel('Source user ID', { exact: true }).fill(' 0007');
+  await page
+    .getByRole('button', { name: 'Create employee mapping', exact: true })
+    .click();
+  await expect(
+    page.getByText(/Enter an exact source ID and valid offset timestamps/),
+  ).toBeVisible();
+  expect(state.writes).toHaveLength(0);
+});
+test('mapping workspace handles signed-out, unselected, unauthorized and empty device states', async ({
+  page,
+}) => {
+  const state = await mappingFixture(page);
+  state.sessionStatus = 401;
+  await page.goto('/device-mappings');
+  await expect(
+    page.getByText('Sign in to view device mappings.', { exact: true }),
+  ).toBeVisible();
+  state.sessionStatus = 200;
+  state.selected = null;
+  await page.getByRole('button', { name: 'Refresh mapping metadata' }).click();
+  await expect(
+    page.getByText(/Select a company before viewing device mappings/),
+  ).toBeVisible();
+  state.selected = deviceTenant;
+  state.roles = ['employee'];
+  await page.getByRole('button', { name: 'Refresh mapping metadata' }).click();
+  await expect(page.getByText(/Mapping access denied/)).toBeVisible();
+  state.roles = ['owner'];
+  state.devices = [];
+  await page.getByRole('button', { name: 'Refresh mapping metadata' }).click();
+  await expect(page.getByText(/No devices on this page/)).toBeVisible();
+  await expect(page.getByRole('form', { name: 'Create mapping' })).toHaveCount(
+    0,
+  );
+});
+
+test('mapping workspace can retry an undispatched enrollment-free write as its first execution', async ({
+  page,
+}) => {
+  const state = await mappingFixture(page);
+  let firstRequest = true;
+  let original: { key: string; body: unknown } | null = null;
+  await page.route('**/employee-mappings', async (route) => {
+    if (route.request().method() === 'POST' && firstRequest) {
+      firstRequest = false;
+      original = {
+        key: route.request().headers()['idempotency-key'],
+        body: route.request().postDataJSON(),
+      };
+      await route.abort('failed');
+    } else await route.fallback();
+  });
+  await page.goto('/device-mappings');
+  await fillMapping(page);
+  await page
+    .getByRole('button', { name: 'Create employee mapping', exact: true })
+    .click();
+  await expect(page.getByText(/Outcome unknown/)).toBeVisible();
+  await page
+    .getByRole('button', { name: 'Retry exact mapping request' })
+    .click();
+  await expect(
+    page.getByText('Change confirmed. Refresh history before another change.'),
+  ).toBeVisible();
+  expect(state.writes).toHaveLength(1);
+  expect({ key: state.writes[0].key, body: state.writes[0].body }).toEqual(
+    original,
+  );
+});
+test('mapping workspace refuses a different mapping ID in an end receipt', async ({
+  page,
+}) => {
+  const state = await mappingFixture(page);
+  state.rows = [mappingHistory()];
+  await page.route('**/employee-mappings/*/end', (route) =>
+    route.fulfill({
+      status: 201,
+      json: { id: mappingEmployeeId, version: 2, replayed: false },
+    }),
+  );
+  await page.goto('/device-mappings');
+  await page
+    .getByRole('combobox', { name: 'Mapping to end', exact: true })
+    .selectOption(mappingHistory().id);
+  await page
+    .getByLabel('New exclusive end (UTC or explicit offset)', { exact: true })
+    .fill('2026-10-02T00:00:00Z');
+  page.once('dialog', (d) => d.accept());
+  await page
+    .getByRole('button', { name: 'End employee mapping', exact: true })
+    .click();
+  await expect(page.getByText(/Outcome unknown/)).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Retry exact mapping request' }),
+  ).toBeVisible();
+  await expect(page.getByRole('form', { name: 'End mapping' })).toHaveCount(0);
+});
+test('mapping workspace fails closed on duplicate history and malformed next cursors', async ({
+  page,
+}) => {
+  await mappingFixture(page);
+  let duplicate = false;
+  await page.route('**/employee-mappings?**', (route) =>
+    route.fulfill({
+      json: {
+        tenantId: deviceTenant,
+        deviceId: inventoryRow().id,
+        items: duplicate
+          ? [mappingHistory(), mappingHistory()]
+          : [mappingHistory()],
+        nextCursor: duplicate ? null : mappingHistory().id,
+        attendanceProcessingAvailable: false,
+      },
+    }),
+  );
+  await page.goto('/device-mappings');
+  await expect(
+    page.getByText(/Mapping data is unavailable or invalid/),
+  ).toBeVisible();
+  duplicate = true;
+  await page.getByRole('button', { name: 'Refresh mapping metadata' }).click();
+  await expect(
+    page.getByText(/Mapping data is unavailable or invalid/),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'Source ID 0007' }),
+  ).toHaveCount(0);
+});

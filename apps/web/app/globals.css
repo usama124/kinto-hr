@@ -1442,3 +1442,12 @@ footer span:last-child {
   white-space: normal;
   overflow-wrap: anywhere;
 }
+
+.mapping-record {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.mapping-record h3 {
+  margin: 0;
+}

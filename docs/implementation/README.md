@@ -139,3 +139,7 @@ The [synthetic lifecycle client](../evidence/phase-02/local-connector-client.md)
 ## Device employee mapping API — 5 October 2026
 
 [Preparatory mapping API and persistence](../evidence/phase-02/device-employee-mappings.md) add owner-only keyed create/end commands, owner/HR bounded history and full-history event-time resolution. Exact string IDs and half-open intervals preserve leading zeros and ID reuse; database exclusion/FK constraints, fresh authority, atomic audit/outbox and private receipts protect conflicts/retries. Synthetic recovery includes mappings and receipts. P02-01 remains partial. Next: mapping workspace; hardware, production admission, rotation, durable ingestion and locked-period reprocessing safeguards remain pending.
+
+## Device mapping workspace — 7 October 2026
+
+The [owner/HR mapping screen](../evidence/phase-02/device-mapping-workspace.md) adds selected-device history, independent keyset pagination, exact string/date assignment, confirmed versioned ending and full-history event-time lookup. Unknown commands retain the original actor/company/device/key/payload across in-page refresh and use fresh CSRF on explicit retry; malformed/denied reads erase data/forms and new writes remain blocked until reconciliation. Retired history stays readable/endable, HR stays read-only, and no attendance effect is claimed. P02-01 remains partial. Next: synthetic durable raw ingestion preparation; hardware/source identity, production admission, rotation, reprocessing and locked-period gates remain pending.
