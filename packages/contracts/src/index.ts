@@ -1481,3 +1481,5 @@ export * from './devices';
 export * from './attendance-entitlements';
 
 export * from './enrollment';
+
+export * from './device-mappings';

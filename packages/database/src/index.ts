@@ -2,6 +2,18 @@ import { z } from 'zod';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { PrismaClient, type Prisma } from '@prisma/client';
 import {
+  deviceMappingCreateSchema,
+  deviceMappingEndSchema,
+  deviceMappingQuerySchema,
+  deviceMappingItemSchema,
+  deviceMappingListSchema,
+  deviceMappingMutationSchema,
+  deviceMappingResolveQuerySchema,
+  deviceMappingResolutionSchema,
+  type DeviceMappingCreate,
+  type DeviceMappingEnd,
+  type DeviceMappingQuery,
+  type DeviceMappingResolveQuery,
   connectorCredentialSchema,
   connectorRecordSchema,
   connectorRedemptionResultSchema,
@@ -2813,5 +2825,129 @@ export async function listConnectorCredentials(
   return connectorListSchema.parse({
     items,
     nextCursor: row.snapshot.length > query.limit ? items.at(-1)!.id : null,
+  });
+}
+
+export async function readTenantDeviceMappings(
+  db: PrismaClient,
+  actor: OrganizationActor,
+  tenantId: string,
+  deviceId: string,
+  input: DeviceMappingQuery,
+) {
+  validateOrganizationActor(actor, tenantId);
+  tenantIdSchema.parse(deviceId);
+  const query = deviceMappingQuerySchema.parse(input);
+  const [row] = await db.$queryRaw<{ outcome: string; snapshot: unknown }[]>`
+    SELECT * FROM public.read_tenant_device_mappings(${actor.identityId}::uuid,${actor.mfaVerified},${tenantId}::uuid,${deviceId}::uuid,${query.limit}::integer,${query.afterId ?? null}::uuid)`;
+  assertMappingRead(row);
+  const items = deviceMappingItemSchema.array().max(51).parse(row.snapshot);
+  const page = items.slice(0, query.limit);
+  return deviceMappingListSchema.parse({
+    tenantId,
+    deviceId,
+    items: page,
+    nextCursor: items.length > query.limit ? page.at(-1)!.id : null,
+    attendanceProcessingAvailable: false,
+  });
+}
+function assertMappingRead(
+  row: { outcome: string; snapshot: unknown } | undefined,
+): asserts row is { outcome: string; snapshot: unknown } {
+  if (!row || row.outcome === 'forbidden') throw new DomainError('FORBIDDEN');
+  if (row.outcome === 'not_found') throw new DomainError('NOT_FOUND');
+  if (row.outcome !== 'ok') throw new DomainError('INVALID_STATE');
+}
+export async function resolveTenantDeviceMapping(
+  db: PrismaClient,
+  actor: OrganizationActor,
+  tenantId: string,
+  deviceId: string,
+  input: DeviceMappingResolveQuery,
+) {
+  validateOrganizationActor(actor, tenantId);
+  tenantIdSchema.parse(deviceId);
+  const query = deviceMappingResolveQuerySchema.parse(input);
+  const [row] = await db.$queryRaw<{ outcome: string; snapshot: unknown }[]>`
+    SELECT * FROM public.resolve_tenant_device_mapping(${actor.identityId}::uuid,${actor.mfaVerified},${tenantId}::uuid,${deviceId}::uuid,${query.sourceUserId}::varchar,${new Date(query.at)}::timestamptz)`;
+  assertMappingRead(row);
+  return deviceMappingResolutionSchema.parse(row.snapshot);
+}
+export async function createTenantDeviceMapping(
+  db: PrismaClient,
+  actor: OrganizationActor,
+  tenantId: string,
+  deviceId: string,
+  requestId: string,
+  input: DeviceMappingCreate,
+) {
+  const value = deviceMappingCreateSchema.parse(input);
+  return mutateDeviceMapping(
+    db,
+    actor,
+    tenantId,
+    deviceId,
+    requestId,
+    randomUUID(),
+    null,
+    value.employeeId,
+    value.sourceUserId,
+    value.effectiveFrom,
+    value.effectiveUntil,
+    value.reason,
+  );
+}
+export async function endTenantDeviceMapping(
+  db: PrismaClient,
+  actor: OrganizationActor,
+  tenantId: string,
+  deviceId: string,
+  mappingId: string,
+  requestId: string,
+  input: DeviceMappingEnd,
+) {
+  const value = deviceMappingEndSchema.parse(input);
+  tenantIdSchema.parse(mappingId);
+  return mutateDeviceMapping(
+    db,
+    actor,
+    tenantId,
+    deviceId,
+    requestId,
+    mappingId,
+    value.expectedVersion,
+    null,
+    null,
+    null,
+    value.effectiveUntil,
+    value.reason,
+  );
+}
+async function mutateDeviceMapping(
+  db: PrismaClient,
+  actor: OrganizationActor,
+  tenantId: string,
+  deviceId: string,
+  requestId: string,
+  mappingId: string,
+  expected: number | null,
+  employeeId: string | null,
+  source: string | null,
+  from: string | null,
+  until: string | null,
+  reason: string,
+) {
+  validateOrganizationActor(actor, tenantId);
+  tenantIdSchema.parse(deviceId);
+  tenantIdSchema.parse(requestId);
+  const [row] = await db.$queryRaw<
+    (OrganizationMutationRow & { replayed: boolean })[]
+  >`
+    SELECT * FROM public.mutate_tenant_device_mapping(${actor.identityId}::uuid,${actor.mfaVerified},${tenantId}::uuid,${deviceId}::uuid,${requestId}::uuid,${mappingId}::uuid,${expected}::integer,${employeeId}::uuid,${source}::varchar,${from ? new Date(from) : null}::timestamptz,${until ? new Date(until) : null}::timestamptz,${reason}::varchar,${randomUUID()}::uuid,${randomUUID()}::uuid)`;
+  assertOrganizationMutation(row);
+  return deviceMappingMutationSchema.parse({
+    id: row.resource_id,
+    version: row.resource_version,
+    replayed: row.replayed,
   });
 }

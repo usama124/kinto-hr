@@ -1,4 +1,11 @@
 import {
+  deviceMappingCreateSchema,
+  deviceMappingEndSchema,
+  deviceMappingResolveQuerySchema,
+  deviceMappingResolutionSchema,
+  deviceMappingListSchema,
+} from './device-mappings';
+import {
   connectorRedemptionRequestSchema,
   connectorHeartbeatRequestSchema,
   connectorHeartbeatResultSchema,
@@ -1628,5 +1635,105 @@ it('rejects caller-selected machine scope and heartbeat data', () => {
   ).toBe(false);
   expect(
     connectorHeartbeatResultSchema.safeParse({ credential: 'secret' }).success,
+  ).toBe(false);
+});
+
+it('keeps mapping source IDs exact and normalizes effective instants without weakening intervals', () => {
+  const mapping = {
+    employeeId: '00000000-0000-4000-8000-000000000001',
+    sourceUserId: '0007',
+    effectiveFrom: '2026-10-01T05:00:00+05:00',
+    effectiveUntil: null,
+    reason: 'initial_mapping',
+  };
+  expect(deviceMappingCreateSchema.parse(mapping)).toMatchObject({
+    sourceUserId: '0007',
+    effectiveFrom: '2026-10-01T00:00:00.000Z',
+  });
+  for (const change of [
+    { sourceUserId: 7 },
+    { sourceUserId: ' 0007' },
+    { sourceUserId: '' },
+    { sourceUserId: 'a'.repeat(65) },
+    { sourceUserId: 'name@example.com' },
+    { effectiveUntil: '2026-10-01T00:00:00Z' },
+    { effectiveUntil: '2026-09-01T00:00:00Z' },
+    { effectiveFrom: '2026-10-01T00:00:00' },
+    { effectiveFrom: '2026-10-01T00:00:00.0001Z' },
+    { effectiveFrom: '2100-01-01T00:00:00Z' },
+    { effectiveFrom: '1999-12-31T00:00:00Z' },
+    { tenantId: mapping.employeeId },
+    { password: 'secret' },
+    { reason: 'caller' },
+  ])
+    expect(
+      deviceMappingCreateSchema.safeParse({ ...mapping, ...change }).success,
+    ).toBe(false);
+  expect(
+    deviceMappingCreateSchema.safeParse({
+      ...mapping,
+      effectiveUntil: '2026-10-02T00:00:00Z',
+    }).success,
+  ).toBe(true);
+  const end = {
+    expectedVersion: 1,
+    effectiveUntil: '2026-10-02T00:00:00Z',
+    reason: 'end_mapping',
+  };
+  expect(deviceMappingEndSchema.parse(end).effectiveUntil).toBe(
+    '2026-10-02T00:00:00.000Z',
+  );
+  expect(
+    deviceMappingEndSchema.safeParse({ ...end, employeeId: mapping.employeeId })
+      .success,
+  ).toBe(false);
+  expect(
+    deviceMappingEndSchema.safeParse({ ...end, expectedVersion: 0 }).success,
+  ).toBe(false);
+  expect(
+    deviceMappingResolveQuerySchema.safeParse({
+      sourceUserId: '0007',
+      at: mapping.effectiveFrom,
+    }).success,
+  ).toBe(true);
+});
+it('does not guess an employee from unresolved mappings or enable processing through a list', () => {
+  expect(
+    deviceMappingResolutionSchema.parse({
+      status: 'unmapped',
+      mappingId: null,
+      mappingVersion: null,
+      employeeId: null,
+    }).status,
+  ).toBe('unmapped');
+  expect(
+    deviceMappingResolutionSchema.parse({
+      status: 'ambiguous',
+      mappingId: null,
+      mappingVersion: null,
+      employeeId: null,
+    }).status,
+  ).toBe('ambiguous');
+  expect(
+    deviceMappingResolutionSchema.safeParse({
+      status: 'unmapped',
+      mappingId: null,
+      mappingVersion: null,
+      employeeId: '00000000-0000-4000-8000-000000000001',
+    }).success,
+  ).toBe(false);
+  const list = {
+    tenantId: '00000000-0000-4000-8000-000000000001',
+    deviceId: '00000000-0000-4000-8000-000000000002',
+    items: [],
+    nextCursor: null,
+    attendanceProcessingAvailable: false,
+  };
+  expect(deviceMappingListSchema.safeParse(list).success).toBe(true);
+  expect(
+    deviceMappingListSchema.safeParse({
+      ...list,
+      attendanceProcessingAvailable: true,
+    }).success,
   ).toBe(false);
 });

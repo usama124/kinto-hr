@@ -211,6 +211,31 @@ export const schemaIsolationInventory: readonly Classification[] = [
     ),
     { kinto_control_owner: controlAppend },
   ),
+  {
+    ...privateTenantTable(
+      'device_employee_mappings',
+      regression(
+        'attendance-devices',
+        'keeps device mappings and receipts private behind constrained functions',
+      ),
+      { kinto_control_owner: controlAppend },
+    ),
+    columnGrants: [
+      {
+        role: 'kinto_control_owner',
+        privilege: 'UPDATE',
+        columns: ['effective_until', 'version', 'updated_at'],
+      },
+    ],
+  },
+  privateTenantTable(
+    'device_mapping_receipts',
+    regression(
+      'attendance-devices',
+      'keeps device mappings and receipts private behind constrained functions',
+    ),
+    { kinto_control_owner: controlAppend },
+  ),
   tenantTable(
     'attendance_devices',
     regression(

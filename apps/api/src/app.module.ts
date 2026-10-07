@@ -20,6 +20,7 @@ import { AdministratorInvitationsController } from './administrator-invitations/
 import { SecurityAuditController } from './security-audit/controller';
 import { ConnectorEnrollmentController } from './attendance/enrollment-controller';
 import { AttendanceAllocationController } from './attendance/allocation-controller';
+import { DeviceMappingController } from './attendance/mapping-controller';
 import { DeviceInventoryController } from './attendance/device-controller';
 import { OrganizationController } from './organization/controller';
 import { EntitlementsController } from './entitlements/controller';
@@ -64,6 +65,7 @@ export class HealthController {
     SecurityAuditController,
     OrganizationController,
     DeviceInventoryController,
+    DeviceMappingController,
     AttendanceAllocationController,
     ConnectorEnrollmentController,
     MachineController,

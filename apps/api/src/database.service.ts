@@ -4,6 +4,10 @@ import {
   type OnModuleInit,
 } from '@nestjs/common';
 import {
+  readTenantDeviceMappings,
+  resolveTenantDeviceMapping,
+  createTenantDeviceMapping,
+  endTenantDeviceMapping,
   issueConnectorEnrollment,
   revokeConnectorEnrollment,
   listConnectorEnrollments,
@@ -354,6 +358,62 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       this.db,
       actor,
       tenantId,
+      requestId,
+      input,
+    );
+  }
+  readDeviceMappings(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    deviceId: string,
+    input: import('@kinto/contracts').DeviceMappingQuery,
+  ) {
+    return readTenantDeviceMappings(this.db, actor, tenantId, deviceId, input);
+  }
+  resolveDeviceMapping(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    deviceId: string,
+    input: import('@kinto/contracts').DeviceMappingResolveQuery,
+  ) {
+    return resolveTenantDeviceMapping(
+      this.db,
+      actor,
+      tenantId,
+      deviceId,
+      input,
+    );
+  }
+  createDeviceMapping(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    deviceId: string,
+    requestId: string,
+    input: import('@kinto/contracts').DeviceMappingCreate,
+  ) {
+    return createTenantDeviceMapping(
+      this.db,
+      actor,
+      tenantId,
+      deviceId,
+      requestId,
+      input,
+    );
+  }
+  endDeviceMapping(
+    actor: { identityId: string; mfaVerified: boolean },
+    tenantId: string,
+    deviceId: string,
+    mappingId: string,
+    requestId: string,
+    input: import('@kinto/contracts').DeviceMappingEnd,
+  ) {
+    return endTenantDeviceMapping(
+      this.db,
+      actor,
+      tenantId,
+      deviceId,
+      mappingId,
       requestId,
       input,
     );
