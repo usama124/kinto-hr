@@ -84,6 +84,9 @@ export default function RootLayout({
               <Link className="nav-item" href="/connectors">
                 Connector enrollment <span>18</span>
               </Link>
+              <Link className="nav-item" href="/device-mappings">
+                Device mappings <span>19</span>
+              </Link>
             </nav>
             <div className="upcoming">
               <span className="nav-heading">UPCOMING MODULES</span>
