@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  previewAttendanceTiming,
   PLANS,
   assertCanActivate,
   assertDraftActivation,
@@ -140,4 +141,98 @@ it('limits device inventory management to owners and reading to owners or HR', (
     expect(hasPermission([role], 'devices.read')).toBe(false);
     expect(hasPermission([role], 'devices.manage')).toBe(false);
   }
+});
+
+const policy = {
+  scope: 'company',
+  timeZone: 'Asia/Karachi',
+  checkIn: '22:00',
+  checkOut: '06:00',
+  checkOutNextDay: true,
+  breakMode: 'fixed_duration',
+  unpaidBreakMinutes: 30,
+  fullDayTargetMinutes: 450,
+  halfDayTargetMinutes: 225,
+  minimumFullDayMinutes: 420,
+  minimumHalfDayMinutes: 180,
+  lateGraceMinutes: 10,
+  earlyGraceMinutes: 10,
+  associationBeforeMinutes: 30,
+  associationAfterMinutes: 60,
+  weeklyRestDays: [7, 6],
+};
+describe('pure company timing policy preview', () => {
+  it('anchors overnight windows to check-in date and preserves targets separately from minimums', () => {
+    const original = structuredClone(policy);
+    const result = previewAttendanceTiming(policy);
+    expect(result).toMatchObject({
+      dayAnchor: 'scheduled_check_in_local_date',
+      scheduledMinutes: 480,
+      netScheduledMinutes: 450,
+      associationWindow: {
+        fromLocalMinute: 1290,
+        untilLocalMinute: 1860,
+        endExclusive: true,
+      },
+      settings: {
+        minimumFullDayMinutes: 420,
+        minimumHalfDayMinutes: 180,
+        fullDayTargetMinutes: 450,
+        halfDayTargetMinutes: 225,
+        weeklyRestDays: [6, 7],
+      },
+      attendanceProcessingAvailable: false,
+      payrollEffectsAvailable: false,
+    });
+    expect(policy).toEqual(original);
+    result.settings.weeklyRestDays.push(1);
+    expect(policy.weeklyRestDays).toEqual([7, 6]);
+  });
+  it('keeps grace out of actual net minutes and permits negative previous-day offsets', () => {
+    const result = previewAttendanceTiming({
+      ...policy,
+      checkIn: '00:15',
+      checkOut: '08:15',
+      checkOutNextDay: false,
+    });
+    expect(result.associationWindow.fromLocalMinute).toBe(-15);
+    expect(result.netScheduledMinutes).toBe(450);
+    expect(
+      previewAttendanceTiming({
+        ...policy,
+        lateGraceMinutes: 450,
+        earlyGraceMinutes: 450,
+      }).netScheduledMinutes,
+    ).toBe(450);
+  });
+  it('validates unknown inputs before arithmetic instead of accepting typed corrupt objects', () => {
+    for (const input of [
+      null,
+      {},
+      { ...policy, checkIn: 'bad' },
+      { ...policy, checkOutNextDay: false },
+      { ...policy, minimumHalfDayMinutes: '180' },
+      { ...policy, tenantId: 'caller-supplied' },
+    ])
+      expect(() => previewAttendanceTiming(input)).toThrow();
+  });
+  it('is deterministic across local start hours and preserves integer net/window bounds', () => {
+    for (let start = 0; start < 24; start++) {
+      const end = (start + 8) % 24;
+      const input = {
+        ...policy,
+        checkIn: String(start).padStart(2, '0') + ':00',
+        checkOut: String(end).padStart(2, '0') + ':00',
+        checkOutNextDay: end < start,
+      };
+      const result = previewAttendanceTiming(input);
+      expect(result).toEqual(previewAttendanceTiming(input));
+      expect(result.scheduledMinutes).toBe(480);
+      expect(result.netScheduledMinutes).toBe(450);
+      expect(
+        result.associationWindow.untilLocalMinute -
+          result.associationWindow.fromLocalMinute,
+      ).toBe(570);
+    }
+  });
 });
