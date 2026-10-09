@@ -194,3 +194,7 @@ The [internal review and preview proof](../evidence/phase-02/synthetic-inbox-rev
 ## Synthetic review HTTP preparation — 10 October 2026
 
 The [gated read-only HTTP slice](../evidence/phase-02/synthetic-inbox-http-review.md) adds owner/HR quarantine history and what-if mapping preview GET routes under local-connectors. Selected-company sessions, rate limits, recent MFA and SQL authority remain required. Production/default-disabled mode admits no reads; heartbeat-only credentials admit no review or uploads. Lifecycle cleanup and real SQL HTTP permissions are tested; records remain quarantined. P02-01/P02-02 remain partial. Next: synthetic review workspace, with hardware/source/clock, protected host credentials, production admission/rotation and finalized-period gates unchanged.
+
+## Synthetic review workspace preparation — 10 October 2026
+
+The [read-only owner/HR screen](../evidence/phase-02/synthetic-inbox-workspace.md) adds independent device/event pages, exact source/local-time display and persisted-event what-if mapping previews. Strict response/scope/cursor checks, session rechecks and clearing on context/access loss protect display. Unverified flags remain false and no attendance/leave/payroll effect is enabled. P02-01/P02-02 remain partial. Next: P02-03 company-wide timing policy preparation; hardware/source/clock proof, protected credentials, production admission/rotation and finalized-period safeguards remain open.
