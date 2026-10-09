@@ -39,6 +39,8 @@ const methods = {
   credentials: vi.fn(),
   revokeEnrollment: vi.fn(),
   revokeCredential: vi.fn(),
+  reviewInbox: vi.fn(),
+  previewInboxMapping: vi.fn(),
 };
 const auth = { limit: vi.fn(), session: vi.fn(), origin: () => origin };
 const connector = {
@@ -279,3 +281,94 @@ it('validates owner metadata, version and idempotency contracts before commands'
   expect(methods.issue).not.toHaveBeenCalled();
   expect(methods.revokeCredential).not.toHaveBeenCalled();
 });
+
+const inboxPath = owner + '/devices/' + id + '/synthetic-inbox';
+const review = (path = inboxPath) =>
+  request(app.getHttpServer())
+    .get(path)
+    .set('Cookie', '__Host-kinto-session=' + 's'.repeat(43));
+it('exposes only read-only bounded synthetic review and explicit-time previews', async () => {
+  methods.reviewInbox.mockResolvedValue({
+    attendanceProcessingAvailable: false,
+  });
+  const result = await review(inboxPath + '?limit=2').expect(200);
+  expect(result.headers['cache-control']).toBe('no-store');
+  expect(methods.reviewInbox).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+    id,
+    { limit: 2 },
+  );
+  await review(
+    inboxPath + '/' + id + '/mapping-preview?at=2026-10-10T00:00:00Z',
+  ).expect(200);
+  expect(methods.previewInboxMapping).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+    id,
+    id,
+    { at: '2026-10-10T00:00:00.000Z' },
+  );
+  await request(app.getHttpServer()).post(inboxPath).send({}).expect(404);
+  await request(app.getHttpServer())
+    .get(inboxPath)
+    .set('Authorization', 'Bearer ' + credential)
+    .expect(401);
+});
+it.each([
+  '?limit=51',
+  '?limit=0',
+  '?afterId=bad',
+  '?identityId=' + identityId,
+  '?mfaVerified=true',
+  '?deviceId=' + id,
+])(
+  'rejects synthetic review query %s before authorization or data access',
+  async (query) => {
+    await review(inboxPath + query).expect(400);
+    expect(methods.reviewInbox).not.toHaveBeenCalled();
+    expect(auth.session).not.toHaveBeenCalled();
+  },
+);
+it.each([
+  '',
+  '?at=2026-10-10T00:00:00',
+  '?at=2026-10-10T00:00:00Z&sourceEmployeeId=001',
+])(
+  'rejects missing, ambiguous or overridden preview time %s',
+  async (query) => {
+    await review(inboxPath + '/' + id + '/mapping-preview' + query).expect(400);
+    expect(methods.previewInboxMapping).not.toHaveBeenCalled();
+  },
+);
+it('fails closed for disabled review, foreign selection, rate limits and revoked sessions', async () => {
+  methods.enabled.mockImplementation(() => {
+    throw new NotFoundException();
+  });
+  await review(inboxPath + '?limit=bad').expect(404);
+  methods.enabled.mockReset();
+  auth.session.mockResolvedValue({
+    ...session,
+    selectedTenantId: randomUUID(),
+  });
+  await review().expect(403);
+  auth.session.mockRejectedValue(new HttpException('private session', 401));
+  await review().expect(401);
+  auth.limit.mockRejectedValue(new HttpException('private rate limit', 429));
+  await review().expect(429);
+  expect(methods.reviewInbox).not.toHaveBeenCalled();
+});
+it.each([1, Math.floor(Date.now() / 1000) + 1000])(
+  'passes stale/future MFA as false rather than accepting client claims (%s)',
+  async (authTime) => {
+    auth.session.mockResolvedValue({ ...session, authTime });
+    methods.reviewInbox.mockRejectedValue(new DomainError('FORBIDDEN'));
+    await review().expect(403);
+    expect(methods.reviewInbox).toHaveBeenCalledWith(
+      { identityId, mfaVerified: false },
+      tenantId,
+      id,
+      { limit: 25 },
+    );
+  },
+);

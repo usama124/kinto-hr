@@ -190,3 +190,7 @@ The [fixture coordinator](../evidence/phase-02/synthetic-delivery-coordinator.md
 ## Read-only synthetic review preparation — 10 October 2026
 
 The [internal review and preview proof](../evidence/phase-02/synthetic-inbox-review.md) adds owner/HR/MFA quarantine pages and device/event-scoped mapping what-if lookups. Source identity comes from canonical records; the caller's explicit preview time remains unverified. Full-history half-open mapping resolution and restore tests do not clear quarantine or produce attendance/payroll inputs. No HTTP route/UI, live upload or reprocessing is claimed. P02-01/P02-02 remain partial. Next: opt-in synthetic review HTTP boundary, then its workspace; clock/source/hardware approval, secure host credentials, production admission/rotation and finalized-period safety remain open.
+
+## Synthetic review HTTP preparation — 10 October 2026
+
+The [gated read-only HTTP slice](../evidence/phase-02/synthetic-inbox-http-review.md) adds owner/HR quarantine history and what-if mapping preview GET routes under local-connectors. Selected-company sessions, rate limits, recent MFA and SQL authority remain required. Production/default-disabled mode admits no reads; heartbeat-only credentials admit no review or uploads. Lifecycle cleanup and real SQL HTTP permissions are tested; records remain quarantined. P02-01/P02-02 remain partial. Next: synthetic review workspace, with hardware/source/clock, protected host credentials, production admission/rotation and finalized-period gates unchanged.

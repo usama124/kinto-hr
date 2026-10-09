@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { MachineService } from './machine-service';
 import { LocalMachineAuthority } from './local-machine-authority';
+import { SyntheticAttendanceInbox } from './synthetic-inbox';
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
@@ -42,6 +43,7 @@ it('closes failed startup and does not retain a half-connected authority', async
 it('shares atomic address limits and reports admission dependency failure without fallback', async () => {
   configure();
   vi.spyOn(LocalMachineAuthority.prototype, 'connect').mockResolvedValue();
+  vi.spyOn(SyntheticAttendanceInbox.prototype, 'ready').mockResolvedValue();
   const allow = vi
     .spyOn(LocalMachineAuthority.prototype, 'allow')
     .mockResolvedValue(true);
@@ -63,4 +65,42 @@ it('shares atomic address limits and reports admission dependency failure withou
     status: 503,
   });
   await service.onModuleDestroy();
+});
+
+it('cleans both dependencies on review startup failure and clears them on shutdown', async () => {
+  configure();
+  vi.spyOn(LocalMachineAuthority.prototype, 'connect').mockResolvedValue();
+  const ready = vi
+    .spyOn(SyntheticAttendanceInbox.prototype, 'ready')
+    .mockRejectedValue(new Error('private failure'));
+  const close = vi
+    .spyOn(SyntheticAttendanceInbox.prototype, 'close')
+    .mockResolvedValue();
+  const authorityClose = vi
+    .spyOn(LocalMachineAuthority.prototype, 'close')
+    .mockResolvedValue();
+  const service = new MachineService();
+  await expect(service.onModuleInit()).rejects.toThrow(
+    'Connector admission dependencies unavailable',
+  );
+  expect(close).toHaveBeenCalledOnce();
+  expect(authorityClose).toHaveBeenCalledOnce();
+  expect(() =>
+    service.reviewInbox(
+      { identityId: 'unused', mfaVerified: true },
+      'unused',
+      'unused',
+      {},
+    ),
+  ).toThrow();
+  ready.mockResolvedValue();
+  vi.spyOn(LocalMachineAuthority.prototype, 'ready').mockResolvedValue();
+  await service.onModuleInit();
+  await service.ready();
+  ready.mockRejectedValue(new Error('private failure'));
+  await expect(service.ready()).rejects.toThrow('private failure');
+  await service.onModuleDestroy();
+  await expect(service.ready()).rejects.toMatchObject({ status: 503 });
+  await service.onModuleDestroy();
+  expect(close).toHaveBeenCalledTimes(2);
 });
