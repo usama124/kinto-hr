@@ -1,4 +1,10 @@
 import {
+  syntheticInboxReviewQuerySchema,
+  syntheticInboxPreviewQuerySchema,
+  syntheticInboxEventSchema,
+  syntheticInboxMappingPreviewSchema,
+} from './synthetic-inbox-review';
+import {
   deviceMappingCreateSchema,
   deviceMappingEndSchema,
   deviceMappingResolveQuerySchema,
@@ -30,7 +36,7 @@ import {
   deviceListQuerySchema,
   deviceInventorySchema,
 } from './devices';
-import { expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   attendanceSourceEventSchema,
   attendanceBatchEnvelopeSchema,
@@ -1736,4 +1742,86 @@ it('does not guess an employee from unresolved mappings or enable processing thr
       attendanceProcessingAvailable: true,
     }).success,
   ).toBe(false);
+});
+
+describe('synthetic inbox review contracts', () => {
+  it('bounds pages and rejects caller-supplied mapping authority', () => {
+    expect(syntheticInboxReviewQuerySchema.parse({})).toEqual({ limit: 25 });
+    for (const input of [
+      { limit: 0 },
+      { limit: 51 },
+      { limit: 1.5 },
+      { sourceUserId: '0007' },
+      { tenantId: 'injected' },
+    ])
+      expect(syntheticInboxReviewQuerySchema.safeParse(input).success).toBe(
+        false,
+      );
+    expect(
+      syntheticInboxPreviewQuerySchema.parse({
+        at: '2026-10-01T05:00:00+05:00',
+      }).at,
+    ).toBe('2026-10-01T00:00:00.000Z');
+    for (const input of [
+      { at: '2026-10-01T09:00:00' },
+      { at: '2100-01-01T00:00:00Z' },
+      { at: '2026-10-01T00:00:00Z', sourceUserId: 'different' },
+    ])
+      expect(syntheticInboxPreviewQuerySchema.safeParse(input).success).toBe(
+        false,
+      );
+  });
+  it('keeps raw source values exact and excludes transport secrets or processing flags', () => {
+    const raw = {
+      id: '00000000-0000-4000-8000-000000000001',
+      deviceId: '00000000-0000-4000-8000-000000000002',
+      payload: {
+        sourceUserId: '0007',
+        sourceLocalTimestamp: '2026-10-07T09:00:00',
+      },
+      quarantineCode: 'source_identity_unverified',
+      createdAt: '2026-10-07T00:00:00Z',
+    };
+    expect(syntheticInboxEventSchema.parse(raw).payload.sourceUserId).toBe(
+      '0007',
+    );
+    expect(
+      syntheticInboxEventSchema.safeParse({ ...raw, sourceKey: 'hidden' })
+        .success,
+    ).toBe(false);
+    expect(
+      syntheticInboxEventSchema.safeParse({
+        ...raw,
+        payload: { ...raw.payload, fingerprint: 'not-allowed' },
+      }).success,
+    ).toBe(false);
+    const preview = {
+      event: raw,
+      requestedAt: '2026-10-01T00:00:00Z',
+      timeBasis: 'operator_supplied_unverified',
+      resolution: {
+        status: 'unmapped',
+        mappingId: null,
+        mappingVersion: null,
+        employeeId: null,
+      },
+      sourceIdentityVerified: false,
+      clockVerified: false,
+      attendanceProcessingAvailable: false,
+    };
+    expect(syntheticInboxMappingPreviewSchema.safeParse(preview).success).toBe(
+      true,
+    );
+    for (const key of [
+      'sourceIdentityVerified',
+      'clockVerified',
+      'attendanceProcessingAvailable',
+    ])
+      expect(
+        syntheticInboxMappingPreviewSchema.safeParse({
+          ...preview,
+          [key]: true,
+        }).success,
+      ).toBe(false);
+  });
 });

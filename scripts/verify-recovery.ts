@@ -1361,6 +1361,30 @@ async function main() {
         ),
         syntheticReceipt,
       );
+      const reviewed = await restoredInbox.review(
+        { identityId: membershipOwners[0], mfaVerified: true },
+        tenants[0],
+        enrollmentDevice.id,
+        { limit: 1 },
+      );
+      assert.equal(reviewed.items.length, 1);
+      assert.equal(reviewed.attendanceProcessingAvailable, false);
+      assert.equal(reviewed.nextCursor, null);
+      for (const [at, employeeId] of [
+        ['2026-10-01T23:59:59.999Z', mappingEmployees[0].id],
+        ['2026-10-02T00:00:00Z', mappingEmployees[1].id],
+      ]) {
+        const preview = await restoredInbox.previewMapping(
+          { identityId: membershipOwners[0], mfaVerified: true },
+          tenants[0],
+          enrollmentDevice.id,
+          reviewed.items[0].id,
+          { at },
+        );
+        assert.equal(preview.resolution.employeeId, employeeId);
+        assert.equal(preview.clockVerified, false);
+        assert.equal(preview.timeBasis, 'operator_supplied_unverified');
+      }
     } finally {
       await restoredInbox.close();
     }
@@ -1778,6 +1802,7 @@ async function main() {
       deviceMappingEventsConsumed: true,
       syntheticAttendanceInboxAndExactReceiptPreserved: true,
       syntheticAttendanceInboxObserverConsumedOnce: true,
+      syntheticInboxReviewAndMappingPreviewsRestored: true,
       attendanceDeviceInventoryPreserved: true,
       attendanceDeviceChangeEventsConsumed: true,
       employeeAssignmentsPreserved: true,

@@ -3183,4 +3183,283 @@ describe('tenant attendance device inventory', () => {
       rmSync(directory, { recursive: true, force: true });
     }
   });
+  it('reviews quarantined inbox pages for owner and HR without exposing deduplication metadata', async () => {
+    const f = await fixtureInbox();
+    expect(
+      (await f.inbox.review(actor(identities.hr), tenantId, f.device.id)).items,
+    ).toEqual([]);
+    await f.inbox.store(
+      actor(identities.owner),
+      f.batch(Array.from({ length: 5 }, (_, i) => fixtureEvent(String(i)))),
+      f.scope,
+    );
+    const all = await f.inbox.review(
+      actor(identities.owner),
+      tenantId,
+      f.device.id,
+    );
+    const ids: string[] = [];
+    let afterId: string | undefined;
+    do {
+      const page = await f.inbox.review(
+        actor(identities.hr),
+        tenantId,
+        f.device.id,
+        { limit: 2, ...(afterId ? { afterId } : {}) },
+      );
+      expect(page).toMatchObject({
+        clockVerified: false,
+        sourceIdentityVerified: false,
+        attendanceProcessingAvailable: false,
+      });
+      expect(page.items.length).toBeLessThanOrEqual(2);
+      ids.push(...page.items.map((e) => e.id));
+      afterId = page.nextCursor ?? undefined;
+    } while (afterId);
+    expect(ids).toEqual(all.items.map((e) => e.id));
+    expect(new Set(ids).size).toBe(5);
+    expect(JSON.stringify(all)).not.toContain('sourceKey');
+    expect(JSON.stringify(all)).not.toContain('connectorId');
+    expect(
+      all.items.every(
+        (e) =>
+          e.payload.sourceUserId === '0007' &&
+          e.quarantineCode === 'source_identity_unverified',
+      ),
+    ).toBe(true);
+  });
+  const inboxMappingFixture = async () => {
+    const f = await mappingSetup();
+    const inbox = new SyntheticAttendanceInbox(runtimeUrl!);
+    inboxes.push(inbox);
+    const scope: AttendanceConnectorScope = {
+      tenantId,
+      deviceId: f.first.id,
+      connectorId: randomUUID(),
+      status: 'active',
+      adapterVersion: 'synthetic-1',
+      sourceIdentity: { kind: 'unverified' },
+    };
+    await inbox.store(
+      actor(identities.owner),
+      {
+        batchId: randomUUID(),
+        schemaVersion: 1,
+        deviceId: f.first.id,
+        adapterVersion: scope.adapterVersion,
+        events: [fixtureEvent()],
+      },
+      scope,
+    );
+    const raw = (
+      await inbox.review(actor(identities.owner), tenantId, f.first.id)
+    ).items[0];
+    return { ...f, inbox, scope, raw };
+  };
+  it('previews mappings from persisted exact source identity and explicit half-open what-if time without attendance effects', async () => {
+    const f = await inboxMappingFixture();
+    const first = await createTenantDeviceMapping(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      f.first.id,
+      randomUUID(),
+      { ...f.mapping, effectiveUntil: '2026-10-02T00:00:00Z' },
+    );
+    const second = await createTenantDeviceMapping(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      f.first.id,
+      randomUUID(),
+      {
+        ...f.mapping,
+        employeeId: f.replacement.id,
+        effectiveFrom: '2026-10-02T00:00:00Z',
+      },
+    );
+    const beforeEvents = await admin.syntheticAttendanceEvent.findMany({
+      where: { tenantId },
+    });
+    const audits = await admin.auditEvent.count({ where: { tenantId } }),
+      outbox = await admin.outboxEvent.count({ where: { tenantId } });
+    for (const [at, expected, employeeId] of [
+      ['2026-10-01T23:59:59.999Z', first, f.employee.id],
+      ['2026-10-02T05:00:00+05:00', second, f.replacement.id],
+    ] as const) {
+      const result = await f.inbox.previewMapping(
+        actor(identities.hr),
+        tenantId,
+        f.first.id,
+        f.raw.id,
+        { at },
+      );
+      expect(result).toMatchObject({
+        timeBasis: 'operator_supplied_unverified',
+        clockVerified: false,
+        sourceIdentityVerified: false,
+        attendanceProcessingAvailable: false,
+        resolution: {
+          status: 'mapped',
+          mappingId: expected.id,
+          mappingVersion: 1,
+          employeeId,
+        },
+      });
+      expect(result.event.payload.sourceLocalTimestamp).toBe(
+        '2026-10-07T09:00:00',
+      );
+    }
+    expect(
+      await admin.syntheticAttendanceEvent.findMany({ where: { tenantId } }),
+    ).toEqual(beforeEvents);
+    expect(await admin.auditEvent.count({ where: { tenantId } })).toBe(audits);
+    expect(await admin.outboxEvent.count({ where: { tenantId } })).toBe(outbox);
+  });
+  it('denies stale MFA, employee, foreign and revoked authority on both review and preview', async () => {
+    const f = await inboxMappingFixture();
+    for (const who of [
+      actor(identities.owner, false),
+      actor(identities.hr, false),
+      actor(identities.employee),
+      actor(identities.otherOwner),
+    ]) {
+      await expect(f.inbox.review(who, tenantId, f.first.id)).rejects.toThrow(
+        'FORBIDDEN',
+      );
+      await expect(
+        f.inbox.previewMapping(who, tenantId, f.first.id, f.raw.id, {
+          at: '2026-10-07T00:00:00Z',
+        }),
+      ).rejects.toThrow('FORBIDDEN');
+    }
+    await admin.membership.update({
+      where: { tenantId_identityId: { tenantId, identityId: identities.hr } },
+      data: { status: 'revoked' },
+    });
+    await expect(
+      f.inbox.review(actor(identities.hr), tenantId, f.first.id),
+    ).rejects.toThrow('FORBIDDEN');
+    await admin.tenant.update({
+      where: { id: tenantId },
+      data: { status: 'suspended' },
+    });
+    await expect(
+      f.inbox.previewMapping(
+        actor(identities.owner),
+        tenantId,
+        f.first.id,
+        f.raw.id,
+        { at: '2026-10-07T00:00:00Z' },
+      ),
+    ).rejects.toThrow('FORBIDDEN');
+  });
+  it('conceals foreign events and wrong device scopes but preserves review after device retirement', async () => {
+    const f = await inboxMappingFixture();
+    await expect(
+      f.inbox.previewMapping(
+        actor(identities.owner),
+        tenantId,
+        f.second.id,
+        f.raw.id,
+        { at: '2026-10-07T00:00:00Z' },
+      ),
+    ).rejects.toThrow('NOT_FOUND');
+    await expect(
+      f.inbox.previewMapping(
+        actor(identities.otherOwner),
+        otherTenantId,
+        f.first.id,
+        f.raw.id,
+        { at: '2026-10-07T00:00:00Z' },
+      ),
+    ).rejects.toThrow('NOT_FOUND');
+    await expect(
+      f.inbox.review(actor(identities.otherOwner), otherTenantId, f.first.id),
+    ).rejects.toThrow('NOT_FOUND');
+    await updateTenantDeviceInventory(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      f.first.id,
+      {
+        ...update(f.branch.id),
+        name: 'Synthetic entrance',
+        firmware: null,
+        status: 'retired',
+        reason: 'retire_device',
+      },
+    );
+    expect(
+      (await f.inbox.review(actor(identities.hr), tenantId, f.first.id))
+        .items[0].id,
+    ).toBe(f.raw.id);
+    expect(
+      (
+        await f.inbox.previewMapping(
+          actor(identities.hr),
+          tenantId,
+          f.first.id,
+          f.raw.id,
+          { at: '2026-10-07T00:00:00Z' },
+        )
+      ).resolution.status,
+    ).toBe('unmapped');
+  });
+  it('does not guess source strings or accept caller overrides and bounds direct SQL review requests', async () => {
+    const f = await inboxMappingFixture();
+    await createTenantDeviceMapping(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      f.first.id,
+      randomUUID(),
+      { ...f.mapping, sourceUserId: '7' },
+    );
+    expect(
+      (
+        await f.inbox.previewMapping(
+          actor(identities.owner),
+          tenantId,
+          f.first.id,
+          f.raw.id,
+          { at: '2026-10-07T00:00:00Z' },
+        )
+      ).resolution.status,
+    ).toBe('unmapped');
+    await expect(
+      f.inbox.previewMapping(
+        actor(identities.owner),
+        tenantId,
+        f.first.id,
+        f.raw.id,
+        { at: '2026-10-07T00:00:00Z', sourceUserId: '7' },
+      ),
+    ).rejects.toThrow();
+    await expect(
+      f.inbox.previewMapping(
+        actor(identities.owner),
+        tenantId,
+        f.first.id,
+        f.raw.id,
+        { at: '2026-10-07T00:00:00' },
+      ),
+    ).rejects.toThrow();
+    for (const limit of [0, 51]) {
+      const [row] = await runtime.$queryRaw<
+        { outcome: string }[]
+      >`SELECT * FROM public.read_synthetic_attendance_events(${identities.owner}::uuid,true,${tenantId}::uuid,${f.first.id}::uuid,${limit}::integer,NULL::uuid)`;
+      expect(row.outcome).toBe('invalid_state');
+    }
+  });
+  it('keeps synthetic review functions unavailable to worker and dispatcher and raw tables private', async () => {
+    const [row] = await admin.$queryRaw<{ safe: boolean }[]>`SELECT bool_and(
+      NOT has_function_privilege('kinto_worker',p.oid,'EXECUTE') AND NOT has_function_privilege('kinto_dispatcher',p.oid,'EXECUTE')
+      AND NOT EXISTS(SELECT 1 FROM aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a WHERE a.grantee=0 AND a.privilege_type='EXECUTE') AND pg_get_userbyid(p.proowner)='kinto_control_owner') AS safe
+      FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname IN ('read_synthetic_attendance_events','preview_synthetic_attendance_mapping')`;
+    expect(row.safe).toBe(true);
+    await expect(runtime.syntheticAttendanceEvent.findMany()).rejects.toThrow(
+      'permission denied',
+    );
+  });
 });
