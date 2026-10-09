@@ -3462,4 +3462,112 @@ describe('tenant attendance device inventory', () => {
       'permission denied',
     );
   });
+  it('serves gated synthetic review through real SQL with fresh owner/HR scope and no writes', async () => {
+    const f = await inboxMappingFixture();
+    await createTenantDeviceMapping(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      f.first.id,
+      randomUUID(),
+      f.mapping,
+    );
+    const { redisUrl, namespace } = await machineSetup();
+    vi.stubEnv('CONNECTOR_HTTP_MODE', 'local_test');
+    vi.stubEnv('CONNECTOR_REDIS_URL', redisUrl);
+    vi.stubEnv('CONNECTOR_NAMESPACE', namespace);
+    vi.stubEnv('API_HOST', '127.0.0.1');
+    vi.stubEnv('NODE_ENV', 'test');
+    const service = new MachineService();
+    let identityId = identities.owner,
+      selectedTenantId = tenantId,
+      authTime = Math.floor(Date.now() / 1000);
+    const module = await Test.createTestingModule({
+      controllers: [LocalConnectorOwnerController],
+      providers: [
+        { provide: MachineService, useValue: service },
+        {
+          provide: AuthService,
+          useValue: {
+            limit: async () => {},
+            session: async () => ({
+              identityId,
+              selectedTenantId,
+              authTime,
+              principal: { mfaVerified: true },
+            }),
+          },
+        },
+      ],
+    }).compile();
+    const app = module.createNestApplication();
+    configureHttp(app);
+    const path = `/api/v1/tenants/${tenantId}/local-connectors/devices/${f.first.id}/synthetic-inbox`;
+    const get = (url = path) =>
+      request(app.getHttpServer())
+        .get(url)
+        .set('Cookie', '__Host-kinto-session=' + 's'.repeat(43));
+    const preview =
+      path + '/' + f.raw.id + '/mapping-preview?at=2026-10-01T00:00:00Z';
+    const before = await admin.syntheticAttendanceEvent.findMany({
+      where: { tenantId },
+    });
+    const audits = await admin.auditEvent.count({ where: { tenantId } }),
+      outbox = await admin.outboxEvent.count({ where: { tenantId } });
+    try {
+      await app.listen(0, '127.0.0.1');
+      for (const user of [identities.owner, identities.hr]) {
+        identityId = user;
+        const list = await get().expect(200);
+        expect(list.headers['cache-control']).toBe('no-store');
+        expect(list.body).toMatchObject({
+          tenantId,
+          deviceId: f.first.id,
+          attendanceProcessingAvailable: false,
+          items: [{ id: f.raw.id }],
+        });
+        expect((await get(preview).expect(200)).body).toMatchObject({
+          timeBasis: 'operator_supplied_unverified',
+          clockVerified: false,
+          resolution: { status: 'mapped', employeeId: f.employee.id },
+        });
+      }
+      for (const user of [identities.employee, identities.otherOwner]) {
+        identityId = user;
+        await get().expect(403);
+        await get(preview).expect(403);
+      }
+      identityId = identities.owner;
+      authTime = 1;
+      await get().expect(403);
+      await get(preview).expect(403);
+      authTime = Math.floor(Date.now() / 1000);
+      selectedTenantId = otherTenantId;
+      await get().expect(403);
+      selectedTenantId = tenantId;
+      await get(
+        path + '/' + randomUUID() + '/mapping-preview?at=2026-10-01T00:00:00Z',
+      ).expect(404);
+      await admin.membership.updateMany({
+        where: { tenantId, identityId },
+        data: { status: 'revoked' },
+      });
+      await get().expect(403);
+      await get(preview).expect(403);
+      expect(
+        await admin.syntheticAttendanceEvent.findMany({ where: { tenantId } }),
+      ).toEqual(before);
+      expect(await admin.auditEvent.count({ where: { tenantId } })).toBe(
+        audits,
+      );
+      expect(await admin.outboxEvent.count({ where: { tenantId } })).toBe(
+        outbox,
+      );
+      await service.onModuleDestroy();
+      await get().expect(503);
+    } finally {
+      await app.close();
+      vi.unstubAllEnvs();
+    }
+  });
 });

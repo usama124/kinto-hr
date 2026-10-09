@@ -16,6 +16,8 @@ import {
   enrollmentRevokeSchema,
   enrollmentListQuerySchema,
   tenantIdSchema,
+  syntheticInboxReviewQuerySchema,
+  syntheticInboxPreviewQuerySchema,
 } from '@kinto/contracts';
 import {
   assertSelectedTenant,
@@ -53,6 +55,47 @@ export class LocalConnectorOwnerController {
           now - session.authTime <= 300,
       },
     };
+  }
+  @Get('devices/:deviceId/synthetic-inbox') async reviewInbox(
+    @Req() req: AuthRequest,
+    @Param('tenantId') tenantId: unknown,
+    @Param('deviceId') deviceId: unknown,
+    @Query() query: unknown,
+  ) {
+    this.machine.enabled();
+    const device = tenantIdSchema.safeParse(deviceId);
+    const input = syntheticInboxReviewQuerySchema.safeParse(query);
+    if (!device.success || !input.success) throw new BadRequestException();
+    const context = await this.context(req, tenantId);
+    return this.machine.reviewInbox(
+      context.actor,
+      context.tenantId,
+      device.data,
+      input.data,
+    );
+  }
+  @Get('devices/:deviceId/synthetic-inbox/:eventId/mapping-preview')
+  async previewInboxMapping(
+    @Req() req: AuthRequest,
+    @Param('tenantId') tenantId: unknown,
+    @Param('deviceId') deviceId: unknown,
+    @Param('eventId') eventId: unknown,
+    @Query() query: unknown,
+  ) {
+    this.machine.enabled();
+    const device = tenantIdSchema.safeParse(deviceId);
+    const event = tenantIdSchema.safeParse(eventId);
+    const input = syntheticInboxPreviewQuerySchema.safeParse(query);
+    if (!device.success || !event.success || !input.success)
+      throw new BadRequestException();
+    const context = await this.context(req, tenantId);
+    return this.machine.previewInboxMapping(
+      context.actor,
+      context.tenantId,
+      device.data,
+      event.data,
+      input.data,
+    );
   }
   @Get('enrollment-tokens') async list(
     @Req() req: AuthRequest,

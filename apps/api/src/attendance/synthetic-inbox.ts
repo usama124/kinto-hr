@@ -15,7 +15,7 @@ import {
   type AttendanceConnectorScope,
 } from './preflight';
 
-// Internal fixture tool, deliberately not mounted in HTTP or machine authority.
+// Fixture tool: only read methods are mounted in gated local-test HTTP.
 // All canonical events stay quarantined; fixture source identities are not K50 proof.
 export class SyntheticAttendanceInbox {
   private readonly db;
@@ -31,6 +31,9 @@ export class SyntheticAttendanceInbox {
         'Synthetic attendance inbox requires a non-production loopback kinto_test database',
       );
     this.db = createDatabase(databaseUrl);
+  }
+  async ready() {
+    await this.db.$queryRaw`SELECT 1`;
   }
   async close() {
     await this.db.$disconnect();
@@ -66,7 +69,7 @@ export class SyntheticAttendanceInbox {
     if (row.outcome !== 'ok') throw new DomainError('INVALID_STATE');
     return attendanceBatchReceiptSchema.parse(row.snapshot);
   }
-  // These methods remain internal/local-only, with fresh SQL owner/HR/MFA checks.
+  // Local-only reads retain fresh SQL owner/HR/MFA checks.
   async review(
     actor: OrganizationActor,
     tenantId: string,

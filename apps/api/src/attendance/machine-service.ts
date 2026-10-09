@@ -10,11 +10,13 @@ import type { EnrollmentIssue, EnrollmentListQuery } from '@kinto/contracts';
 import type { OrganizationActor } from '@kinto/database';
 import { LocalMachineAuthority } from './local-machine-authority';
 import { readMachineConfig } from './machine-config';
+import { SyntheticAttendanceInbox } from './synthetic-inbox';
 
 @Injectable()
 export class MachineService implements OnModuleInit, OnModuleDestroy {
   private readonly config = readMachineConfig(process.env);
   private authority?: LocalMachineAuthority;
+  private inbox?: SyntheticAttendanceInbox;
   enabled() {
     if (!this.config) throw new NotFoundException();
   }
@@ -30,19 +32,30 @@ export class MachineService implements OnModuleInit, OnModuleDestroy {
       this.config.redisUrl,
       this.config.namespace,
     );
+    let inbox: SyntheticAttendanceInbox | undefined;
     try {
+      inbox = new SyntheticAttendanceInbox(this.config.databaseUrl);
       await authority.connect();
+      await inbox.ready();
       this.authority = authority;
+      this.inbox = inbox;
     } catch {
-      await authority.close();
+      await Promise.allSettled([authority.close(), inbox?.close()]);
       throw new Error('Connector admission dependencies unavailable');
     }
   }
   async onModuleDestroy() {
-    await this.authority?.close();
+    const authority = this.authority,
+      inbox = this.inbox;
+    this.authority = undefined;
+    this.inbox = undefined;
+    await Promise.all([authority?.close(), inbox?.close()]);
   }
   async ready() {
-    if (this.config) await this.resource().ready();
+    if (this.config) {
+      await this.resource().ready();
+      await this.reviewResource().ready();
+    }
   }
   async limit(ip: string) {
     try {
@@ -52,6 +65,34 @@ export class MachineService implements OnModuleInit, OnModuleDestroy {
       if (error instanceof HttpException) throw error;
       throw new ServiceUnavailableException();
     }
+  }
+  private reviewResource() {
+    this.enabled();
+    if (!this.inbox) throw new ServiceUnavailableException();
+    return this.inbox;
+  }
+  reviewInbox(
+    actor: OrganizationActor,
+    tenant: string,
+    device: string,
+    query: unknown,
+  ) {
+    return this.reviewResource().review(actor, tenant, device, query);
+  }
+  previewInboxMapping(
+    actor: OrganizationActor,
+    tenant: string,
+    device: string,
+    event: string,
+    query: unknown,
+  ) {
+    return this.reviewResource().previewMapping(
+      actor,
+      tenant,
+      device,
+      event,
+      query,
+    );
   }
   issue(
     actor: OrganizationActor,
