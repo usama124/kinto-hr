@@ -5931,3 +5931,447 @@ test('mapping workspace fails closed on duplicate history and malformed next cur
     page.getByRole('heading', { name: 'Source ID 0007' }),
   ).toHaveCount(0);
 });
+
+const inboxEvent = (n = 801, deviceId = inventoryRow().id) => ({
+  id: `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`,
+  deviceId,
+  payload: {
+    sourceUserId: '0007',
+    sourceLocalTimestamp: '2026-10-10T09:00:00',
+    sourceEventId: 'synthetic:001',
+    direction: 'in',
+  },
+  quarantineCode: 'source_identity_unverified',
+  createdAt: '2026-10-10T04:01:00.000Z',
+});
+const inboxGuards = {
+  sourceIdentityVerified: false,
+  clockVerified: false,
+  attendanceProcessingAvailable: false,
+};
+async function inboxFixture(page: Page) {
+  const state = {
+    selected: deviceTenant as string | null,
+    identity: connectorIdentity,
+    roles: ['owner'],
+    sessionStatus: 200,
+    readStatus: 200,
+    devices: [inventoryRow()],
+    events: [inboxEvent()],
+    listOverride: undefined as unknown,
+    previewOverride: undefined as unknown,
+    resolution: 'mapped',
+    changeDuringPreview: '' as '' | 'company' | 'identity' | 'role',
+    reads: [] as string[],
+    writes: [] as string[],
+  };
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({
+      status: state.sessionStatus,
+      json: {
+        identityId: state.identity,
+        selectedTenantId: state.selected,
+        tenants: [
+          {
+            id: state.selected ?? deviceTenant,
+            name: 'Synthetic Inbox Company',
+            roles: state.roles,
+          },
+        ],
+      },
+    }),
+  );
+  await page.route('**/api/v1/tenants/**', (route) => {
+    const req = route.request(),
+      url = new URL(req.url());
+    if (req.method() !== 'GET') {
+      state.writes.push(req.method());
+      return route.fulfill({ status: 405 });
+    }
+    state.reads.push(url.pathname + url.search);
+    const after = url.searchParams.get('afterId');
+    if (url.pathname.endsWith('/devices')) {
+      const items = state.devices
+        .filter((v) => !after || v.id > after)
+        .sort((a, b) => a.id.localeCompare(b.id));
+      return route.fulfill({
+        json: {
+          items: items.slice(0, 25),
+          nextCursor: items.length > 25 ? items[24].id : null,
+        },
+      });
+    }
+    if (state.readStatus !== 200)
+      return route.fulfill({ status: state.readStatus, json: {} });
+    const device = url.pathname.split('/')[7];
+    if (url.pathname.endsWith('/mapping-preview')) {
+      const event = state.events.find(
+        (v) => v.id === url.pathname.split('/')[9],
+      );
+      if (state.changeDuringPreview === 'company')
+        state.selected = mappingEmployeeId;
+      if (state.changeDuringPreview === 'identity')
+        state.identity = mappingEmployeeId;
+      if (state.changeDuringPreview === 'role') state.roles = ['employee'];
+      return route.fulfill({
+        json: state.previewOverride ?? {
+          event,
+          requestedAt: url.searchParams.get('at'),
+          timeBasis: 'operator_supplied_unverified',
+          resolution:
+            state.resolution === 'mapped'
+              ? {
+                  status: 'mapped',
+                  employeeId: mappingEmployeeId,
+                  mappingId: mappingHistory().id,
+                  mappingVersion: 1,
+                }
+              : {
+                  status: state.resolution,
+                  employeeId: null,
+                  mappingId: null,
+                  mappingVersion: null,
+                },
+          ...inboxGuards,
+        },
+      });
+    }
+    const items = state.events
+      .filter((v) => v.deviceId === device && (!after || v.id > after))
+      .sort((a, b) => a.id.localeCompare(b.id));
+    return route.fulfill({
+      json: state.listOverride ?? {
+        tenantId: state.selected,
+        deviceId: device,
+        items: items.slice(0, 25),
+        nextCursor: items.length > 25 ? items[24].id : null,
+        ...inboxGuards,
+      },
+    });
+  });
+  return state;
+}
+async function requestInboxPreview(page: Page) {
+  await page
+    .getByRole('combobox', { name: 'Quarantined event', exact: true })
+    .selectOption(inboxEvent().id);
+  await page
+    .getByLabel('Hypothetical instant (UTC or explicit offset)', {
+      exact: true,
+    })
+    .fill('2026-10-10T09:00:00+05:00');
+  await page
+    .getByRole('button', { name: 'Preview employee mapping', exact: true })
+    .click();
+}
+for (const role of ['owner', 'hr_admin'])
+  test(`synthetic inbox workspace allows ${role} read-only review and unverified full-history preview`, async ({
+    page,
+  }, testInfo) => {
+    const state = await inboxFixture(page);
+    state.roles = [role];
+    await page.goto('/');
+    await page
+      .getByRole('link', { name: 'Inbox review', exact: false })
+      .click();
+    await expect(
+      page.getByRole('heading', { name: 'Source user 0007', exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText('Raw local time: 2026-10-10T09:00:00', { exact: true }),
+    ).toBeVisible();
+    await requestInboxPreview(page);
+    await expect(page.getByRole('status')).toContainText(
+      'Mapped to employee ' + mappingEmployeeId,
+    );
+    await expect(page.getByRole('status')).toContainText(
+      'Operator-supplied unverified instant: 2026-10-10T04:00:00.000Z',
+    );
+    await expect(page.getByRole('status')).toContainText('Still quarantined');
+    expect(state.reads.at(-1)).toContain(
+      'mapping-preview?at=2026-10-10T04%3A00%3A00.000Z',
+    );
+    expect(state.reads.at(-1)).not.toContain('sourceUserId');
+    expect(state.writes).toEqual([]);
+    if (role === 'owner')
+      await page.screenshot({
+        path: `/tmp/kinto-inbox-review-${testInfo.project.name}.png`,
+        fullPage: true,
+      });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+  });
+test('synthetic inbox workspace requires explicit time and clears stale previews on edits', async ({
+  page,
+}) => {
+  const state = await inboxFixture(page);
+  await page.goto('/attendance-review');
+  await page
+    .getByRole('combobox', { name: 'Quarantined event', exact: true })
+    .selectOption(inboxEvent().id);
+  const input = page.getByLabel(
+    'Hypothetical instant (UTC or explicit offset)',
+    { exact: true },
+  );
+  await expect(input).toHaveValue('');
+  await input.fill('2026-10-10T09:00:00');
+  await page
+    .getByRole('button', { name: 'Preview employee mapping', exact: true })
+    .click();
+  await expect(page.getByRole('status')).toContainText(
+    'Enter a valid timestamp',
+  );
+  expect(state.reads.some((v) => v.includes('mapping-preview'))).toBe(false);
+  for (const resolution of ['unmapped', 'ambiguous']) {
+    state.resolution = resolution;
+    await requestInboxPreview(page);
+    await expect(page.getByRole('status')).toContainText(
+      resolution === 'unmapped'
+        ? 'Unmapped: no employee is guessed.'
+        : 'Ambiguous: review required; no employee is guessed.',
+    );
+    await input.fill('2026-10-11T00:00:00Z');
+    await expect(page.getByRole('status')).toHaveCount(0);
+  }
+});
+test('synthetic inbox workspace paginates events and devices independently and erases forms', async ({
+  page,
+}) => {
+  const state = await inboxFixture(page);
+  state.devices = Array.from({ length: 26 }, (_, i) => inventoryRow(i + 1));
+  state.events = Array.from({ length: 26 }, (_, i) => inboxEvent(801 + i));
+  state.events.push(inboxEvent(900, inventoryRow(26).id));
+  await page.goto('/attendance-review');
+  await requestInboxPreview(page);
+  await expect(page.getByRole('status')).toContainText('Still quarantined');
+  await page
+    .getByRole('button', { name: 'Next events page', exact: true })
+    .click();
+  await expect(
+    page.getByRole('region', { name: 'Quarantined events', exact: true }),
+  ).toContainText(inboxEvent(826).id);
+  await expect(
+    page.getByLabel('Hypothetical instant (UTC or explicit offset)', {
+      exact: true,
+    }),
+  ).toHaveValue('');
+  await expect(page.getByRole('status')).toHaveCount(0);
+  expect(
+    state.reads.some((v) =>
+      v.includes('/synthetic-inbox?limit=25&afterId=' + inboxEvent(825).id),
+    ),
+  ).toBe(true);
+  await page
+    .getByRole('button', { name: 'Next review devices page', exact: true })
+    .click();
+  await expect(
+    page.getByRole('heading', {
+      name: 'Quarantined events · K50-26',
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('region', { name: 'Quarantined events', exact: true }),
+  ).toContainText(inboxEvent(900).id);
+  expect(state.reads.at(-1)).toBe(
+    `/api/v1/tenants/${deviceTenant}/local-connectors/devices/${inventoryRow(26).id}/synthetic-inbox?limit=25`,
+  );
+  await page
+    .getByRole('button', { name: 'First review devices page', exact: true })
+    .click();
+  await expect(
+    page.getByRole('heading', {
+      name: 'Quarantined events · K50-1',
+      exact: true,
+    }),
+  ).toBeVisible();
+});
+test('synthetic inbox workspace preserves retired history and handles empty devices and events', async ({
+  page,
+}) => {
+  const state = await inboxFixture(page);
+  state.devices[0].status = 'retired';
+  state.events = [];
+  await page.goto('/attendance-review');
+  await expect(
+    page.getByText('No quarantined records on this page.', { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Preview employee mapping', exact: true }),
+  ).toBeDisabled();
+  state.events = [inboxEvent()];
+  await page
+    .getByRole('button', { name: 'Refresh inbox review', exact: true })
+    .click();
+  await requestInboxPreview(page);
+  await expect(page.getByRole('status')).toContainText('Still quarantined');
+  state.devices = [];
+  await page
+    .getByRole('button', { name: 'Refresh inbox review', exact: true })
+    .click();
+  await expect(page.getByText(/No devices on this page/)).toBeVisible();
+  await expect(
+    page.getByRole('form', { name: 'Mapping preview', exact: true }),
+  ).toHaveCount(0);
+});
+for (const flaw of [
+  'tenant',
+  'device',
+  'duplicate',
+  'cursor',
+  'clock',
+  'biometric',
+])
+  test(`synthetic inbox workspace rejects ${flaw} list corruption and can reload`, async ({
+    page,
+  }) => {
+    const state = await inboxFixture(page);
+    const list = {
+      tenantId: deviceTenant,
+      deviceId: inventoryRow().id,
+      items: [inboxEvent()],
+      nextCursor: null as string | null,
+      ...inboxGuards,
+    };
+    if (flaw === 'tenant') list.tenantId = mappingEmployeeId;
+    if (flaw === 'device') list.items[0].deviceId = mappingEmployeeId;
+    if (flaw === 'duplicate') list.items.push(inboxEvent());
+    if (flaw === 'cursor') list.nextCursor = inboxEvent().id;
+    if (flaw === 'clock') list.clockVerified = true;
+    state.listOverride =
+      flaw === 'biometric'
+        ? {
+            ...list,
+            items: [
+              {
+                ...inboxEvent(),
+                payload: {
+                  ...inboxEvent().payload,
+                  fingerprint: 'must-not-render',
+                },
+              },
+            ],
+          }
+        : list;
+    await page.goto('/attendance-review');
+    await expect(
+      page.getByText(/Inbox data is unavailable or invalid/),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('region', { name: 'Quarantined events', exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByText('must-not-render', { exact: false }),
+    ).toHaveCount(0);
+    state.listOverride = undefined;
+    await page
+      .getByRole('button', { name: 'Refresh inbox review', exact: true })
+      .click();
+    await expect(
+      page.getByRole('heading', { name: 'Source user 0007', exact: true }),
+    ).toBeVisible();
+  });
+for (const flaw of ['event', 'time', 'source', 'processing'])
+  test(`synthetic inbox workspace rejects mismatched ${flaw} preview and erases records`, async ({
+    page,
+  }) => {
+    const state = await inboxFixture(page);
+    const preview = {
+      event: inboxEvent(),
+      requestedAt: '2026-10-10T04:00:00.000Z',
+      timeBasis: 'operator_supplied_unverified',
+      resolution: {
+        status: 'mapped',
+        employeeId: mappingEmployeeId,
+        mappingId: mappingHistory().id,
+        mappingVersion: 1,
+      },
+      ...inboxGuards,
+    };
+    if (flaw === 'event') preview.event.id = mappingEmployeeId;
+    if (flaw === 'time') preview.requestedAt = '2026-10-11T00:00:00.000Z';
+    if (flaw === 'source') preview.event.payload.sourceUserId = '7';
+    if (flaw === 'processing') preview.attendanceProcessingAvailable = true;
+    state.previewOverride = preview;
+    await page.goto('/attendance-review');
+    await requestInboxPreview(page);
+    await expect(
+      page.getByText(/Inbox data is unavailable or invalid/),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('region', { name: 'Quarantined events', exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole('form', { name: 'Mapping preview', exact: true }),
+    ).toHaveCount(0);
+  });
+for (const status of [401, 403, 404, 503])
+  test(`synthetic inbox workspace clears displayed records on ${status}`, async ({
+    page,
+  }) => {
+    const state = await inboxFixture(page);
+    await page.goto('/attendance-review');
+    await requestInboxPreview(page);
+    await expect(page.getByRole('status')).toContainText('Still quarantined');
+    state.readStatus = status;
+    await page
+      .getByRole('button', { name: 'Refresh inbox review', exact: true })
+      .click();
+    await expect(
+      page.getByText(
+        status === 401
+          ? /Sign in to review/
+          : status === 503
+            ? /Inbox data is unavailable or invalid/
+            : /Review is disabled, access denied or context changed/,
+      ),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('region', { name: 'Quarantined events', exact: true }),
+    ).toHaveCount(0);
+    await expect(page.getByRole('status')).toHaveCount(0);
+  });
+for (const change of ['company', 'identity', 'role'] as const)
+  test(`synthetic inbox workspace rejects ${change} changes during preview before publication`, async ({
+    page,
+  }) => {
+    const state = await inboxFixture(page);
+    await page.goto('/attendance-review');
+    state.changeDuringPreview = change;
+    await requestInboxPreview(page);
+    await expect(
+      page.getByText(/Review is disabled, access denied or context changed/),
+    ).toBeVisible();
+    await expect(page.getByRole('status')).toHaveCount(0);
+    await expect(
+      page.getByRole('region', { name: 'Quarantined events', exact: true }),
+    ).toHaveCount(0);
+  });
+test('synthetic inbox workspace handles closed login, no company and unauthorized roles without inbox calls', async ({
+  page,
+}) => {
+  const state = await inboxFixture(page);
+  state.sessionStatus = 404;
+  await page.goto('/attendance-review');
+  await expect(page.getByText(/Sign in to review/)).toBeVisible();
+  state.sessionStatus = 200;
+  state.selected = null;
+  await page
+    .getByRole('button', { name: 'Refresh inbox review', exact: true })
+    .click();
+  await expect(
+    page.getByText(/Select a company before reviewing/),
+  ).toBeVisible();
+  state.selected = deviceTenant;
+  state.roles = ['employee'];
+  await page
+    .getByRole('button', { name: 'Refresh inbox review', exact: true })
+    .click();
+  await expect(
+    page.getByText(/Review is disabled, access denied or context changed/),
+  ).toBeVisible();
+  expect(state.reads).toEqual([]);
+});
