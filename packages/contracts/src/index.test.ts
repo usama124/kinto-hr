@@ -1,4 +1,8 @@
 import {
+  attendanceTimingSettingsSchema,
+  attendanceTimingPolicyDraftSchema,
+} from './attendance-timing';
+import {
   syntheticInboxReviewQuerySchema,
   syntheticInboxPreviewQuerySchema,
   syntheticInboxEventSchema,
@@ -1823,5 +1827,160 @@ describe('synthetic inbox review contracts', () => {
           [key]: true,
         }).success,
       ).toBe(false);
+  });
+});
+
+// Employer-configured policy fixtures, not statutory recommendations.
+const timingSettings = {
+  scope: 'company',
+  timeZone: 'Asia/Karachi',
+  checkIn: '09:00',
+  checkOut: '18:00',
+  checkOutNextDay: false,
+  breakMode: 'fixed_duration',
+  unpaidBreakMinutes: 60,
+  fullDayTargetMinutes: 480,
+  halfDayTargetMinutes: 240,
+  minimumFullDayMinutes: 420,
+  minimumHalfDayMinutes: 180,
+  lateGraceMinutes: 10,
+  earlyGraceMinutes: 10,
+  associationBeforeMinutes: 30,
+  associationAfterMinutes: 30,
+  weeklyRestDays: [7],
+};
+describe('company attendance timing contracts', () => {
+  it('does not enable timing through the existing organization-defaults publication contract', () => {
+    expect(
+      organizationPolicyDraftSchema.safeParse({
+        expectedCurrentVersion: 0,
+        effectiveFrom: '2026-10-10',
+        settings: timingSettings,
+        reason: 'reviewed policy',
+      }).success,
+    ).toBe(false);
+  });
+  it('preserves separate targets/minimums and accepts explicit overnight settings', () => {
+    expect(attendanceTimingSettingsSchema.parse(timingSettings)).toEqual(
+      timingSettings,
+    );
+    expect(
+      attendanceTimingSettingsSchema.parse({
+        ...timingSettings,
+        checkIn: '22:00',
+        checkOut: '06:00',
+        checkOutNextDay: true,
+        unpaidBreakMinutes: 30,
+        fullDayTargetMinutes: 450,
+      }),
+    ).toMatchObject({ fullDayTargetMinutes: 450, minimumFullDayMinutes: 420 });
+  });
+  it.each([
+    { checkIn: '9:00' },
+    { checkOut: '24:00' },
+    { checkIn: '09:60' },
+    { checkOut: '09:00' },
+    { checkOut: '08:00' },
+    { checkOutNextDay: true },
+    { checkOut: '09:00', checkOutNextDay: true },
+    { unpaidBreakMinutes: 540 },
+    { unpaidBreakMinutes: 541 },
+    { fullDayTargetMinutes: 481 },
+    { fullDayTargetMinutes: 0 },
+    { halfDayTargetMinutes: 480 },
+    { halfDayTargetMinutes: 481 },
+    { minimumFullDayMinutes: 481 },
+    { minimumHalfDayMinutes: 420 },
+    { minimumHalfDayMinutes: 241 },
+    { minimumHalfDayMinutes: 0 },
+    { lateGraceMinutes: 481 },
+    { earlyGraceMinutes: 481 },
+    { associationBeforeMinutes: 451, associationAfterMinutes: 450 },
+    { weeklyRestDays: [7, 7] },
+    { weeklyRestDays: [0] },
+    { weeklyRestDays: [8] },
+    { weeklyRestDays: [1, 2, 3, 4, 5, 6, 7] },
+    { timeZone: 'UTC' },
+    { scope: 'employee' },
+    { branchId: 'override' },
+    { breakMode: 'punches' },
+    { checkIn: '09:00+05:00' },
+  ])('rejects inconsistent/unsupported settings %j', (change) => {
+    expect(
+      attendanceTimingSettingsSchema.safeParse({ ...timingSettings, ...change })
+        .success,
+    ).toBe(false);
+  });
+  it.each([
+    'unpaidBreakMinutes',
+    'fullDayTargetMinutes',
+    'halfDayTargetMinutes',
+    'minimumFullDayMinutes',
+    'minimumHalfDayMinutes',
+    'lateGraceMinutes',
+    'earlyGraceMinutes',
+    'associationBeforeMinutes',
+    'associationAfterMinutes',
+  ])('rejects corrupt or coerced minute field %s', (field) => {
+    for (const value of [-1, 0.5, 1440, NaN, Infinity, '60', null])
+      expect(
+        attendanceTimingSettingsSchema.safeParse({
+          ...timingSettings,
+          [field]: value,
+        }).success,
+      ).toBe(false);
+  });
+  it('allows exact threshold/net/window boundaries without manufacturing grace time', () => {
+    const value = {
+      ...timingSettings,
+      minimumFullDayMinutes: 480,
+      minimumHalfDayMinutes: 240,
+      lateGraceMinutes: 480,
+      earlyGraceMinutes: 480,
+      associationBeforeMinutes: 450,
+      associationAfterMinutes: 450,
+      weeklyRestDays: [],
+    };
+    expect(attendanceTimingSettingsSchema.parse(value)).toEqual(value);
+    expect(
+      attendanceTimingSettingsSchema.parse({
+        ...value,
+        fullDayTargetMinutes: 450,
+        minimumFullDayMinutes: 450,
+      }),
+    ).toMatchObject({ fullDayTargetMinutes: 450 });
+  });
+  it('requires explicit settings, version, effective date and reason without backdate guesses', () => {
+    const draft = {
+      expectedCurrentVersion: 0,
+      effectiveFrom: '2026-10-10',
+      settings: timingSettings,
+      reason: ' Employer-reviewed schedule ',
+    };
+    expect(attendanceTimingPolicyDraftSchema.parse(draft).reason).toBe(
+      'Employer-reviewed schedule',
+    );
+    for (const change of [
+      { expectedCurrentVersion: -1 },
+      { expectedCurrentVersion: 0.5 },
+      { expectedCurrentVersion: '0' },
+      { effectiveFrom: '2026-02-30' },
+      { effectiveFrom: '2026-10-10T00:00:00Z' },
+      { reason: '  ' },
+      { employeeId: 'override' },
+    ])
+      expect(
+        attendanceTimingPolicyDraftSchema.safeParse({ ...draft, ...change })
+          .success,
+      ).toBe(false);
+    expect(attendanceTimingSettingsSchema.safeParse({}).success).toBe(false);
+    // Future SQL publication will recheck effective-date/cutoff authority; the pure
+    // contract intentionally does not substitute wall-clock checks for that gate.
+    expect(
+      attendanceTimingPolicyDraftSchema.parse({
+        ...draft,
+        effectiveFrom: '2020-01-01',
+      }).effectiveFrom,
+    ).toBe('2020-01-01');
   });
 });

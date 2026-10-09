@@ -142,3 +142,5 @@ export function assertDraftActivation(
   if (actualVersion !== expectedVersion) throw new DomainError('STALE_VERSION');
   if (status !== 'draft') throw new DomainError('INVALID_STATE');
 }
+
+export * from './attendance-timing';

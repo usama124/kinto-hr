@@ -198,3 +198,7 @@ The [gated read-only HTTP slice](../evidence/phase-02/synthetic-inbox-http-revie
 ## Synthetic review workspace preparation — 10 October 2026
 
 The [read-only owner/HR screen](../evidence/phase-02/synthetic-inbox-workspace.md) adds independent device/event pages, exact source/local-time display and persisted-event what-if mapping previews. Strict response/scope/cursor checks, session rechecks and clearing on context/access loss protect display. Unverified flags remain false and no attendance/leave/payroll effect is enabled. P02-01/P02-02 remain partial. Next: P02-03 company-wide timing policy preparation; hardware/source/clock proof, protected credentials, production admission/rotation and finalized-period safeguards remain open.
+
+## P02-03 timing validation preparation — 10 October 2026
+
+The [shared timing contract and pure preview](../evidence/phase-02/attendance-timing-contracts.md) start P02-03 without enabling calculation. Company-wide fixed-break settings validate local times, overnight shifts, net targets, separate minimums, grace, rest days and non-overlapping daily association windows. Synthetic schedule preview gives 450 net minutes for 22:00–06:00 with a 30-minute break but claims no worked/payable time. Timing policy persistence, publication/UI, event normalization and daily qualification remain pending. Next: effective-dated SQL/API policy lifecycle with fresh authority, audit/outbox and keyed retries, then workspace. P02-01/P02-02 and production gates remain partial.
