@@ -1483,3 +1483,5 @@ export * from './attendance-entitlements';
 export * from './enrollment';
 
 export * from './device-mappings';
+
+export * from './synthetic-inbox-review';

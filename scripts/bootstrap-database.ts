@@ -358,6 +358,8 @@ try {
     'public.change_attendance_allocation(uuid,boolean,uuid,uuid,uuid,integer,boolean,integer,integer,varchar,uuid,uuid,uuid)',
     'public.read_tenant_device_mappings(uuid,boolean,uuid,uuid,integer,uuid)',
     'public.resolve_tenant_device_mapping(uuid,boolean,uuid,uuid,varchar,timestamptz)',
+    'public.read_synthetic_attendance_events(uuid,boolean,uuid,uuid,integer,uuid)',
+    'public.preview_synthetic_attendance_mapping(uuid,boolean,uuid,uuid,uuid,timestamptz)',
     'public.store_synthetic_attendance_batch(uuid,boolean,uuid,uuid,uuid,uuid,jsonb,uuid,uuid,uuid)',
     'public.mutate_tenant_device_mapping(uuid,boolean,uuid,uuid,uuid,uuid,integer,uuid,varchar,timestamptz,timestamptz,varchar,uuid,uuid)',
     'public.read_tenant_device_inventory(uuid,boolean,uuid,integer,uuid)',
