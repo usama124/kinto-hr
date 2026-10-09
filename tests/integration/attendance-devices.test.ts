@@ -1,3 +1,7 @@
+import {
+  SyntheticAttendanceDelivery,
+  SyntheticTransportFailure,
+} from '../../scripts/lib/synthetic-attendance-delivery';
 import { SyntheticAttendanceQueue } from '../../scripts/lib/synthetic-attendance-queue';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -3049,6 +3053,128 @@ describe('tenant attendance device inventory', () => {
         acknowledged: 1,
         held: 1,
       });
+      expect(
+        await admin.syntheticAttendanceEvent.count({ where: { tenantId } }),
+      ).toBe(1);
+    } finally {
+      queue.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+  it('retries an uncertain synthetic delivery explicitly and reconciles the original server commit once', async () => {
+    const f = await fixtureInbox();
+    const directory = mkdtempSync(join(tmpdir(), 'kinto-delivery-inbox-'));
+    const queue = new SyntheticAttendanceQueue({
+      mode: 'local_test',
+      directory,
+      binding: {
+        tenantId,
+        connectorId: f.scope.connectorId,
+        deviceId: f.device.id,
+        adapterVersion: f.scope.adapterVersion,
+      },
+    });
+    try {
+      queue.capture([fixtureEvent()]);
+      let calls = 0;
+      let committed: unknown;
+      const delivery = new SyntheticAttendanceDelivery(
+        queue,
+        async (batch) => {
+          calls++;
+          const receipt = await f.inbox.store(
+            actor(identities.owner),
+            batch,
+            f.scope,
+          );
+          if (calls === 1) {
+            committed = receipt;
+            throw new Error('Synthetic lost ACK');
+          }
+          expect(receipt).toEqual(committed);
+          return receipt;
+        },
+        { mode: 'local_test' },
+      );
+      expect(await delivery.deliver()).toEqual({
+        outcome: 'paused',
+        attempts: 1,
+        reason: 'unconfirmed',
+      });
+      expect(queue.summary().pending).toBe(1);
+      expect(await delivery.deliver()).toEqual({
+        outcome: 'delivered',
+        attempts: 1,
+      });
+      expect(calls).toBe(2);
+      expect(queue.summary().acknowledged).toBe(1);
+      expect(
+        await admin.syntheticAttendanceEvent.count({ where: { tenantId } }),
+      ).toBe(1);
+      expect(
+        await admin.syntheticAttendanceBatch.count({ where: { tenantId } }),
+      ).toBe(1);
+      expect(
+        await admin.outboxEvent.count({
+          where: { tenantId, type: 'attendance.synthetic_inbox_changed.v1' },
+        }),
+      ).toBe(1);
+    } finally {
+      queue.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+  it('keeps denied deliveries and server-rejected source conflicts durable without automatic retry', async () => {
+    const f = await fixtureInbox(true);
+    const directory = mkdtempSync(join(tmpdir(), 'kinto-delivery-inbox-'));
+    const queue = new SyntheticAttendanceQueue({
+      mode: 'local_test',
+      directory,
+      binding: {
+        tenantId,
+        connectorId: f.scope.connectorId,
+        deviceId: f.device.id,
+        adapterVersion: f.scope.adapterVersion,
+      },
+    });
+    try {
+      const e = fixtureEvent();
+      queue.capture([e]);
+      const denied = new SyntheticAttendanceDelivery(
+        queue,
+        async (batch) => {
+          try {
+            return await f.inbox.store(
+              actor(identities.owner, false),
+              batch,
+              f.scope,
+            );
+          } catch {
+            throw new SyntheticTransportFailure('denied');
+          }
+        },
+        { mode: 'local_test' },
+      );
+      expect(await denied.deliver()).toEqual({
+        outcome: 'paused',
+        attempts: 1,
+        reason: 'denied',
+      });
+      await expect(denied.deliver()).rejects.toThrow('DENIED');
+      expect(queue.summary().pending).toBe(1);
+      // A new trusted exercise uses fresh server authority; queue identity is unchanged.
+      const fresh = new SyntheticAttendanceDelivery(
+        queue,
+        (batch) => f.inbox.store(actor(identities.owner), batch, f.scope),
+        { mode: 'local_test' },
+      );
+      expect((await fresh.deliver()).outcome).toBe('delivered');
+      queue.capture([
+        { ...e, connectorEventId: randomUUID(), sourceUserId: 'other' },
+      ]);
+      expect((await fresh.deliver()).outcome).toBe('delivered');
+      expect(queue.summary().held).toBe(1);
+      expect(await fresh.deliver()).toEqual({ outcome: 'idle', attempts: 0 });
       expect(
         await admin.syntheticAttendanceEvent.count({ where: { tenantId } }),
       ).toBe(1);
