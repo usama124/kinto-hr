@@ -1,3 +1,6 @@
+import { SyntheticAttendanceQueue } from '../../scripts/lib/synthetic-attendance-queue';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { SyntheticAttendanceInbox } from '../../apps/api/src/attendance/synthetic-inbox';
 import { processEvent } from '../../apps/worker/src/processor';
 import type { AttendanceConnectorScope } from '../../apps/api/src/attendance/preflight';
@@ -13,7 +16,7 @@ import { configureHttp } from '../../apps/api/src/http';
 import { LocalMachineAuthority } from '../../apps/api/src/attendance/local-machine-authority';
 import { AuthStore } from '../../apps/api/src/auth/store';
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import {
   afterAll,
   afterEach,
@@ -2892,6 +2895,166 @@ describe('tenant attendance device inventory', () => {
       );
     } finally {
       await db.$disconnect();
+    }
+  });
+  it('reconciles a restarted local queue with the original durable server receipt after a lost ACK', async () => {
+    const f = await fixtureInbox();
+    const directory = mkdtempSync(join(tmpdir(), 'kinto-inbox-queue-'));
+    const options = {
+      mode: 'local_test' as const,
+      directory,
+      binding: {
+        tenantId,
+        connectorId: f.scope.connectorId,
+        deviceId: f.device.id,
+        adapterVersion: f.scope.adapterVersion,
+      },
+    };
+    let queue = new SyntheticAttendanceQueue(options);
+    try {
+      const e = fixtureEvent();
+      queue.capture([e]);
+      const request = queue.nextBatch()!;
+      const lostAck = await f.inbox.store(
+        actor(identities.owner),
+        request,
+        f.scope,
+      );
+      // Server committed, but process exits before locally applying the reply.
+      queue.close();
+      queue = new SyntheticAttendanceQueue(options);
+      expect(queue.nextBatch()).toEqual(request);
+      expect(queue.summary().pending).toBe(1);
+      const replay = await f.inbox.store(
+        actor(identities.owner),
+        queue.nextBatch(),
+        f.scope,
+      );
+      expect(replay).toEqual(lostAck);
+      queue.acknowledge(replay);
+      expect(queue.capture([e])).toEqual({ inserted: 0 });
+      expect(queue.nextBatch()).toBeNull();
+      expect(queue.summary()).toMatchObject({
+        pending: 0,
+        acknowledged: 1,
+        held: 0,
+      });
+      expect(
+        await admin.syntheticAttendanceEvent.count({ where: { tenantId } }),
+      ).toBe(1);
+      expect(
+        await admin.syntheticAttendanceBatch.count({ where: { tenantId } }),
+      ).toBe(1);
+    } finally {
+      queue.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+  it('retains unconfirmed uploads unchanged and acknowledges server-side re-poll duplicates', async () => {
+    const f = await fixtureInbox(true);
+    const directory = mkdtempSync(join(tmpdir(), 'kinto-inbox-queue-'));
+    const queue = new SyntheticAttendanceQueue({
+      mode: 'local_test',
+      directory,
+      binding: {
+        tenantId,
+        connectorId: f.scope.connectorId,
+        deviceId: f.device.id,
+        adapterVersion: f.scope.adapterVersion,
+      },
+    });
+    try {
+      const e = fixtureEvent();
+      queue.capture([e]);
+      const request = queue.nextBatch()!;
+      await expect(
+        f.inbox.store(actor(identities.owner, false), request, f.scope),
+      ).rejects.toThrow('FORBIDDEN');
+      expect(queue.nextBatch()).toEqual(request);
+      expect(queue.summary().pending).toBe(1);
+      queue.acknowledge(
+        await f.inbox.store(actor(identities.owner), request, f.scope),
+      );
+      queue.capture([{ ...e, connectorEventId: randomUUID() }]);
+      const duplicate = await f.inbox.store(
+        actor(identities.owner),
+        queue.nextBatch(),
+        f.scope,
+      );
+      expect(duplicate.events[0].disposition).toBe('duplicate');
+      queue.acknowledge(duplicate);
+      expect(queue.summary().acknowledged).toBe(2);
+      expect(
+        await admin.syntheticAttendanceEvent.count({ where: { tenantId } }),
+      ).toBe(1);
+    } finally {
+      queue.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+  it('retains server-rejected source conflicts locally through restart and explicit unchanged retry', async () => {
+    const f = await fixtureInbox(true);
+    const directory = mkdtempSync(join(tmpdir(), 'kinto-inbox-queue-'));
+    const options = {
+      mode: 'local_test' as const,
+      directory,
+      binding: {
+        tenantId,
+        connectorId: f.scope.connectorId,
+        deviceId: f.device.id,
+        adapterVersion: f.scope.adapterVersion,
+      },
+    };
+    let queue = new SyntheticAttendanceQueue(options);
+    try {
+      const e = fixtureEvent();
+      queue.capture([e]);
+      queue.acknowledge(
+        await f.inbox.store(
+          actor(identities.owner),
+          queue.nextBatch(),
+          f.scope,
+        ),
+      );
+      const conflict = {
+        ...e,
+        connectorEventId: randomUUID(),
+        sourceUserId: 'other',
+      };
+      queue.capture([conflict]);
+      const request = queue.nextBatch()!;
+      const receipt = await f.inbox.store(
+        actor(identities.owner),
+        request,
+        f.scope,
+      );
+      expect(receipt.events[0]).toMatchObject({
+        disposition: 'rejected_unstored',
+        code: 'source_identity_conflict',
+      });
+      queue.acknowledge(receipt);
+      queue.close();
+      queue = new SyntheticAttendanceQueue(options);
+      expect(queue.summary().held).toBe(1);
+      expect(queue.nextBatch()).toBeNull();
+      queue.retryHeld([conflict.connectorEventId]);
+      const retry = queue.nextBatch()!;
+      expect(retry.batchId).not.toBe(request.batchId);
+      expect(retry.events).toEqual([conflict]);
+      queue.acknowledge(
+        await f.inbox.store(actor(identities.owner), retry, f.scope),
+      );
+      expect(queue.summary()).toMatchObject({
+        pending: 0,
+        acknowledged: 1,
+        held: 1,
+      });
+      expect(
+        await admin.syntheticAttendanceEvent.count({ where: { tenantId } }),
+      ).toBe(1);
+    } finally {
+      queue.close();
+      rmSync(directory, { recursive: true, force: true });
     }
   });
 });
