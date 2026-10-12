@@ -1487,3 +1487,5 @@ export * from './device-mappings';
 export * from './synthetic-inbox-review';
 
 export * from './attendance-timing';
+
+export * from './attendance-normalization';

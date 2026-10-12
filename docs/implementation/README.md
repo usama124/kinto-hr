@@ -179,3 +179,7 @@ The [timing policy SQL/API lifecycle](../evidence/phase-02/attendance-timing-pol
 ## Company timing settings workspace — 12 October 2026
 
 The [owner/HR timing workspace](../evidence/phase-02/attendance-timing-workspace.md) exposes explicit company-wide drafts, bounded history, current/historical schedule previews and confirmed owner publication. Fresh session/scope checks, strict snapshot/arithmetic checks and in-memory exact-command reconciliation protect display and retries; HR remains read-only. No attendance or payroll effect is enabled. P02-03 remains partial. Next: verified-source normalization and pure day-calculation preparation, retaining hardware/clock, production connector and finalized-period gates.
+
+## Pure attendance normalization preparation — 12 October 2026
+
+The [normalization and association preview](../evidence/phase-02/attendance-normalization.md) preserves original source values and receipt time, checks explicit source/clock evidence, validates the +05:00 candidate against the IANA date and associates only unambiguous half-open published schedule windows. Overnight workdate/policy references remain explicit; unverified clocks, historical unsupported offsets and competing windows stay unresolved. No mounted workflow or processing/payroll effect is enabled. Next: pure standard-workday qualification, with calendar/leave/employment composition and finalized-period gates still required. P02-03 remains partial.

@@ -386,3 +386,7 @@ Use a separate attendance_timing domain in existing company policy versions. Req
 ## 12 October 2026 — timing policy workspace and exact retry
 
 The [timing workspace](../evidence/phase-02/attendance-timing-workspace.md) uses explicit integer-minute inputs without guessed defaults, owner-only confirmed writes and HR read-only history/previews. Persisted snapshot and arithmetic must match before preview publication. Uncertain commands retain their exact key/body in memory, block new writes and obtain fresh authority/CSRF on retry; access changes clear them. Refresh retains a same-owner/company uncertain command, but a browser reload does not. No browser payload/CSRF persistence or attendance/payroll effect is introduced.
+
+## 12 October 2026 — bounded normalization and schedule association
+
+Use [pure previews](../evidence/phase-02/attendance-normalization.md) before mounting calculation. Require explicit independently supplied clock/source evidence; constructing a verified flag is not authentication or device proof. Preserve source precision and IDs; never substitute receipt time or silently correct drift. Accept the fixed +05:00 candidate only when the IANA date round-trip agrees, and review unsupported historical offsets. Associate half-open explicit published schedules by check-in workdate, refuse scope/date/version inconsistencies and leave competing windows unresolved. No raw-event promotion, employee mapping inference, absence or pay effect is introduced.
