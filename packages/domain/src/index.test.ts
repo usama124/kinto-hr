@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { attendanceDayPreviewSchema } from '@kinto/contracts';
+import {
+  attendanceDayPreviewSchema,
+  attendanceLeaveCompositionPreviewSchema,
+} from '@kinto/contracts';
 import {
   previewAttendanceTiming,
   previewAttendanceDay,
+  previewAttendanceLeaveComposition,
   previewAttendanceNormalization,
   previewAttendanceAssociation,
   PLANS,
@@ -1181,5 +1185,407 @@ describe('standard workday qualification preview', () => {
       },
     ])
       expect(() => previewAttendanceDay(input)).toThrow();
+  });
+
+  function composition(workFirst = false, pay = 'paid') {
+    const day = fixture();
+    day.leave = 'partial_or_pending';
+    day.punches = workFirst
+      ? [
+          punch('2026-10-12T22:00:00', 'in', 1),
+          punch('2026-10-13T02:00:00', 'out', 2),
+        ]
+      : [
+          punch('2026-10-13T02:00:00', 'in', 1),
+          punch('2026-10-13T06:00:00', 'out', 2),
+        ];
+    const approval = {
+      id: '20000000-0000-4000-8000-000000000006',
+      version: 1,
+      tenantId,
+      employeeId,
+      workDate: day.workDate,
+      status: 'approved',
+      pay,
+    };
+    const first = {
+        from: '2026-10-12T17:00:00Z',
+        until: '2026-10-12T21:00:00Z',
+      },
+      second = { from: '2026-10-12T21:00:00Z', until: '2026-10-13T01:00:00Z' };
+    return {
+      day,
+      halves: workFirst
+        ? [
+            { kind: 'work', interval: first },
+            { kind: 'leave', interval: second, approval },
+          ]
+        : [
+            { kind: 'leave', interval: first, approval },
+            { kind: 'work', interval: second },
+          ],
+      breaks: [{ from: '2026-10-12T20:45:00Z', until: '2026-10-12T21:15:00Z' }],
+    };
+  }
+  it.each([false, true])(
+    'composes paid half-day leave and work without a second absence, work-first=%s',
+    (workFirst) => {
+      const input = composition(workFirst),
+        original = structuredClone(input);
+      const result = previewAttendanceLeaveComposition(input);
+      expect(result).toMatchObject({
+        status: 'composed_candidate',
+        qualification: 'half_day_work',
+        workUnits: 0.5,
+        paidLeaveUnits: 0.5,
+        unpaidLeaveUnits: 0,
+        uncoveredAbsenceUnits: 0,
+        workedMinutes: 225,
+        eligibleWorkedMinutes: 225,
+        breakDeductedMilliseconds: 15 * 60000,
+        plannedWorkMilliseconds: 225 * 60000,
+        isLate: false,
+        isEarly: false,
+        policyId: policy.id,
+        policyVersion: 1,
+        leaveApprovalVersion: 1,
+        overtimePayable: false,
+        attendanceProcessingAvailable: false,
+        payrollEffectsAvailable: false,
+      });
+      expect(input).toEqual(original);
+      if (result.status !== 'composed_candidate')
+        throw new Error('Unexpected review');
+      result.punchReferences[0].mappingVersion = 9;
+      result.breakWindows[0].from = 'changed';
+      expect(input).toEqual(original);
+    },
+  );
+  it('keeps approved unpaid leave separate from absence', () => {
+    expect(
+      previewAttendanceLeaveComposition(composition(false, 'unpaid')),
+    ).toMatchObject({
+      workUnits: 0.5,
+      paidLeaveUnits: 0,
+      unpaidLeaveUnits: 0.5,
+      uncoveredAbsenceUnits: 0,
+    });
+  });
+  it.each([
+    [-1, 'insufficient_work', 0.5],
+    [0, 'half_day_work', 0],
+    [1, 'half_day_work', 0],
+  ])(
+    'uses the half minimum without double-deducting breaks at millisecond boundary %s',
+    (delta, qualification, absence) => {
+      const input = composition();
+      input.day.punches[1] = punch(
+        new Date(
+          Date.parse('2026-10-13T02:00:00Z') + (180 + 15) * 60000 + delta,
+        )
+          .toISOString()
+          .slice(0, -1),
+        'out',
+        2,
+      );
+      expect(previewAttendanceLeaveComposition(input)).toMatchObject({
+        qualification,
+        uncoveredAbsenceUnits: absence,
+        paidLeaveUnits: 0.5,
+        workedMilliseconds: 180 * 60000 + delta,
+        eligibleWorkedMilliseconds: 180 * 60000 + delta,
+      });
+    },
+  );
+  it('only charges uncovered work-half candidates when no punches have complete coverage', () => {
+    const input = composition();
+    input.day.punches = [];
+    expect(previewAttendanceLeaveComposition(input)).toMatchObject({
+      qualification: 'no_punch_work',
+      workUnits: 0,
+      paidLeaveUnits: 0.5,
+      uncoveredAbsenceUnits: 0.5,
+      workedMinutes: 0,
+    });
+    input.day.coverageMapping = null;
+    expect(previewAttendanceLeaveComposition(input)).toMatchObject({
+      status: 'needs_review',
+      attendanceReviewCode: 'mapping_unresolved',
+      uncoveredAbsenceUnits: null,
+    });
+  });
+  it('uses actual break overlap rather than subtracting an entire day break from a short span', () => {
+    const input = composition();
+    input.day.punches = [
+      punch('2026-10-13T03:00:00', 'in', 1),
+      punch('2026-10-13T03:10:00', 'out', 2),
+    ];
+    expect(previewAttendanceLeaveComposition(input)).toMatchObject({
+      workedMinutes: 10,
+      breakDeductedMilliseconds: 0,
+      qualification: 'insufficient_work',
+      uncoveredAbsenceUnits: 0.5,
+    });
+  });
+  it('keeps overtime non-payable and outside work-half minimum qualification', () => {
+    const input = composition(true);
+    input.day.punches[0] = punch('2026-10-12T21:45:00', 'in', 1);
+    expect(previewAttendanceLeaveComposition(input)).toMatchObject({
+      workedMinutes: 240,
+      eligibleWorkedMinutes: 225,
+      overtimeCandidateMilliseconds: 15 * 60000,
+      overtimePayable: false,
+    });
+  });
+  it.each([0, 1])(
+    'computes grace against the work half without inventing work, delta=%s',
+    (delta) => {
+      const input = composition();
+      input.day.punches[0] = punch(
+        '2026-10-13T02:10:00' + (delta ? '.001' : ''),
+        'in',
+        1,
+      );
+      expect(previewAttendanceLeaveComposition(input)).toMatchObject({
+        lateMilliseconds: 10 * 60000 + delta,
+        isLate: !!delta,
+        workedMilliseconds: 225 * 60000,
+        eligibleWorkedMilliseconds: 225 * 60000,
+      });
+      // The check-in remained within the explicitly unpaid 02:00–02:15 break;
+      // no work was manufactured by grace or removed twice as another break.
+    },
+  );
+  it('retains exact retry and out-of-order behavior of the canonical evidence validator', () => {
+    const input = composition(),
+      original = previewAttendanceLeaveComposition(input);
+    input.day.punches = [
+      input.day.punches[1],
+      input.day.punches[0],
+      structuredClone(input.day.punches[0]),
+    ];
+    input.halves.reverse();
+    expect(previewAttendanceLeaveComposition(input)).toEqual(original);
+  });
+  it('canonicalizes two explicitly placed breaks without changing net half-day coverage', () => {
+    const input = composition();
+    input.breaks = [
+      { from: '2026-10-12T17:45:00Z', until: '2026-10-12T18:00:00Z' },
+      { from: '2026-10-12T21:45:00Z', until: '2026-10-12T22:00:00Z' },
+    ];
+    const original = previewAttendanceLeaveComposition(input);
+    expect(original).toMatchObject({
+      qualification: 'half_day_work',
+      workedMinutes: 225,
+      uncoveredAbsenceUnits: 0,
+    });
+    input.breaks.reverse();
+    expect(previewAttendanceLeaveComposition(input)).toEqual(original);
+  });
+  it.each(['pending', 'rejected', 'cancelled'])(
+    'withholds all absence units for %s approval',
+    (status) => {
+      const input = composition();
+      input.halves[0].approval!.status = status;
+      expect(previewAttendanceLeaveComposition(input)).toMatchObject({
+        code: 'approval_unresolved',
+        uncoveredAbsenceUnits: null,
+        workedMinutes: null,
+      });
+    },
+  );
+  it('rejects foreign leave scope and missing approvals rather than accept caller authority', () => {
+    for (const field of ['tenantId', 'employeeId', 'workDate'] as const) {
+      const input = composition();
+      input.halves[0].approval![field] =
+        field === 'workDate' ? '2026-10-13' : policy.id;
+      expect(() => previewAttendanceLeaveComposition(input)).toThrow(
+        'LEAVE_SCOPE_MISMATCH',
+      );
+    }
+    const input = composition();
+    const halves = input.halves.map((v) =>
+      v.kind === 'leave' ? { ...v, approval: null } : v,
+    );
+    expect(
+      previewAttendanceLeaveComposition({ ...input, halves }),
+    ).toMatchObject({ code: 'approval_unresolved' });
+  });
+  it('keeps locked, incomplete, missing-punch and unknown calendar evidence unresolved', () => {
+    const input = composition();
+    input.day.periodState = 'locked';
+    expect(previewAttendanceLeaveComposition(input)).toMatchObject({
+      attendanceReviewCode: 'locked_period',
+    });
+    input.day.periodState = 'open';
+    input.day.evidence = 'incomplete';
+    expect(previewAttendanceLeaveComposition(input)).toMatchObject({
+      attendanceReviewCode: 'incomplete_evidence',
+    });
+    input.day.evidence = 'complete_closed';
+    input.day.punches.pop();
+    expect(previewAttendanceLeaveComposition(input)).toMatchObject({
+      attendanceReviewCode: 'missing_punch',
+    });
+    input.day.punches = composition().day.punches;
+    input.day.calendar = 'unknown';
+    expect(previewAttendanceLeaveComposition(input)).toMatchObject({
+      attendanceReviewCode: 'calendar_unknown',
+    });
+    input.day.calendar = 'holiday';
+    input.day.punches = [];
+    expect(previewAttendanceLeaveComposition(input)).toMatchObject({
+      code: 'non_working_day',
+    });
+  });
+  it('does not reinterpret a normal/full-leave day as this partial-leave workflow', () => {
+    for (const leave of ['none', 'approved_full_day']) {
+      const input = composition();
+      input.day.leave = leave;
+      expect(previewAttendanceLeaveComposition(input)).toMatchObject({
+        code: 'leave_mode_mismatch',
+      });
+    }
+  });
+  it('refuses work overlapping leave, including a millisecond at the shared boundary', () => {
+    const input = composition();
+    input.day.punches[0] = punch('2026-10-13T01:59:59.999', 'in', 1);
+    expect(previewAttendanceLeaveComposition(input)).toMatchObject({
+      code: 'work_leave_overlap',
+      uncoveredAbsenceUnits: null,
+    });
+    const first = composition(true);
+    first.day.punches[1] = punch('2026-10-13T02:00:00.001', 'out', 2);
+    expect(previewAttendanceLeaveComposition(first)).toMatchObject({
+      code: 'work_leave_overlap',
+    });
+  });
+  it('refuses gaps, overlapping halves, unequal net halves and missing/extra/overlapping breaks', () => {
+    const mutations = [
+      (v: ReturnType<typeof composition>) => {
+        v.halves[1].interval.from = '2026-10-12T21:01:00Z';
+      },
+      (v: ReturnType<typeof composition>) => {
+        v.halves[1].interval.from = '2026-10-12T20:59:00Z';
+      },
+      (v: ReturnType<typeof composition>) => {
+        v.halves[0].interval.from = '2026-10-12T16:59:00Z';
+      },
+      (v: ReturnType<typeof composition>) => {
+        v.breaks = [];
+      },
+      (v: ReturnType<typeof composition>) => {
+        v.breaks[0].until = '2026-10-12T21:16:00Z';
+      },
+      (v: ReturnType<typeof composition>) => {
+        v.breaks.push({ ...v.breaks[0] });
+      },
+      (v: ReturnType<typeof composition>) => {
+        v.breaks[0].from = '2026-10-12T16:45:00Z';
+        v.breaks[0].until = '2026-10-12T17:15:00Z';
+      },
+      (v: ReturnType<typeof composition>) => {
+        v.halves[0].interval.until = '2026-10-12T22:00:00Z';
+        v.halves[1].interval.from = '2026-10-12T22:00:00Z';
+      },
+      (v: ReturnType<typeof composition>) => {
+        v.halves[0].kind = 'work';
+        delete v.halves[0].approval;
+      },
+    ];
+    for (const mutate of mutations) {
+      const input = composition();
+      mutate(input);
+      expect(previewAttendanceLeaveComposition(input)).toMatchObject({
+        code: 'partition_invalid',
+      });
+    }
+  });
+  it('preserves previously returned timing/approval references when a later preview changes versions', () => {
+    const input = composition();
+    const original = previewAttendanceLeaveComposition(input);
+    input.day.schedules[0].policy.version = 2;
+    input.day.schedules[0].policy.basedOnVersion = 1;
+    input.halves[0].approval!.version = 2;
+    expect(previewAttendanceLeaveComposition(input)).toMatchObject({
+      policyVersion: 2,
+      leaveApprovalVersion: 2,
+    });
+    expect(original).toMatchObject({
+      policyVersion: 1,
+      leaveApprovalVersion: 1,
+    });
+  });
+  it('rejects contradictory composition responses and malformed plan inputs', () => {
+    const result = previewAttendanceLeaveComposition(composition());
+    if (result.status !== 'composed_candidate')
+      throw new Error('Unexpected review');
+    for (const corrupt of [
+      { ...result, uncoveredAbsenceUnits: 0.5 },
+      { ...result, workUnits: 0 },
+      { ...result, paidLeaveUnits: 0, unpaidLeaveUnits: 0 },
+      { ...result, policyId: null },
+      { ...result, punchReferences: [] },
+      { ...result, firstPunchAt: null },
+      { ...result, lastPunchAt: result.firstPunchAt },
+      {
+        ...result,
+        breakDeductedMilliseconds: result.grossWorkedMilliseconds + 1,
+      },
+      { ...result, workedMilliseconds: 0 },
+      { ...result, eligibleWorkedMilliseconds: result.workedMilliseconds + 1 },
+      { ...result, plannedWorkMilliseconds: 0 },
+      { ...result, workedMinutes: 226 },
+      { ...result, eligibleWorkedMinutes: 226 },
+      { ...result, overtimeCandidateMilliseconds: 1 },
+      { ...result, qualification: 'no_punch_work' },
+      {
+        ...result,
+        punchReferences: [result.punchReferences[0], result.punchReferences[0]],
+      },
+    ])
+      expect(
+        attendanceLeaveCompositionPreviewSchema.safeParse(corrupt).success,
+      ).toBe(false);
+    const precise = composition();
+    precise.breaks[0].from = '2026-10-12T20:45:00.0001Z';
+    expect(() => previewAttendanceLeaveComposition(precise)).toThrow();
+    const absent = composition();
+    absent.day.punches = [];
+    const absence = previewAttendanceLeaveComposition(absent);
+    for (const corrupt of [
+      { ...absence, isLate: true },
+      { ...absence, isEarly: true },
+      { ...absence, lateMilliseconds: 1 },
+      { ...absence, earlyMilliseconds: 1 },
+    ])
+      expect(
+        attendanceLeaveCompositionPreviewSchema.safeParse(corrupt).success,
+      ).toBe(false);
+    expect(
+      attendanceLeaveCompositionPreviewSchema.safeParse({
+        ...absence,
+        coverageMappingId: null,
+      }).success,
+    ).toBe(false);
+    for (const input of [
+      null,
+      {},
+      { ...composition(), halves: [] },
+      {
+        ...composition(),
+        breaks: [
+          { from: '2026-10-12T20:45:00.001Z', until: '2026-10-12T21:15:00Z' },
+        ],
+      },
+      {
+        ...composition(),
+        breaks: [
+          { from: '2026-10-12T21:15:00Z', until: '2026-10-12T20:45:00Z' },
+        ],
+      },
+      { ...composition(), payrollEffectsAvailable: true },
+    ])
+      expect(() => previewAttendanceLeaveComposition(input)).toThrow();
   });
 });
