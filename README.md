@@ -47,7 +47,7 @@ From the repository root, in a Bash-compatible shell:
 
 ```bash
 pnpm install --frozen-lockfile
-cp .env.example .env
+cp -n .env.example .env
 set -a
 . ./.env
 set +a
@@ -73,6 +73,8 @@ docker compose --env-file .env -f infra/compose.yaml -p kinto-hr stop
 ```
 
 ## Verification
+
+For persistent local administrator/company login, follow [local login setup](docs/operations/local-login.md). After database initialization, run `pnpm local:auth:setup --confirm-local-setup`, then `pnpm local:dev`. Use `https://localhost:3443/login`; private initial credentials are in `.local/auth/credentials.txt` and invitation/reset messages appear at `http://127.0.0.1:8025`. This opt-in remains local development only and does not change disabled authentication defaults in `.env.example`.
 
 Keep the test database running and export the `.env` settings as above. Stop any manually started web/API servers before the browser suite; it deliberately refuses to reuse unknown processes on its ports.
 

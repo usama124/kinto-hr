@@ -3,6 +3,9 @@ const apiUrl = process.env.API_URL ?? 'http://127.0.0.1:4000';
 const config: NextConfig = {
   transpilePackages: ['@kinto/contracts'],
   poweredByHeader: false,
+  // Callback query strings contain single-use authorization codes. Never log
+  // incoming URLs while exercising real provider login in development.
+  logging: { incomingRequests: false, browserToTerminal: false },
   async rewrites() {
     return [
       {
