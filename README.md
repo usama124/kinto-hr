@@ -60,6 +60,8 @@ pnpm dev
 
 Open [the local workspace](http://127.0.0.1:3000). The API listens on `127.0.0.1:4000`; PostgreSQL and Redis bind only to localhost ports `55432` and `56379` by default. The web application proxies public health/authentication routes and selected tenant routes to the API. `API_URL` is a trusted operator setting and must be set before building because Next.js records rewrites at build time. Existing installations must add the worker variables from `.env.example` without overwriting their `.env`; see the [operating guide](docs/operations/foundation.md).
 
+`pnpm db:generate` and `pnpm db:migrate` automatically load the root `.env`, including when invoked through the database workspace. Exported environment variables take precedence. Keep `MIGRATION_DATABASE_URL` set to the administrative migration connection and `DATABASE_URL` set to the restricted application connection; do not substitute the application role for migrations.
+
 The example passwords are **local development fixtures only**. Never deploy them. Do not overwrite an existing `.env`. The bootstrap script refuses non-local/non-`kinto_*` targets and is not a production provisioning tool. Migration credentials must never be used by the running API; startup rejects unsafe roles. The database initially has no employee records; tests create and remove their own synthetic tenants.
 
 To stop the local database without deleting data:
