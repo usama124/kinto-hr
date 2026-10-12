@@ -1,7 +1,18 @@
+import 'reflect-metadata';
+import { Test } from '@nestjs/testing';
+import request from 'supertest';
+import { OrganizationController } from '../../apps/api/src/organization/controller';
+import { DatabaseService } from '../../apps/api/src/database.service';
+import { AuthService } from '../../apps/api/src/auth/service';
+import { configureHttp } from '../../apps/api/src/http';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  createAttendanceTimingPolicyDraft,
+  publishAttendanceTimingPolicy,
+  listAttendanceTimingPolicies,
+  previewAttendanceTimingPolicy,
   createDatabase,
   createOrganizationPolicyDraft,
   createTenantBranch,
@@ -104,6 +115,9 @@ describe('tenant organization and effective policy boundary', () => {
       where: { tenantId: { in: tenants } },
     });
     await admin.auditEvent.deleteMany({ where: { tenantId: { in: tenants } } });
+    await admin.attendanceTimingReceipt.deleteMany({
+      where: { tenantId: { in: tenants } },
+    });
     await admin.companyPolicyVersion.deleteMany({
       where: { tenantId: { in: tenants } },
     });
@@ -681,5 +695,445 @@ describe('tenant organization and effective policy boundary', () => {
     await expect(runtime.legalEntity.findMany()).rejects.toThrow();
     await expect(runtime.branch.findMany()).rejects.toThrow();
     await expect(runtime.companyPolicyVersion.findMany()).rejects.toThrow();
+  });
+  const timing = {
+    scope: 'company',
+    timeZone: 'Asia/Karachi',
+    checkIn: '22:00',
+    checkOut: '06:00',
+    checkOutNextDay: true,
+    breakMode: 'fixed_duration',
+    unpaidBreakMinutes: 30,
+    fullDayTargetMinutes: 450,
+    halfDayTargetMinutes: 225,
+    minimumFullDayMinutes: 420,
+    minimumHalfDayMinutes: 180,
+    lateGraceMinutes: 10,
+    earlyGraceMinutes: 10,
+    associationBeforeMinutes: 30,
+    associationAfterMinutes: 60,
+    weeklyRestDays: [7],
+  };
+  const timingInput = (days = 0, version = 0) => ({
+    expectedCurrentVersion: version,
+    effectiveFrom: karachiDate(days),
+    settings: timing,
+    reason: 'Reviewed synthetic timing policy',
+  });
+  const draftTiming = (days = 0, version = 0, key = randomUUID()) =>
+    createAttendanceTimingPolicyDraft(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      key,
+      timingInput(days, version),
+    );
+  const publishTiming = (
+    p: { id: string; version: number },
+    key = randomUUID(),
+  ) =>
+    publishAttendanceTimingPolicy(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      p.id,
+      key,
+      { expectedVersion: p.version, reason: 'Reviewed timing publication' },
+    );
+  it('publishes immutable timing versions and resolves effective history independently from organization defaults', async () => {
+    const key = randomUUID(),
+      input = timingInput(),
+      draft = await draftTiming(0, 0, key);
+    expect(
+      await createAttendanceTimingPolicyDraft(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        key,
+        input,
+      ),
+    ).toEqual({ ...draft, replayed: true });
+    const preview = await previewAttendanceTimingPolicy(
+      runtime,
+      actor(identities.hr),
+      tenantId,
+      draft.id,
+    );
+    expect(preview).toMatchObject({
+      tenantId,
+      scheduledMinutes: 480,
+      netScheduledMinutes: 450,
+      attendanceProcessingAvailable: false,
+      payrollEffectsAvailable: false,
+      policy: { id: draft.id, status: 'draft' },
+    });
+    expect(
+      (
+        await listAttendanceTimingPolicies(
+          runtime,
+          actor(identities.hr),
+          tenantId,
+        )
+      ).currentPolicy,
+    ).toBeNull();
+    const publishKey = randomUUID(),
+      published = await publishTiming(draft, publishKey);
+    expect(await publishTiming(draft, publishKey)).toEqual({
+      ...published,
+      replayed: true,
+    });
+    const second = await draftTiming(5, draft.version);
+    await publishTiming(second);
+    const today = await listAttendanceTimingPolicies(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      { asOf: karachiDate() },
+    );
+    expect(today.latestPublishedVersion).toBe(second.version);
+    expect(today.currentPolicy?.id).toBe(draft.id);
+    expect(
+      (
+        await listAttendanceTimingPolicies(
+          runtime,
+          actor(identities.owner),
+          tenantId,
+          { asOf: karachiDate(5) },
+        )
+      ).currentPolicy?.id,
+    ).toBe(second.id);
+    expect(
+      (
+        await listAttendanceTimingPolicies(
+          runtime,
+          actor(identities.owner),
+          tenantId,
+          { asOf: karachiDate(-1) },
+        )
+      ).currentPolicy,
+    ).toBeNull();
+    expect(
+      (await readTenantOrganization(runtime, actor(identities.owner), tenantId))
+        .latestPublishedVersion,
+    ).toBe(0);
+    expect(
+      await createAttendanceTimingPolicyDraft(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        key,
+        input,
+      ),
+    ).toEqual({ ...draft, replayed: true });
+  });
+  it('rechecks owner/HR authority and denies unauthorized timing reads, writes and exact retries', async () => {
+    const key = randomUUID(),
+      p = await draftTiming(0, 0, key);
+    for (const caller of [
+      actor(identities.employee),
+      actor(identities.otherOwner),
+      actor(identities.owner, false),
+    ]) {
+      await expect(
+        listAttendanceTimingPolicies(runtime, caller, tenantId),
+      ).rejects.toThrow('FORBIDDEN');
+      await expect(
+        previewAttendanceTimingPolicy(runtime, caller, tenantId, p.id),
+      ).rejects.toThrow('FORBIDDEN');
+      await expect(
+        createAttendanceTimingPolicyDraft(
+          runtime,
+          caller,
+          tenantId,
+          randomUUID(),
+          timingInput(),
+        ),
+      ).rejects.toThrow('FORBIDDEN');
+      await expect(
+        publishAttendanceTimingPolicy(
+          runtime,
+          caller,
+          tenantId,
+          p.id,
+          randomUUID(),
+          { expectedVersion: p.version, reason: 'denied timing publication' },
+        ),
+      ).rejects.toThrow('FORBIDDEN');
+    }
+    await expect(
+      createAttendanceTimingPolicyDraft(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        randomUUID(),
+        timingInput(),
+      ),
+    ).rejects.toThrow('FORBIDDEN');
+    await expect(
+      previewAttendanceTimingPolicy(
+        runtime,
+        actor(identities.owner),
+        otherTenantId,
+        p.id,
+      ),
+    ).rejects.toThrow('FORBIDDEN');
+    await expect(
+      previewAttendanceTimingPolicy(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        randomUUID(),
+      ),
+    ).rejects.toThrow('NOT_FOUND');
+    await admin.membership.updateMany({
+      where: { tenantId, identityId: identities.owner },
+      data: { status: 'revoked' },
+    });
+    await expect(
+      createAttendanceTimingPolicyDraft(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        key,
+        timingInput(),
+      ),
+    ).rejects.toThrow('FORBIDDEN');
+  });
+  it('serializes concurrent timing commands and rejects changed keyed requests without extra facts', async () => {
+    const key = randomUUID();
+    const replies = await Promise.all([
+      draftTiming(0, 0, key),
+      draftTiming(0, 0, key),
+    ]);
+    expect(replies[0].id).toBe(replies[1].id);
+    expect(replies.map((v) => v.replayed).sort()).toEqual([false, true]);
+    expect(await admin.auditEvent.count({ where: { tenantId } })).toBe(1);
+    expect(await admin.outboxEvent.count({ where: { tenantId } })).toBe(1);
+    await expect(
+      createAttendanceTimingPolicyDraft(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        key,
+        { ...timingInput(), reason: 'different approved reason' },
+      ),
+    ).rejects.toThrow('CONFLICT');
+    const second = await draftTiming(1);
+    const publications = await Promise.allSettled([
+      publishTiming(replies[0]),
+      publishTiming(second),
+    ]);
+    expect(publications.filter((v) => v.status === 'fulfilled')).toHaveLength(
+      1,
+    );
+    expect(publications.filter((v) => v.status === 'rejected')).toHaveLength(1);
+    expect(
+      await admin.companyPolicyVersion.count({
+        where: { tenantId, domain: 'attendance_timing', status: 'published' },
+      }),
+    ).toBe(1);
+  });
+  it('rejects backdates, stale bases, expired drafts and insertion before future published schedules', async () => {
+    await expect(draftTiming(-1)).rejects.toThrow('CONFLICT');
+    const first = await draftTiming(0),
+      stale = await draftTiming(1);
+    await publishTiming(first);
+    await expect(publishTiming(stale)).rejects.toThrow('STALE_VERSION');
+    await expect(draftTiming(1, 0)).rejects.toThrow('STALE_VERSION');
+    const future = await draftTiming(5, first.version);
+    await publishTiming(future);
+    await expect(draftTiming(4, future.version)).rejects.toThrow('CONFLICT');
+    const expired = await draftTiming(6, future.version);
+    await admin.companyPolicyVersion.update({
+      where: { id: expired.id },
+      data: { effectiveFrom: new Date(karachiDate(-1)) },
+    });
+    await expect(publishTiming(expired)).rejects.toThrow('CONFLICT');
+  });
+  it('validates SQL timing settings without allowing direct-runtime JSON bypasses', async () => {
+    for (const settings of [
+      { ...timing, minimumHalfDayMinutes: 500 },
+      { ...timing, checkOutNextDay: false },
+      { ...timing, unpaidBreakMinutes: 480 },
+      { ...timing, weeklyRestDays: [7, 7] },
+      { ...timing, scope: 'employee' },
+      { ...timing, branchId: randomUUID() },
+      { ...timing, lateGraceMinutes: '10' },
+      { ...timing, minimumHalfDayMinutes: null },
+    ]) {
+      const [row] = await runtime.$queryRaw<
+        { outcome: string }[]
+      >`SELECT * FROM public.mutate_attendance_timing_policy(${identities.owner}::uuid,true,${tenantId}::uuid,${randomUUID()}::uuid,'create'::varchar,NULL::uuid,0::integer,${karachiDate()}::date,${JSON.stringify(settings)}::jsonb,'SQL bypass attempt'::varchar,${randomUUID()}::uuid,${randomUUID()}::uuid)`;
+      expect(row.outcome).toBe('invalid_state');
+      await expect(
+        admin.companyPolicyVersion.create({
+          data: {
+            id: randomUUID(),
+            tenantId,
+            domain: 'attendance_timing',
+            policyVersion: 1,
+            basedOnVersion: 0,
+            effectiveFrom: new Date(karachiDate()),
+            settings,
+            reason: 'Rejected direct invalid row',
+            createdByIdentityId: identities.owner,
+          },
+        }),
+      ).rejects.toThrow();
+    }
+    expect(
+      await admin.companyPolicyVersion.count({ where: { tenantId } }),
+    ).toBe(0);
+  });
+  it('rolls back timing policy, receipt and outbox when atomic audit insertion fails', async () => {
+    const initial = await draftTiming(),
+      audit = await admin.auditEvent.findFirstOrThrow({ where: { tenantId } }),
+      key = randomUUID();
+    await expect(
+      runtime.$queryRaw`SELECT * FROM public.mutate_attendance_timing_policy(${identities.owner}::uuid,true,${tenantId}::uuid,${key}::uuid,'create'::varchar,NULL::uuid,0::integer,${karachiDate(1)}::date,${JSON.stringify(timing)}::jsonb,'Audit rollback fixture'::varchar,${audit.id}::uuid,${randomUUID()}::uuid)`,
+    ).rejects.toThrow();
+    expect(
+      await admin.companyPolicyVersion.count({ where: { tenantId } }),
+    ).toBe(1);
+    expect(
+      await admin.attendanceTimingReceipt.count({ where: { tenantId } }),
+    ).toBe(1);
+    expect(await admin.outboxEvent.count({ where: { tenantId } })).toBe(1);
+    expect(initial.version).toBe(1);
+  });
+  it('keeps timing receipts private and timing mutation functions constrained', async () => {
+    await draftTiming();
+    await expect(runtime.attendanceTimingReceipt.findMany()).rejects.toThrow(
+      'permission denied',
+    );
+    const [row] = await admin.$queryRaw<
+      { safe: boolean }[]
+    >`SELECT bool_and(p.prosecdef AND r.rolname='kinto_control_owner' AND NOT has_function_privilege('kinto_worker',p.oid,'EXECUTE') AND NOT has_function_privilege('kinto_dispatcher',p.oid,'EXECUTE') AND NOT EXISTS(SELECT 1 FROM aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a WHERE a.grantee=0 AND a.privilege_type='EXECUTE')) AS safe FROM pg_proc p JOIN pg_roles r ON r.oid=p.proowner WHERE p.proname IN ('read_attendance_timing_policies','read_attendance_timing_policy','mutate_attendance_timing_policy')`;
+    expect(row.safe).toBe(true);
+  });
+  it('protects published timing history against control-role updates and cross-domain publication', async () => {
+    const p = await draftTiming();
+    await publishTiming(p);
+    await expect(
+      admin.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(
+          'SET LOCAL SESSION AUTHORIZATION kinto_control_owner',
+        );
+        await tx.$executeRaw`UPDATE public.company_policy_versions SET reason='changed history' WHERE id=${p.id}::uuid`;
+      }),
+    ).rejects.toThrow('immutable');
+    await expect(
+      publishOrganizationPolicy(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        p.id,
+        { expectedVersion: p.version, reason: 'Cross-domain attempt' },
+      ),
+    ).rejects.toThrow();
+  });
+  it('paginates bounded timing history without resolving from the displayed page', async () => {
+    const p = await draftTiming();
+    await publishTiming(p);
+    await draftTiming(5, p.version);
+    const first = await listAttendanceTimingPolicies(
+      runtime,
+      actor(identities.hr),
+      tenantId,
+      { limit: 1 },
+    );
+    expect(first.items).toHaveLength(1);
+    expect(first.nextCursor).toBe(first.items[0].id);
+    const next = await listAttendanceTimingPolicies(
+      runtime,
+      actor(identities.hr),
+      tenantId,
+      { limit: 1, afterId: first.nextCursor },
+    );
+    expect(next.nextCursor).toBeNull();
+    expect(next.items[0].id).not.toBe(first.items[0].id);
+    expect(next.currentPolicy?.id).toBe(p.id);
+  });
+  it('runs timing policy HTTP publication through real SQL and fresh server session boundaries', async () => {
+    const csrf = 'c'.repeat(43),
+      origin = 'https://timing.synthetic.example';
+    let identityId = identities.owner,
+      selectedTenantId = tenantId,
+      authTime = Math.floor(Date.now() / 1000);
+    const module = await Test.createTestingModule({
+      controllers: [OrganizationController],
+      providers: [
+        DatabaseService,
+        {
+          provide: AuthService,
+          useValue: {
+            limit: async () => {},
+            origin: () => origin,
+            session: async () => ({
+              identityId,
+              selectedTenantId,
+              authTime,
+              csrf,
+              principal: { mfaVerified: true },
+            }),
+          },
+        },
+      ],
+    }).compile();
+    const application = module.createNestApplication();
+    configureHttp(application);
+    try {
+      await application.listen(0, '127.0.0.1');
+      const base = `/api/v1/tenants/${tenantId}/organization/policies/attendance-timing`,
+        key = randomUUID();
+      const post = (path: string, requestId: string) =>
+        request(application.getHttpServer())
+          .post(base + path)
+          .set('Cookie', '__Host-kinto-session=' + 's'.repeat(43))
+          .set('Origin', origin)
+          .set('X-CSRF-Token', csrf)
+          .set('Idempotency-Key', requestId);
+      const get = (path = '') =>
+        request(application.getHttpServer())
+          .get(base + path)
+          .set('Cookie', '__Host-kinto-session=' + 's'.repeat(43));
+      const created = await post('/drafts', key)
+        .send(timingInput())
+        .expect(201);
+      expect(
+        (await post('/drafts', key).send(timingInput()).expect(201)).body,
+      ).toEqual({ ...created.body, replayed: true });
+      identityId = identities.hr;
+      expect(
+        (await get('/' + created.body.id + '/preview').expect(200)).body
+          .netScheduledMinutes,
+      ).toBe(450);
+      const publicationKey = randomUUID(),
+        body = {
+          expectedVersion: created.body.version,
+          reason: 'HTTP reviewed publication',
+        };
+      await post('/' + created.body.id + '/publication', publicationKey)
+        .send(body)
+        .expect(403);
+      identityId = identities.owner;
+      authTime = 1;
+      await post('/' + created.body.id + '/publication', publicationKey)
+        .send(body)
+        .expect(403);
+      authTime = Math.floor(Date.now() / 1000);
+      selectedTenantId = otherTenantId;
+      await get().expect(403);
+      selectedTenantId = tenantId;
+      await post('/' + created.body.id + '/publication', publicationKey)
+        .send(body)
+        .expect(201);
+      const list = await get().expect(200);
+      expect(list.headers['cache-control']).toBe('no-store');
+      expect(list.body.currentPolicy.id).toBe(created.body.id);
+      expect(list.body.attendanceProcessingAvailable).toBe(false);
+    } finally {
+      await application.close();
+    }
   });
 });

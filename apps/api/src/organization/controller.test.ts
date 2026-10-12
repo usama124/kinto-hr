@@ -31,6 +31,10 @@ const session = {
   },
 };
 const methods = {
+  listTimingPolicies: vi.fn(),
+  previewTimingPolicy: vi.fn(),
+  createTimingPolicy: vi.fn(),
+  publishTimingPolicy: vi.fn(),
   readOrganization: vi.fn(),
   createLegalEntity: vi.fn(),
   updateLegalEntity: vi.fn(),
@@ -243,4 +247,120 @@ it('previews and publishes only IDs in the selected tenant path', async () => {
     selectedTenantId: randomUUID(),
   });
   await authenticated('get', base).expect(403);
+});
+
+const timingBase = base + '/policies/attendance-timing';
+const timing = {
+  scope: 'company',
+  timeZone: 'Asia/Karachi',
+  checkIn: '22:00',
+  checkOut: '06:00',
+  checkOutNextDay: true,
+  breakMode: 'fixed_duration',
+  unpaidBreakMinutes: 30,
+  fullDayTargetMinutes: 450,
+  halfDayTargetMinutes: 225,
+  minimumFullDayMinutes: 420,
+  minimumHalfDayMinutes: 180,
+  lateGraceMinutes: 10,
+  earlyGraceMinutes: 10,
+  associationBeforeMinutes: 30,
+  associationAfterMinutes: 60,
+  weeklyRestDays: [7],
+};
+it('timing routes derive selected scope and recent MFA and require exact command keys', async () => {
+  const key = randomUUID(),
+    input = {
+      expectedCurrentVersion: 0,
+      effectiveFrom: '2026-10-10',
+      settings: timing,
+      reason: 'reviewed timing',
+    };
+  await authenticated('post', timingBase + '/drafts')
+    .set('Origin', origin)
+    .set('X-CSRF-Token', csrf)
+    .set('Idempotency-Key', key)
+    .send(input)
+    .expect(201);
+  expect(methods.createTimingPolicy).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+    key,
+    input,
+  );
+  await authenticated('post', timingBase + '/' + policyId + '/publication')
+    .set('Origin', origin)
+    .set('X-CSRF-Token', csrf)
+    .set('Idempotency-Key', key)
+    .send({ expectedVersion: 1, reason: 'publish reviewed' })
+    .expect(201);
+  expect(methods.publishTimingPolicy).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+    policyId,
+    key,
+    { expectedVersion: 1, reason: 'publish reviewed' },
+  );
+  await authenticated('get', timingBase + '?limit=1&asOf=2026-10-10').expect(
+    200,
+  );
+  expect(methods.listTimingPolicies).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+    { limit: 1, asOf: '2026-10-10' },
+  );
+  await authenticated('get', timingBase + '/' + policyId + '/preview').expect(
+    200,
+  );
+  expect(methods.previewTimingPolicy).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+    policyId,
+  );
+});
+it('timing routes reject malformed scope/inputs, missing keys, CSRF and foreign sessions', async () => {
+  await authenticated('get', timingBase + '?limit=51').expect(400);
+  await authenticated('get', timingBase + '?identityId=' + identityId).expect(
+    400,
+  );
+  await authenticated('get', timingBase + '/bad/preview').expect(400);
+  const input = {
+    expectedCurrentVersion: 0,
+    effectiveFrom: '2026-10-10',
+    settings: timing,
+    reason: 'reviewed timing',
+  };
+  await authenticated('post', timingBase + '/drafts')
+    .set('Origin', origin)
+    .set('X-CSRF-Token', csrf)
+    .send(input)
+    .expect(400);
+  await authenticated('post', timingBase + '/drafts')
+    .set('Idempotency-Key', randomUUID())
+    .set('Origin', 'https://evil.example')
+    .set('X-CSRF-Token', csrf)
+    .send(input)
+    .expect(403);
+  await authenticated('post', timingBase + '/drafts')
+    .set('Idempotency-Key', randomUUID())
+    .set('Origin', origin)
+    .send(input)
+    .expect(403);
+  expect(methods.createTimingPolicy).not.toHaveBeenCalled();
+  getSession.mockResolvedValueOnce({
+    ...session,
+    selectedTenantId: randomUUID(),
+  });
+  await authenticated('get', timingBase).expect(403);
+  getSession.mockResolvedValueOnce({ ...session, authTime: 1 });
+  await authenticated('get', timingBase).expect(200);
+  expect(methods.listTimingPolicies).toHaveBeenLastCalledWith(
+    { identityId, mfaVerified: false },
+    tenantId,
+    { limit: 25 },
+  );
+  await request(app.getHttpServer())
+    .get(timingBase)
+    .set('Authorization', 'Bearer machine-only')
+    .expect(401);
 });

@@ -102,3 +102,72 @@ export type AttendanceTimingSettings = z.infer<
 export type AttendanceTimingPolicyDraft = z.infer<
   typeof attendanceTimingPolicyDraftSchema
 >;
+
+const policyId = z.uuid().toLowerCase();
+const utc = z.iso
+  .datetime({ offset: true })
+  .transform((v) => new Date(v).toISOString());
+export const attendanceTimingPublishSchema = z.strictObject({
+  expectedVersion: z.number().int().positive().max(2147483647),
+  reason: z.string().trim().min(3).max(240),
+});
+export const attendanceTimingQuerySchema = z.strictObject({
+  limit: z.coerce.number().int().min(1).max(50).default(25),
+  afterId: policyId.optional(),
+  asOf: z.iso.date().optional(),
+});
+export const attendanceTimingPolicySchema = z
+  .strictObject({
+    id: policyId,
+    version: z.number().int().positive(),
+    basedOnVersion: z.number().int().nonnegative(),
+    status: z.enum(['draft', 'published']),
+    effectiveFrom: z.iso.date(),
+    settings: attendanceTimingSettingsSchema,
+    reason: z.string().min(3).max(240),
+    createdAt: utc,
+    publishedAt: utc.nullable(),
+  })
+  .superRefine((v, c) => {
+    if (
+      v.basedOnVersion >= v.version ||
+      (v.status === 'published') !== (v.publishedAt !== null)
+    )
+      c.addIssue({
+        code: 'custom',
+        message: 'Invalid policy version/publication state',
+      });
+  });
+export const attendanceTimingListSchema = z.strictObject({
+  tenantId: policyId,
+  asOf: z.iso.date(),
+  latestPublishedVersion: z.number().int().nonnegative(),
+  currentPolicy: attendanceTimingPolicySchema.nullable(),
+  items: attendanceTimingPolicySchema.array().max(50),
+  nextCursor: policyId.nullable(),
+  attendanceProcessingAvailable: z.literal(false),
+  payrollEffectsAvailable: z.literal(false),
+});
+export const attendanceTimingMutationSchema = z.strictObject({
+  id: policyId,
+  version: z.number().int().positive(),
+  replayed: z.boolean(),
+});
+export type AttendanceTimingQuery = z.infer<typeof attendanceTimingQuerySchema>;
+export type AttendanceTimingPublish = z.infer<
+  typeof attendanceTimingPublishSchema
+>;
+export const attendanceTimingPreviewSchema = z.strictObject({
+  tenantId: policyId,
+  policy: attendanceTimingPolicySchema,
+  dayAnchor: z.literal('scheduled_check_in_local_date'),
+  scheduledMinutes: z.number().int().min(1).max(1439),
+  netScheduledMinutes: z.number().int().min(1).max(1439),
+  associationWindow: z.strictObject({
+    fromLocalMinute: z.number().int().min(-1439).max(1439),
+    untilLocalMinute: z.number().int().min(1).max(2878),
+    endExclusive: z.literal(true),
+  }),
+  attendanceProcessingAvailable: z.literal(false),
+  payrollEffectsAvailable: z.literal(false),
+});

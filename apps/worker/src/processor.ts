@@ -43,6 +43,8 @@ const handleCommittedEvent: Handler = async (tx, event) => {
       'connector.enrollment_changed.v1',
       'attendance.allocation_changed.v1',
       'device.inventory_changed.v1',
+      'attendance_timing.create.v1',
+      'attendance_timing.publish.v1',
       'device.mapping_changed.v1',
       'attendance.synthetic_inbox_changed.v1',
       'employee.activated.v1',

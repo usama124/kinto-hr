@@ -45,6 +45,7 @@ model Tenant {
   attendanceAllocations        AttendanceAllocation[]
   attendanceDevices            AttendanceDevice[]
   deviceEmployeeMappings       DeviceEmployeeMapping[]
+  attendanceTimingReceipts AttendanceTimingReceipt[]
   deviceMappingReceipts        DeviceMappingReceipt[]
   syntheticAttendanceEvents SyntheticAttendanceEvent[]
   syntheticAttendanceTransports SyntheticAttendanceTransport[]
@@ -103,6 +104,7 @@ model Identity {
   decidedProfileChangeRequests   EmployeeProfileChangeRequest[]      @relation("ProfileChangeDecidedBy")
   createdWorkforceReportExports  WorkforceReportExport[]              @relation("WorkforceReportExportCreatedBy")
 
+  attendanceTimingReceipts AttendanceTimingReceipt[]
   deviceMappingReceipts DeviceMappingReceipt[]
 
   @@unique([issuer, subject])
@@ -208,6 +210,7 @@ model CompanyPolicyVersion {
   @@unique([tenantId, id])
   @@unique([tenantId, domain, policyVersion])
   @@index([tenantId, domain, status, effectiveFrom])
+  timingReceipts AttendanceTimingReceipt[]
   @@map("company_policy_versions")
 }
 
@@ -1121,4 +1124,18 @@ model SyntheticAttendanceBatch {
  device AttendanceDevice @relation(fields: [tenantId, deviceId], references: [tenantId, id], onDelete: Restrict)
  @@unique([tenantId, connectorId, batchId])
  @@map("synthetic_attendance_batches")
+}
+
+model AttendanceTimingReceipt {
+ tenantId String @map("tenant_id") @db.Uuid
+ actorId String @map("actor_id") @db.Uuid
+ requestId String @map("request_id") @db.Uuid
+ input Json @db.JsonB
+ policyId String @map("policy_id") @db.Uuid
+ snapshot Json @db.JsonB
+ tenant Tenant @relation(fields:[tenantId],references:[id],onDelete:Restrict)
+ actor Identity @relation(fields:[actorId],references:[id],onDelete:Restrict)
+ policy CompanyPolicyVersion @relation(fields:[tenantId,policyId],references:[tenantId,id],onDelete:Restrict)
+ @@id([tenantId,actorId,requestId])
+ @@map("attendance_timing_receipts")
 }

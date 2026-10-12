@@ -253,6 +253,14 @@ export const schemaIsolationInventory: readonly Classification[] = [
     { kinto_control_owner: controlAppend },
   ),
   privateTenantTable(
+    'attendance_timing_receipts',
+    regression(
+      'organization-policies',
+      'keeps timing receipts private and timing mutation functions constrained',
+    ),
+    { kinto_control_owner: controlAppend },
+  ),
+  privateTenantTable(
     'device_mapping_receipts',
     regression(
       'attendance-devices',
