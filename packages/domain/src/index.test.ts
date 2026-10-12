@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  leavePolicySettingsSchema,
+  leavePolicyDraftSchema,
+  leaveQuotaPreviewSchema,
   attendanceDayPreviewSchema,
   attendanceLeaveCompositionPreviewSchema,
 } from '@kinto/contracts';
 import {
+  previewLeaveQuota,
   previewAttendanceTiming,
   previewAttendanceDay,
   previewAttendanceLeaveComposition,
@@ -1587,5 +1591,501 @@ describe('standard workday qualification preview', () => {
       { ...composition(), payrollEffectsAvailable: true },
     ])
       expect(() => previewAttendanceLeaveComposition(input)).toThrow();
+  });
+});
+
+describe('company leave policy and all-bucket quota preview', () => {
+  const tenantId = '30000000-0000-4000-8000-000000000001',
+    employeeId = '30000000-0000-4000-8000-000000000002',
+    leaveTypeId = '30000000-0000-4000-8000-000000000003',
+    requestId = '30000000-0000-4000-8000-000000000004';
+  const settings = {
+    scope: 'company',
+    timeZone: 'Asia/Karachi',
+    code: 'CASUAL',
+    name: 'Casual leave',
+    pay: 'paid',
+    grantMode: 'annual_upfront',
+    annualQuotaDays: 12,
+    monthlyQuotaDays: 2,
+    leaveYearStart: { month: 1, day: 1 },
+    nonWorkingDays: 'exclude',
+  };
+  const date = (value = '2026-10-12', part = 'full_day') => ({
+    date: value,
+    part,
+    calendar: 'working_day',
+    periodState: 'open',
+  });
+  const fixture = () => ({
+    policy: {
+      id: '30000000-0000-4000-8000-000000000005',
+      tenantId,
+      leaveTypeId,
+      version: 1,
+      status: 'published',
+      effectiveFrom: '2026-01-01',
+      effectiveUntil: null as string | null,
+      settings: structuredClone(settings),
+    },
+    request: {
+      tenantId,
+      employeeId,
+      leaveTypeId,
+      requestId,
+      expectedUsageVersion: 1,
+      dates: [date()],
+    },
+    usage: {
+      tenantId,
+      employeeId,
+      leaveTypeId,
+      version: 1,
+      leaveYearStart: { month: 1, day: 1 },
+      annual: [
+        {
+          from: '2026-01-01',
+          until: '2027-01-01',
+          reservedDays: 0,
+          usedDays: 0,
+        },
+      ],
+      monthly: [{ month: '2026-10', reservedDays: 0, usedDays: 0 }],
+      occupied: [] as { requestId: string; date: string; part: string }[],
+    },
+  });
+  it('requires explicit employer quotas/year/calendar rules without statutory defaults', () => {
+    expect(
+      leavePolicyDraftSchema.parse({
+        expectedCurrentVersion: 0,
+        effectiveFrom: '2026-01-01',
+        settings,
+        reason: ' Reviewed company policy ',
+      }).reason,
+    ).toBe('Reviewed company policy');
+    for (const bad of [
+      null,
+      {},
+      { ...settings, annualQuotaDays: 2.25 },
+      { ...settings, monthlyQuotaDays: '2' },
+      { ...settings, monthlyQuotaDays: 32 },
+      { ...settings, annualQuotaDays: -1 },
+      { ...settings, annualQuotaDays: 367 },
+      { ...settings, scope: 'employee' },
+      { ...settings, employeeOverride: true },
+      { ...settings, grantMode: 'monthly_accrual' },
+      { ...settings, leaveYearStart: { month: 2, day: 29 } },
+      { ...settings, leaveYearStart: { month: 4, day: 31 } },
+    ])
+      expect(leavePolicySettingsSchema.safeParse(bad).success).toBe(false);
+    expect(
+      leavePolicySettingsSchema.safeParse({
+        ...settings,
+        annualQuotaDays: 0,
+        monthlyQuotaDays: 0,
+      }).success,
+    ).toBe(true);
+  });
+  it('returns exact annual/monthly reservation candidates without mutating counters', () => {
+    const input = fixture(),
+      original = structuredClone(input);
+    const result = previewLeaveQuota(input);
+    expect(result).toMatchObject({
+      status: 'reservation_candidate',
+      expectedUsageVersion: 1,
+      policyVersion: 1,
+      totalRequestedDays: 1,
+      pay: 'paid',
+      annual: [
+        { requestedDays: 1, availableBeforeDays: 12, availableAfterDays: 11 },
+      ],
+      monthly: [
+        {
+          month: '2026-10',
+          requestedDays: 1,
+          availableBeforeDays: 2,
+          availableAfterDays: 1,
+        },
+      ],
+      leaveReservationAvailable: false,
+      payrollEffectsAvailable: false,
+    });
+    if (result.status !== 'reservation_candidate')
+      throw new Error('Unexpected rejection');
+    result.annual[0].requestedDays = 99;
+    expect(input).toEqual(original);
+  });
+  it.each(['full_day', 'first_half'])(
+    'permits exactly two monthly days using %s requests and rejects the next half day',
+    (part) => {
+      const input = fixture();
+      input.request.dates = Array.from(
+        { length: part === 'full_day' ? 2 : 4 },
+        (_, i) => date(`2026-10-${12 + i}`, part),
+      );
+      expect(previewLeaveQuota(input)).toMatchObject({
+        totalRequestedDays: 2,
+        monthly: [{ availableAfterDays: 0 }],
+      });
+      input.request.dates.push(date('2026-10-20', 'second_half'));
+      expect(previewLeaveQuota(input)).toMatchObject({
+        status: 'quota_exceeded',
+        code: 'LEAVE_MONTHLY_QUOTA_EXCEEDED',
+        requestedDays: 2.5,
+        availableDays: 2,
+      });
+    },
+  );
+  it.each([
+    [2, 0],
+    [0, 2],
+    [1, 1],
+  ])(
+    'counts reserved=%s and used=%s exactly once against monthly availability',
+    (reservedDays, usedDays) => {
+      const input = fixture();
+      input.usage.monthly[0] = { month: '2026-10', reservedDays, usedDays };
+      input.usage.annual[0].reservedDays = reservedDays;
+      input.usage.annual[0].usedDays = usedDays;
+      expect(previewLeaveQuota(input)).toMatchObject({
+        code: 'LEAVE_MONTHLY_QUOTA_EXCEEDED',
+        availableDays: 0,
+        reservedDays,
+        usedDays,
+      });
+    },
+  );
+  it('blocks annual exhaustion even when the month has room and retains usage after policy reduction', () => {
+    const input = fixture();
+    input.usage.annual[0].usedDays = 12;
+    expect(previewLeaveQuota(input)).toMatchObject({
+      code: 'LEAVE_ANNUAL_QUOTA_EXCEEDED',
+      availableDays: 0,
+    });
+    input.policy.version = 2;
+    input.policy.settings.annualQuotaDays = 10;
+    expect(previewLeaveQuota(input)).toMatchObject({
+      policyVersion: 2,
+      usedDays: 12,
+      overLimitDays: 2,
+    });
+    const monthly = fixture();
+    monthly.usage.monthly[0].usedDays = 3;
+    expect(previewLeaveQuota(monthly)).toMatchObject({
+      code: 'LEAVE_MONTHLY_QUOTA_EXCEEDED',
+      usedDays: 3,
+      overLimitDays: 1,
+    });
+  });
+  it('splits cross-month demand atomically in the plan without rolling monthly allowance forward', () => {
+    const input = fixture();
+    input.request.dates = [date('2026-11-01'), date('2026-10-31')];
+    input.usage.monthly.push({
+      month: '2026-11',
+      reservedDays: 0,
+      usedDays: 0,
+    });
+    const result = previewLeaveQuota(input);
+    expect(result).toMatchObject({
+      totalRequestedDays: 2,
+      annual: [{ requestedDays: 2 }],
+      monthly: [
+        { month: '2026-10', requestedDays: 1 },
+        { month: '2026-11', requestedDays: 1 },
+      ],
+    });
+    input.usage.monthly[1].usedDays = 2;
+    const original = structuredClone(input);
+    const denied = previewLeaveQuota(input);
+    expect(denied).toMatchObject({
+      code: 'LEAVE_MONTHLY_QUOTA_EXCEEDED',
+      period: '2026-11',
+    });
+    expect('annual' in denied).toBe(false);
+    expect(input).toEqual(original);
+  });
+  it('splits January leave years and a reviewed July leave year using dates taken', () => {
+    const input = fixture();
+    input.request.dates = [
+      date('2026-12-31', 'first_half'),
+      date('2027-01-01', 'second_half'),
+    ];
+    input.usage.annual.push({
+      from: '2027-01-01',
+      until: '2028-01-01',
+      reservedDays: 0,
+      usedDays: 0,
+    });
+    input.usage.monthly = [
+      { month: '2026-12', reservedDays: 0, usedDays: 0 },
+      { month: '2027-01', reservedDays: 0, usedDays: 0 },
+    ];
+    expect(previewLeaveQuota(input)).toMatchObject({
+      totalRequestedDays: 1,
+      annual: [
+        { from: '2026-01-01', requestedDays: 0.5 },
+        { from: '2027-01-01', requestedDays: 0.5 },
+      ],
+    });
+    input.policy.settings.leaveYearStart = { month: 7, day: 1 };
+    input.usage.leaveYearStart = { month: 7, day: 1 };
+    input.request.dates = [date('2026-06-30'), date('2026-07-01')];
+    input.usage.annual = [
+      { from: '2025-07-01', until: '2026-07-01', reservedDays: 0, usedDays: 0 },
+      { from: '2026-07-01', until: '2027-07-01', reservedDays: 0, usedDays: 0 },
+    ];
+    input.usage.monthly = [
+      { month: '2026-06', reservedDays: 0, usedDays: 0 },
+      { month: '2026-07', reservedDays: 0, usedDays: 0 },
+    ];
+    expect(previewLeaveQuota(input)).toMatchObject({
+      annual: [{ from: '2025-07-01' }, { from: '2026-07-01' }],
+    });
+  });
+  it('splits a custom leave-year boundary inside one calendar month', () => {
+    const input = fixture();
+    input.policy.settings.leaveYearStart = { month: 10, day: 15 };
+    input.usage.leaveYearStart = { month: 10, day: 15 };
+    input.request.dates = [
+      date('2026-10-14', 'first_half'),
+      date('2026-10-15', 'first_half'),
+    ];
+    input.usage.annual = [
+      { from: '2025-10-15', until: '2026-10-15', reservedDays: 0, usedDays: 0 },
+      { from: '2026-10-15', until: '2027-10-15', reservedDays: 0, usedDays: 0 },
+    ];
+    expect(previewLeaveQuota(input)).toMatchObject({
+      annual: [{ requestedDays: 0.5 }, { requestedDays: 0.5 }],
+      monthly: [{ month: '2026-10', requestedDays: 1 }],
+    });
+  });
+  it('handles leap days without using host time or submission dates', () => {
+    const input = fixture();
+    input.policy.effectiveFrom = '2024-01-01';
+    input.request.dates = [date('2024-02-29'), date('2024-03-01')];
+    input.usage.annual = [
+      { from: '2024-01-01', until: '2025-01-01', reservedDays: 0, usedDays: 0 },
+    ];
+    input.usage.monthly = [
+      { month: '2024-02', reservedDays: 0, usedDays: 0 },
+      { month: '2024-03', reservedDays: 0, usedDays: 0 },
+    ];
+    expect(previewLeaveQuota(input)).toMatchObject({
+      totalRequestedDays: 2,
+      monthly: [{ month: '2024-02' }, { month: '2024-03' }],
+    });
+    input.request.dates = [date('2025-02-29')];
+    expect(() => previewLeaveQuota(input)).toThrow();
+  });
+  it('excludes reviewed non-working dates or explicitly charges them, never guesses unknown calendars', () => {
+    const input = fixture();
+    input.request.dates = [
+      date('2026-10-12'),
+      { ...date('2026-10-13'), calendar: 'holiday' },
+      { ...date('2026-10-14'), calendar: 'rest_day' },
+    ];
+    expect(previewLeaveQuota(input)).toMatchObject({
+      totalRequestedDays: 1,
+      excludedDates: ['2026-10-13', '2026-10-14'],
+    });
+    input.policy.settings.nonWorkingDays = 'include';
+    expect(previewLeaveQuota(input)).toMatchObject({
+      code: 'LEAVE_MONTHLY_QUOTA_EXCEEDED',
+      requestedDays: 3,
+    });
+    input.request.dates[0].calendar = 'unknown';
+    expect(previewLeaveQuota(input)).toMatchObject({
+      code: 'LEAVE_CALENDAR_UNRESOLVED',
+    });
+    input.request.dates[0].calendar = 'not_employed';
+    expect(previewLeaveQuota(input)).toMatchObject({
+      code: 'LEAVE_NOT_EMPLOYED',
+    });
+    input.policy.settings.nonWorkingDays = 'exclude';
+    input.request.dates = [{ ...date(), calendar: 'holiday' }];
+    expect(previewLeaveQuota(input)).toMatchObject({
+      code: 'LEAVE_NO_CHARGEABLE_DATES',
+    });
+  });
+  it('uses unpaid request quotas without claiming a paid balance debit', () => {
+    const input = fixture();
+    input.policy.settings.pay = 'unpaid';
+    expect(previewLeaveQuota(input)).toMatchObject({
+      status: 'reservation_candidate',
+      pay: 'unpaid',
+      leaveReservationAvailable: false,
+      payrollEffectsAvailable: false,
+    });
+  });
+  it('denies full/same-half overlaps but permits the opposite half within quota', () => {
+    const input = fixture();
+    input.usage.occupied.push({
+      requestId: input.policy.id,
+      date: '2026-10-12',
+      part: 'first_half',
+    });
+    expect(previewLeaveQuota(input)).toMatchObject({ code: 'LEAVE_OVERLAP' });
+    input.request.dates[0].part = 'first_half';
+    expect(previewLeaveQuota(input)).toMatchObject({ code: 'LEAVE_OVERLAP' });
+    input.request.dates[0].part = 'second_half';
+    expect(previewLeaveQuota(input)).toMatchObject({ totalRequestedDays: 0.5 });
+    input.usage.occupied[0].part = 'full_day';
+    expect(previewLeaveQuota(input)).toMatchObject({ code: 'LEAVE_OVERLAP' });
+  });
+  it('refuses stale snapshots, leave-year changes and missing annual/month buckets instead of zero defaults', () => {
+    const input = fixture();
+    input.usage.version = 2;
+    expect(previewLeaveQuota(input)).toMatchObject({
+      code: 'LEAVE_USAGE_STALE',
+    });
+    input.usage.version = 1;
+    input.usage.leaveYearStart.day = 2;
+    expect(previewLeaveQuota(input)).toMatchObject({
+      code: 'LEAVE_YEAR_CHANGE_REQUIRES_RECONCILIATION',
+    });
+    input.usage.leaveYearStart.day = 1;
+    input.usage.annual = [];
+    expect(previewLeaveQuota(input)).toMatchObject({
+      code: 'LEAVE_USAGE_UNRESOLVED',
+    });
+    input.usage.annual = fixture().usage.annual;
+    input.usage.monthly = [];
+    expect(previewLeaveQuota(input)).toMatchObject({
+      code: 'LEAVE_USAGE_UNRESOLVED',
+    });
+  });
+  it('requires policy-span splitting and reviewed correction for locked leave dates', () => {
+    const input = fixture();
+    input.policy.effectiveUntil = '2026-10-12';
+    expect(previewLeaveQuota(input)).toMatchObject({
+      code: 'LEAVE_POLICY_CHANGE_REQUIRES_SPLIT',
+    });
+    input.policy.effectiveUntil = null;
+    input.request.dates[0].date = '2025-12-31';
+    expect(previewLeaveQuota(input)).toMatchObject({
+      code: 'LEAVE_POLICY_CHANGE_REQUIRES_SPLIT',
+    });
+    input.request.dates[0] = { ...date(), periodState: 'locked' };
+    expect(previewLeaveQuota(input)).toMatchObject({
+      code: 'LEAVE_PERIOD_LOCKED',
+    });
+  });
+  it('rejects duplicate dates, excessive spans and corrupted counter periods', () => {
+    const input = fixture();
+    input.request.dates.push(date());
+    expect(previewLeaveQuota(input)).toMatchObject({
+      code: 'LEAVE_INVALID_REQUEST',
+    });
+    input.request.dates = [date('2026-10-12'), date('2027-10-13')];
+    expect(previewLeaveQuota(input)).toMatchObject({
+      code: 'LEAVE_INVALID_REQUEST',
+    });
+    input.request.dates = [date()];
+    input.usage.annual.push({ ...input.usage.annual[0] });
+    expect(previewLeaveQuota(input)).toMatchObject({
+      code: 'LEAVE_USAGE_UNRESOLVED',
+    });
+    input.usage.annual = fixture().usage.annual;
+    input.usage.monthly.push({ ...input.usage.monthly[0] });
+    expect(previewLeaveQuota(input)).toMatchObject({
+      code: 'LEAVE_USAGE_UNRESOLVED',
+    });
+    input.usage.monthly = fixture().usage.monthly;
+    input.usage.annual[0].until = '2027-01-02';
+    expect(previewLeaveQuota(input)).toMatchObject({
+      code: 'LEAVE_USAGE_UNRESOLVED',
+    });
+    input.usage.annual = fixture().usage.annual;
+    input.usage.monthly[0].reservedDays = 31;
+    input.usage.monthly[0].usedDays = 31;
+    expect(previewLeaveQuota(input)).toMatchObject({
+      code: 'LEAVE_USAGE_UNRESOLVED',
+    });
+    input.usage.monthly = fixture().usage.monthly;
+    input.usage.annual[0].usedDays = 366;
+    input.usage.annual[0].reservedDays = 1;
+    expect(previewLeaveQuota(input)).toMatchObject({
+      code: 'LEAVE_USAGE_UNRESOLVED',
+    });
+  });
+  it('keeps companies, employees and leave types independent and rejects forged bypass fields', () => {
+    for (const altered of ['tenantId', 'employeeId', 'leaveTypeId'] as const) {
+      const input = fixture();
+      input.usage[altered] = requestId;
+      expect(() => previewLeaveQuota(input)).toThrow('LEAVE_SCOPE_MISMATCH');
+    }
+    const input = fixture();
+    input.policy.leaveTypeId = requestId;
+    expect(() => previewLeaveQuota(input)).toThrow('LEAVE_SCOPE_MISMATCH');
+    for (const bad of [
+      { ...fixture(), bypassQuota: true },
+      { ...fixture(), request: { ...fixture().request, role: 'hr_admin' } },
+      {
+        ...fixture(),
+        request: { ...fixture().request, replaceRequestId: requestId },
+      },
+      { ...fixture(), policy: { ...fixture().policy, status: 'draft' } },
+      {
+        ...fixture(),
+        usage: {
+          ...fixture().usage,
+          monthly: [{ month: '2026-13', reservedDays: 0, usedDays: 0 }],
+        },
+      },
+    ])
+      expect(() => previewLeaveQuota(bad)).toThrow();
+    const second = fixture();
+    second.policy.leaveTypeId = employeeId;
+    second.request.leaveTypeId = employeeId;
+    second.usage.leaveTypeId = employeeId;
+    second.policy.settings.code = 'SICK';
+    second.policy.settings.monthlyQuotaDays = 1;
+    expect(previewLeaveQuota(second)).toMatchObject({
+      leaveTypeId: employeeId,
+      monthly: [{ quotaDays: 1 }],
+    });
+    expect(previewLeaveQuota(fixture())).toMatchObject({
+      leaveTypeId,
+      monthly: [{ quotaDays: 2 }],
+    });
+  });
+  it('is deterministic under input reordering and rejects contradictory reservation responses', () => {
+    const input = fixture();
+    input.request.dates = [
+      date('2026-10-13', 'first_half'),
+      date('2026-10-12', 'second_half'),
+    ];
+    const original = previewLeaveQuota(input);
+    input.request.dates.reverse();
+    expect(previewLeaveQuota(input)).toEqual(original);
+    if (original.status !== 'reservation_candidate')
+      throw new Error('Unexpected review');
+    for (const bad of [
+      { ...original, totalRequestedDays: 2 },
+      { ...original, annual: [{ ...original.annual[0], requestedDays: 0 }] },
+      {
+        ...original,
+        monthly: [{ ...original.monthly[0], availableAfterDays: 0 }],
+      },
+      {
+        ...original,
+        annual: [{ ...original.annual[0], availableBeforeDays: 99 }],
+      },
+      {
+        ...original,
+        chargeableDates: [
+          original.chargeableDates[0],
+          original.chargeableDates[0],
+        ],
+      },
+      {
+        ...original,
+        chargeableDates: [
+          { ...original.chargeableDates[0], part: 'full_day' },
+          original.chargeableDates[1],
+        ],
+      },
+    ])
+      expect(leaveQuotaPreviewSchema.safeParse(bad).success).toBe(false);
   });
 });
