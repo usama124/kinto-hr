@@ -62,6 +62,8 @@ Open [the local workspace](http://127.0.0.1:3000). The API listens on `127.0.0.1
 
 `pnpm db:generate` and `pnpm db:migrate` automatically load the root `.env`, including when invoked through the database workspace. Exported environment variables take precedence. Keep `MIGRATION_DATABASE_URL` set to the administrative migration connection and `DATABASE_URL` set to the restricted application connection; do not substitute the application role for migrations.
 
+Development API/web commands also load the root `.env` automatically; the worker already supports it. Shell sourcing is not required for `pnpm dev`. If you previously exported settings and then edited `.env`, restart from a fresh terminal so stale exports do not override the file. Production start/build commands still require explicitly configured environment variables.
+
 The example passwords are **local development fixtures only**. Never deploy them. Do not overwrite an existing `.env`. The bootstrap script refuses non-local/non-`kinto_*` targets and is not a production provisioning tool. Migration credentials must never be used by the running API; startup rejects unsafe roles. The database initially has no employee records; tests create and remove their own synthetic tenants.
 
 To stop the local database without deleting data:

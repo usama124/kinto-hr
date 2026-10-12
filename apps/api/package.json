@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "tsx watch src/main.ts",
+    "dev": "node ../../scripts/dev-cli.mjs api watch src/main.ts",
     "build": "tsup",
     "start": "node dist/main.cjs"
   },
