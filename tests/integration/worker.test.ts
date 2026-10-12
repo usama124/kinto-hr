@@ -330,6 +330,34 @@ describe('durable outbox worker with real PostgreSQL and Redis', () => {
     ).toBe(0);
   });
 
+  it('observes timing policy facts once without calculating attendance or editing policies', async () => {
+    for (const type of [
+      'attendance_timing.create.v1',
+      'attendance_timing.publish.v1',
+    ]) {
+      const event = await admin.outboxEvent.create({
+        data: {
+          id: randomUUID(),
+          tenantId: tenantA,
+          type,
+          aggregateId: randomUUID(),
+          aggregateVersion: 1,
+        },
+      });
+      const ref = { eventId: event.id, tenantId: event.tenantId };
+      await processEvent(worker, ref);
+      await processEvent(worker, ref);
+      expect(
+        await admin.consumerReceipt.count({ where: { eventId: event.id } }),
+      ).toBe(1);
+    }
+    await expect(worker.companyPolicyVersion.findMany()).rejects.toThrow(
+      'permission denied',
+    );
+    await expect(worker.attendanceTimingReceipt.findMany()).rejects.toThrow(
+      'permission denied',
+    );
+  });
   it('observes checklist and import facts without performing workflow mutations', async () => {
     for (const type of [
       'employee.account_reactivated.v1',

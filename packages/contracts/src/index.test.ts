@@ -1,4 +1,11 @@
 import {
+  attendanceTimingPolicySchema,
+  attendanceTimingListSchema,
+  attendanceTimingPreviewSchema,
+  attendanceTimingMutationSchema,
+  attendanceTimingPublishSchema,
+} from './attendance-timing';
+import {
   attendanceTimingSettingsSchema,
   attendanceTimingPolicyDraftSchema,
 } from './attendance-timing';
@@ -1983,4 +1990,69 @@ describe('company attendance timing contracts', () => {
       }).effectiveFrom,
     ).toBe('2020-01-01');
   });
+});
+
+it('validates timing policy snapshots, publication state, previews and keyed receipts', () => {
+  const id = '00000000-0000-4000-8000-000000000001';
+  const policy = {
+    id,
+    version: 1,
+    basedOnVersion: 0,
+    status: 'draft',
+    effectiveFrom: '2026-10-10',
+    settings: timingSettings,
+    reason: 'reviewed policy',
+    createdAt: '2026-10-10T09:00:00+05:00',
+    publishedAt: null,
+  };
+  expect(attendanceTimingPolicySchema.parse(policy).createdAt).toBe(
+    '2026-10-10T04:00:00.000Z',
+  );
+  for (const change of [
+    { basedOnVersion: 1 },
+    { status: 'published' },
+    { publishedAt: '2026-10-10T00:00:00Z' },
+  ])
+    expect(
+      attendanceTimingPolicySchema.safeParse({ ...policy, ...change }).success,
+    ).toBe(false);
+  expect(
+    attendanceTimingListSchema.parse({
+      tenantId: id,
+      asOf: '2026-10-10',
+      latestPublishedVersion: 0,
+      currentPolicy: null,
+      items: [policy],
+      nextCursor: null,
+      attendanceProcessingAvailable: false,
+      payrollEffectsAvailable: false,
+    }).items,
+  ).toHaveLength(1);
+  expect(
+    attendanceTimingPreviewSchema.parse({
+      tenantId: id,
+      policy,
+      dayAnchor: 'scheduled_check_in_local_date',
+      scheduledMinutes: 540,
+      netScheduledMinutes: 480,
+      associationWindow: {
+        fromLocalMinute: 510,
+        untilLocalMinute: 1110,
+        endExclusive: true,
+      },
+      attendanceProcessingAvailable: false,
+      payrollEffectsAvailable: false,
+    }).netScheduledMinutes,
+  ).toBe(480);
+  expect(
+    attendanceTimingMutationSchema.parse({ id, version: 1, replayed: true })
+      .replayed,
+  ).toBe(true);
+  expect(
+    attendanceTimingPublishSchema.safeParse({
+      expectedVersion: 1,
+      reason: 'approved',
+      settings: timingSettings,
+    }).success,
+  ).toBe(false);
 });

@@ -22,6 +22,9 @@ import {
   rehireTenantEmployee,
   assertSafeRuntimeRole,
   providerLogoutHealth,
+  createAttendanceTimingPolicyDraft,
+  publishAttendanceTimingPolicy,
+  listAttendanceTimingPolicies,
   createOrganizationPolicyDraft,
   createTenantBranch,
   createTenantLegalEntity,
@@ -85,6 +88,7 @@ async function snapshot(db: PrismaClient) {
       'administrator_invitations',
       'attendance_allocations',
       'attendance_devices',
+      'attendance_timing_receipts',
       'audit_events',
       'auth_provider_logout_events',
       'branches',
@@ -268,6 +272,9 @@ async function snapshot(db: PrismaClient) {
     branches: await db.branch.findMany({ orderBy: { id: 'asc' } }),
     departments: await db.department.findMany({ orderBy: { id: 'asc' } }),
     designations: await db.designation.findMany({ orderBy: { id: 'asc' } }),
+    attendanceTimingReceipts: await db.attendanceTimingReceipt.findMany({
+      orderBy: [{ tenantId: 'asc' }, { actorId: 'asc' }, { requestId: 'asc' }],
+    }),
     companyPolicyVersions: await db.companyPolicyVersion.findMany({
       orderBy: { id: 'asc' },
     }),
@@ -401,6 +408,15 @@ async function main() {
       identityId: string;
       membershipId: string;
       employeeId: string;
+    }[] = [];
+    const timingRefs: {
+      tenantId: string;
+      identityId: string;
+      createKey: string;
+      publishKey: string;
+      input: unknown;
+      id: string;
+      version: number;
     }[] = [];
     const membershipOwners: string[] = [];
     for (const tenantId of tenants) {
@@ -668,6 +684,58 @@ async function main() {
           reason: 'Recovery fixture policy publication',
         },
       );
+      const timingInput = {
+        expectedCurrentVersion: 0,
+        effectiveFrom,
+        settings: {
+          scope: 'company',
+          timeZone: 'Asia/Karachi',
+          checkIn: '22:00',
+          checkOut: '06:00',
+          checkOutNextDay: true,
+          breakMode: 'fixed_duration',
+          unpaidBreakMinutes: 30,
+          fullDayTargetMinutes: 450,
+          halfDayTargetMinutes: 225,
+          minimumFullDayMinutes: 420,
+          minimumHalfDayMinutes: 180,
+          lateGraceMinutes: 10,
+          earlyGraceMinutes: 10,
+          associationBeforeMinutes: 30,
+          associationAfterMinutes: 60,
+          weeklyRestDays: [7],
+        },
+        reason: 'Recovery timing fixture',
+      };
+      const createKey = randomUUID(),
+        publishKey = randomUUID();
+      const timingDraft = await createAttendanceTimingPolicyDraft(
+        sourceApp,
+        principal,
+        tenantId,
+        createKey,
+        timingInput,
+      );
+      await publishAttendanceTimingPolicy(
+        sourceApp,
+        principal,
+        tenantId,
+        timingDraft.id,
+        publishKey,
+        {
+          expectedVersion: timingDraft.version,
+          reason: 'Recovery timing publication',
+        },
+      );
+      timingRefs.push({
+        tenantId,
+        identityId: principal.identityId,
+        createKey,
+        publishKey,
+        input: timingInput,
+        id: timingDraft.id,
+        version: timingDraft.version,
+      });
       const completeEmployee = await createTenantEmployee(
         sourceApp,
         principal,
@@ -1280,6 +1348,45 @@ async function main() {
     const restoreMs = Math.round(performance.now() - restoreStarted);
     stage = 'restored snapshot equality';
     assert.deepEqual(await snapshot(restored), expected);
+    stage = 'restored timing policies and keyed retries';
+    for (const ref of timingRefs) {
+      const actor = { identityId: ref.identityId, mfaVerified: true };
+      const state = await listAttendanceTimingPolicies(
+        restoredApp,
+        actor,
+        ref.tenantId,
+      );
+      assert.equal(state.currentPolicy?.id, ref.id);
+      assert.deepEqual(
+        await createAttendanceTimingPolicyDraft(
+          restoredApp,
+          actor,
+          ref.tenantId,
+          ref.createKey,
+          ref.input,
+        ),
+        { id: ref.id, version: ref.version, replayed: true },
+      );
+      assert.deepEqual(
+        await publishAttendanceTimingPolicy(
+          restoredApp,
+          actor,
+          ref.tenantId,
+          ref.id,
+          ref.publishKey,
+          {
+            expectedVersion: ref.version,
+            reason: 'Recovery timing publication',
+          },
+        ),
+        { id: ref.id, version: ref.version, replayed: true },
+      );
+    }
+    await assert.rejects(
+      restoredApp.attendanceTimingReceipt.findMany(),
+      /permission denied/,
+    );
+    assert.deepEqual(await snapshot(restored), expected);
     stage = 'restored private logout monitoring';
     const logoutHealth = await providerLogoutHealth(
       restoredApp,
@@ -1436,7 +1543,7 @@ async function main() {
     const policies = await restored.$queryRaw<
       { enabled: boolean; forced: boolean }[]
     >`SELECT relrowsecurity AS enabled, relforcerowsecurity AS forced FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND relkind='r' AND relname <> '_prisma_migrations'`;
-    assert.equal(policies.length, 52);
+    assert.equal(policies.length, 53);
     assert.ok(policies.every((row) => row.enabled && row.forced));
     assert.deepEqual(await restoredApp.employee.findMany(), []);
     stage = 'restored tenant lifecycle visibility';

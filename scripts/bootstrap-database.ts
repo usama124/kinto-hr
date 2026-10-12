@@ -113,6 +113,8 @@ try {
     'CREATE POLICY platform_control ON attendance_allocations FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON device_employee_mappings',
     'CREATE POLICY platform_control ON device_employee_mappings FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
+    'DROP POLICY IF EXISTS platform_control ON attendance_timing_receipts',
+    'CREATE POLICY platform_control ON attendance_timing_receipts FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON device_mapping_receipts',
     'CREATE POLICY platform_control ON device_mapping_receipts FOR ALL TO kinto_control_owner USING (true) WITH CHECK (true)',
     'DROP POLICY IF EXISTS platform_control ON synthetic_attendance_events',
@@ -320,6 +322,9 @@ try {
     'GRANT SELECT, INSERT ON synthetic_attendance_events, synthetic_attendance_transports, synthetic_attendance_batches TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
+    'GRANT SELECT, INSERT ON attendance_timing_receipts TO kinto_control_owner',
+  );
+  await database.$executeRawUnsafe(
     'GRANT SELECT, INSERT ON device_mapping_receipts, device_employee_mappings TO kinto_control_owner',
   );
   await database.$executeRawUnsafe(
@@ -364,6 +369,9 @@ try {
     'public.mutate_tenant_device_mapping(uuid,boolean,uuid,uuid,uuid,uuid,integer,uuid,varchar,timestamptz,timestamptz,varchar,uuid,uuid)',
     'public.read_tenant_device_inventory(uuid,boolean,uuid,integer,uuid)',
     'public.mutate_tenant_device_inventory(uuid,boolean,uuid,uuid,integer,uuid,varchar,varchar,varchar,varchar,varchar,varchar,varchar,uuid,uuid)',
+    'public.read_attendance_timing_policies(uuid,boolean,uuid,integer,uuid,date)',
+    'public.read_attendance_timing_policy(uuid,boolean,uuid,uuid)',
+    'public.mutate_attendance_timing_policy(uuid,boolean,uuid,uuid,varchar,uuid,integer,date,jsonb,varchar,uuid,uuid)',
     'public.read_tenant_organization(uuid, boolean, uuid)',
     'public.create_tenant_legal_entity(uuid, boolean, uuid, uuid, varchar, varchar, varchar, varchar, varchar, uuid, uuid)',
     'public.update_tenant_legal_entity(uuid, boolean, uuid, uuid, integer, varchar, varchar, varchar, varchar, varchar, uuid, uuid)',
@@ -426,6 +434,9 @@ try {
   for (const signature of [
     'public.resolve_login_identity_pre_administrator(varchar, varchar, boolean, uuid, uuid, uuid, uuid, uuid)',
     'public.enforce_one_pending_identity_invitation()',
+    'public.valid_attendance_timing_settings(jsonb)',
+    'public.guard_attendance_timing_policy()',
+    'public.attendance_timing_policy_json(public.company_policy_versions)',
     'public.tenant_organization_authorized(uuid, boolean, uuid, boolean)',
     'public.resolve_tenant_entitlements_at(uuid, timestamptz, varchar, integer, integer)',
     'public.ensure_tenant_entitlement_state()',

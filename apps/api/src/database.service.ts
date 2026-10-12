@@ -4,6 +4,11 @@ import {
   type OnModuleInit,
 } from '@nestjs/common';
 import {
+  type OrganizationActor,
+  listAttendanceTimingPolicies,
+  previewAttendanceTimingPolicy,
+  createAttendanceTimingPolicyDraft,
+  publishAttendanceTimingPolicy,
   readTenantDeviceMappings,
   resolveTenantDeviceMapping,
   createTenantDeviceMapping,
@@ -509,6 +514,42 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       tenantId,
       catalog,
       resourceId,
+      input,
+    );
+  }
+  listTimingPolicies(actor: OrganizationActor, tenant: string, query: unknown) {
+    return listAttendanceTimingPolicies(this.db, actor, tenant, query);
+  }
+  previewTimingPolicy(actor: OrganizationActor, tenant: string, id: string) {
+    return previewAttendanceTimingPolicy(this.db, actor, tenant, id);
+  }
+  createTimingPolicy(
+    actor: OrganizationActor,
+    tenant: string,
+    key: string,
+    input: unknown,
+  ) {
+    return createAttendanceTimingPolicyDraft(
+      this.db,
+      actor,
+      tenant,
+      key,
+      input,
+    );
+  }
+  publishTimingPolicy(
+    actor: OrganizationActor,
+    tenant: string,
+    id: string,
+    key: string,
+    input: unknown,
+  ) {
+    return publishAttendanceTimingPolicy(
+      this.db,
+      actor,
+      tenant,
+      id,
+      key,
       input,
     );
   }

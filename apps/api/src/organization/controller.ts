@@ -1,4 +1,6 @@
 import {
+  Headers,
+  Query,
   BadRequestException,
   Body,
   Controller,
@@ -11,6 +13,9 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import {
+  attendanceTimingQuerySchema,
+  attendanceTimingPolicyDraftSchema,
+  attendanceTimingPublishSchema,
   branchCreateSchema,
   branchUpdateSchema,
   legalEntityCreateSchema,
@@ -184,6 +189,64 @@ export class OrganizationController {
     );
   }
 
+  @Get('policies/attendance-timing') async listTiming(
+    @Req() req: AuthRequest,
+    @Param('tenantId') tenant: unknown,
+    @Query() query: unknown,
+  ) {
+    const value = attendanceTimingQuerySchema.safeParse(query);
+    if (!value.success) throw new BadRequestException();
+    const c = await this.context(req, tenant);
+    return this.database.listTimingPolicies(c.actor, c.tenantId, value.data);
+  }
+  @Get('policies/attendance-timing/:policyId/preview') async previewTiming(
+    @Req() req: AuthRequest,
+    @Param('tenantId') tenant: unknown,
+    @Param('policyId') id: unknown,
+  ) {
+    const value = tenantIdSchema.safeParse(id);
+    if (!value.success) throw new BadRequestException();
+    const c = await this.context(req, tenant);
+    return this.database.previewTimingPolicy(c.actor, c.tenantId, value.data);
+  }
+  @Post('policies/attendance-timing/drafts') async createTiming(
+    @Req() req: AuthRequest,
+    @Param('tenantId') tenant: unknown,
+    @Headers('idempotency-key') key: unknown,
+    @Body() body: unknown,
+  ) {
+    const value = attendanceTimingPolicyDraftSchema.safeParse(body),
+      request = tenantIdSchema.safeParse(key);
+    if (!value.success || !request.success) throw new BadRequestException();
+    const c = await this.context(req, tenant, true);
+    return this.database.createTimingPolicy(
+      c.actor,
+      c.tenantId,
+      request.data,
+      value.data,
+    );
+  }
+  @Post('policies/attendance-timing/:policyId/publication') async publishTiming(
+    @Req() req: AuthRequest,
+    @Param('tenantId') tenant: unknown,
+    @Param('policyId') id: unknown,
+    @Headers('idempotency-key') key: unknown,
+    @Body() body: unknown,
+  ) {
+    const value = attendanceTimingPublishSchema.safeParse(body),
+      request = tenantIdSchema.safeParse(key),
+      policy = tenantIdSchema.safeParse(id);
+    if (!value.success || !request.success || !policy.success)
+      throw new BadRequestException();
+    const c = await this.context(req, tenant, true);
+    return this.database.publishTimingPolicy(
+      c.actor,
+      c.tenantId,
+      policy.data,
+      request.data,
+      value.data,
+    );
+  }
   @Post('policies/organization-defaults/drafts')
   async createPolicyDraft(
     @Req() req: AuthRequest,
