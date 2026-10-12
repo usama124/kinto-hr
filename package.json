@@ -36,7 +36,12 @@
     "verify:full": "pnpm verify && pnpm test:integration && pnpm test:schema-isolation && pnpm test:migrations && pnpm test:recovery && pnpm build && pnpm test:worker:runtime && pnpm test:e2e && pnpm test:keycloak",
     "auth:logout:check": "tsx scripts/check-provider-logout.ts",
     "foundation:readiness": "node --import tsx scripts/check-foundation-readiness.ts",
-    "foundation:readiness:verify": "node --import tsx scripts/check-foundation-readiness.ts --verify-manifest"
+    "foundation:readiness:verify": "node --import tsx scripts/check-foundation-readiness.ts --verify-manifest",
+    "local:auth:setup": "tsx scripts/setup-local-auth.ts",
+    "local:auth:up": "docker compose --env-file .local/auth/services.env -f infra/local-auth.compose.yaml -p kinto-local-auth up -d",
+    "local:auth:stop": "docker compose --env-file .local/auth/services.env -f infra/local-auth.compose.yaml -p kinto-local-auth stop",
+    "local:dev": "tsx scripts/local-dev.ts",
+    "local:stop": "tsx scripts/stop-local-dev.ts"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

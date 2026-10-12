@@ -14,6 +14,8 @@ MFA is unverified by default: `OIDC_MFA_PROFILE=none` always sets `mfaVerified=f
 
 ## Configuration and provider gate
 
+For an explicitly authorized persistent local environment, use the [local login setup](local-login.md). It retains the reviewed LoA flow and guarded operator bootstrap, stores secrets outside Git, captures mail locally and rejects production targets. It is separate from disposable provider tests and is not production acceptance.
+
 Keep authentication and account provisioning disabled until a synthetic identity provider and account fixture are explicitly prepared. This repository does not deploy production Keycloak. Test fixtures create and remove synthetic identities; do not treat those helpers as customer onboarding.
 
 After an approved provider account exists, the first and only first platform operator can be bound explicitly with migration credentials. Set `PLATFORM_BOOTSTRAP_ISSUER` and `PLATFORM_BOOTSTRAP_SUBJECT` to the exact verified provider identifiers, set `PLATFORM_BOOTSTRAP_CONFIRM=bootstrap-first-platform-operator`, and run `pnpm db:bootstrap:operator`. The command records an audit event, is idempotent only for the same active identity and refuses to replace an existing operator. It never creates a provider password. Do not place these values in committed files or use the operation to manage later operators; a separately authorized membership workflow is still required.

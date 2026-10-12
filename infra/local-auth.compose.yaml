@@ -1,0 +1,38 @@
+# Persistent Linux-only local development services. No production deployment.
+# Host networking lets Keycloak deliver mail and logout callbacks to loopback.
+services:
+  mailpit:
+    image: axllent/mailpit:v1.31.5@sha256:94f6b70c1436defae6799d9ac7ff0eeff9540465b842026d5cdb018f1c0234ea
+    network_mode: host
+    environment:
+      MP_UI_BIND_ADDR: 127.0.0.1:8025
+      MP_SMTP_BIND_ADDR: 127.0.0.1:1025
+      MP_DATABASE: /data/mailpit.db
+      MP_MAX_MESSAGES: '100'
+    volumes:
+      - kinto_mail:/data
+    restart: unless-stopped
+    mem_limit: 256m
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7.2@sha256:9d1f1b2b7261ff53c66cb1092dfcdc34a5fb77e81f9e6a6e75b8b6a795de8067
+    network_mode: host
+    user: '${LOCAL_AUTH_UID:?Run local:auth:setup}:0'
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: kinto-local-admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${LOCAL_KEYCLOAK_ADMIN_PASSWORD:?Run local:auth:setup}
+    command:
+      - start-dev
+      - --http-host=127.0.0.1
+      - --http-port=8080
+      - --hostname=http://localhost:8080
+      - --import-realm
+    volumes:
+      - ../.local/auth/import:/opt/keycloak/data/import:ro
+      - ../.local/auth/keycloak-data:/opt/keycloak/data
+    depends_on:
+      - mailpit
+    restart: unless-stopped
+    mem_limit: 1g
+    cpus: 2
+volumes:
+  kinto_mail:
