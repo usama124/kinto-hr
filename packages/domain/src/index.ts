@@ -144,3 +144,5 @@ export function assertDraftActivation(
 }
 
 export * from './attendance-timing';
+
+export * from './attendance-normalization';
