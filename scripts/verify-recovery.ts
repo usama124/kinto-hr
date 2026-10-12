@@ -22,6 +22,9 @@ import {
   rehireTenantEmployee,
   assertSafeRuntimeRole,
   providerLogoutHealth,
+  createCompanyLeaveType,
+  publishCompanyLeavePolicy,
+  listCompanyLeavePolicies,
   createAttendanceTimingPolicyDraft,
   publishAttendanceTimingPolicy,
   listAttendanceTimingPolicies,
@@ -122,6 +125,9 @@ async function snapshot(db: PrismaClient) {
       'entitlement_revocation_receipts',
       'identities',
       'job_deliveries',
+      'leave_policy_receipts',
+      'leave_policy_versions',
+      'leave_types',
       'legal_entities',
       'memberships',
       'outbox_events',
@@ -272,6 +278,13 @@ async function snapshot(db: PrismaClient) {
     branches: await db.branch.findMany({ orderBy: { id: 'asc' } }),
     departments: await db.department.findMany({ orderBy: { id: 'asc' } }),
     designations: await db.designation.findMany({ orderBy: { id: 'asc' } }),
+    leaveTypes: await db.leaveType.findMany({ orderBy: { id: 'asc' } }),
+    leavePolicies: await db.leavePolicyVersion.findMany({
+      orderBy: { id: 'asc' },
+    }),
+    leaveReceipts: await db.leavePolicyReceipt.findMany({
+      orderBy: [{ tenantId: 'asc' }, { actorId: 'asc' }, { requestId: 'asc' }],
+    }),
     attendanceTimingReceipts: await db.attendanceTimingReceipt.findMany({
       orderBy: [{ tenantId: 'asc' }, { actorId: 'asc' }, { requestId: 'asc' }],
     }),
@@ -408,6 +421,16 @@ async function main() {
       identityId: string;
       membershipId: string;
       employeeId: string;
+    }[] = [];
+    const leaveRefs: {
+      tenantId: string;
+      identityId: string;
+      createKey: string;
+      publishKey: string;
+      input: unknown;
+      id: string;
+      leaveTypeId: string;
+      version: number;
     }[] = [];
     const timingRefs: {
       tenantId: string;
@@ -684,6 +707,54 @@ async function main() {
           reason: 'Recovery fixture policy publication',
         },
       );
+      const leaveInput = {
+        expectedCurrentVersion: 0,
+        effectiveFrom,
+        settings: {
+          scope: 'company',
+          timeZone: 'Asia/Karachi',
+          code: 'CASUAL',
+          name: 'Synthetic recovery casual leave',
+          pay: 'paid',
+          grantMode: 'annual_upfront',
+          annualQuotaDays: 12,
+          monthlyQuotaDays: 2,
+          leaveYearStart: { month: 1, day: 1 },
+          nonWorkingDays: 'exclude',
+        },
+        reason: 'Recovery leave type and policy fixture',
+      };
+      const leaveKey = randomUUID(),
+        leavePublishKey = randomUUID();
+      const leaveDraft = await createCompanyLeaveType(
+        sourceApp,
+        principal,
+        tenantId,
+        leaveKey,
+        leaveInput,
+      );
+      await publishCompanyLeavePolicy(
+        sourceApp,
+        principal,
+        tenantId,
+        leaveDraft.leaveTypeId,
+        leaveDraft.id,
+        leavePublishKey,
+        {
+          expectedVersion: leaveDraft.version,
+          reason: 'Recovery leave publication',
+        },
+      );
+      leaveRefs.push({
+        tenantId,
+        identityId: principal.identityId,
+        createKey: leaveKey,
+        publishKey: leavePublishKey,
+        input: leaveInput,
+        id: leaveDraft.id,
+        leaveTypeId: leaveDraft.leaveTypeId,
+        version: leaveDraft.version,
+      });
       const timingInput = {
         expectedCurrentVersion: 0,
         effectiveFrom,
@@ -1348,6 +1419,58 @@ async function main() {
     const restoreMs = Math.round(performance.now() - restoreStarted);
     stage = 'restored snapshot equality';
     assert.deepEqual(await snapshot(restored), expected);
+    stage = 'restored leave policies and exact receipts';
+    for (const ref of leaveRefs) {
+      const actor = { identityId: ref.identityId, mfaVerified: true };
+      const state = await listCompanyLeavePolicies(
+        restoredApp,
+        actor,
+        ref.tenantId,
+        ref.leaveTypeId,
+      );
+      assert.equal(state.currentPolicy?.id, ref.id);
+      assert.equal(state.currentPolicy?.settings.monthlyQuotaDays, 2);
+      const expectedReceipt = {
+        id: ref.id,
+        leaveTypeId: ref.leaveTypeId,
+        version: ref.version,
+        replayed: true,
+      };
+      assert.deepEqual(
+        await createCompanyLeaveType(
+          restoredApp,
+          actor,
+          ref.tenantId,
+          ref.createKey,
+          ref.input,
+        ),
+        expectedReceipt,
+      );
+      assert.deepEqual(
+        await publishCompanyLeavePolicy(
+          restoredApp,
+          actor,
+          ref.tenantId,
+          ref.leaveTypeId,
+          ref.id,
+          ref.publishKey,
+          {
+            expectedVersion: ref.version,
+            reason: 'Recovery leave publication',
+          },
+        ),
+        expectedReceipt,
+      );
+    }
+    await assert.rejects(
+      restoredApp.leavePolicyReceipt.findMany(),
+      /permission denied/,
+    );
+    await assert.rejects(
+      restoredApp.leavePolicyVersion.findMany(),
+      /permission denied/,
+    );
+    assert.deepEqual(await snapshot(restored), expected);
     stage = 'restored timing policies and keyed retries';
     for (const ref of timingRefs) {
       const actor = { identityId: ref.identityId, mfaVerified: true };
@@ -1543,7 +1666,7 @@ async function main() {
     const policies = await restored.$queryRaw<
       { enabled: boolean; forced: boolean }[]
     >`SELECT relrowsecurity AS enabled, relforcerowsecurity AS forced FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND relkind='r' AND relname <> '_prisma_migrations'`;
-    assert.equal(policies.length, 53);
+    assert.equal(policies.length, 56);
     assert.ok(policies.every((row) => row.enabled && row.forced));
     assert.deepEqual(await restoredApp.employee.findMany(), []);
     stage = 'restored tenant lifecycle visibility';
@@ -1893,6 +2016,7 @@ async function main() {
       pendingEmployeeAccountRequestPreserved: true,
       activeEmployeeIdentityLinkPreserved: true,
       membershipAdministrationAuditPreserved: true,
+      leavePolicyHistoryAndRetryPreserved: true,
       organizationPolicyHistoryPreserved: true,
       organizationCatalogsPreserved: true,
       connectorCredentialRevocationSurvivesDatabaseRestore: true,

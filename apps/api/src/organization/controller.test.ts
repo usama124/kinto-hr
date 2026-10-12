@@ -31,6 +31,11 @@ const session = {
   },
 };
 const methods = {
+  listLeaveTypes: vi.fn(),
+  listLeavePolicies: vi.fn(),
+  createLeaveType: vi.fn(),
+  createLeavePolicy: vi.fn(),
+  publishLeavePolicy: vi.fn(),
   listTimingPolicies: vi.fn(),
   previewTimingPolicy: vi.fn(),
   createTimingPolicy: vi.fn(),
@@ -363,4 +368,65 @@ it('timing routes reject malformed scope/inputs, missing keys, CSRF and foreign 
     .get(timingBase)
     .set('Authorization', 'Bearer machine-only')
     .expect(401);
+});
+
+it('derives leave policy command scope, fresh MFA and exact key from the selected session', async () => {
+  getSession.mockResolvedValue(session);
+  const input = {
+    expectedCurrentVersion: 0,
+    effectiveFrom: '2026-10-12',
+    settings: {
+      scope: 'company',
+      timeZone: 'Asia/Karachi',
+      code: 'CASUAL',
+      name: 'Casual leave',
+      pay: 'paid',
+      grantMode: 'annual_upfront',
+      annualQuotaDays: 12,
+      monthlyQuotaDays: 2,
+      leaveYearStart: { month: 1, day: 1 },
+      nonWorkingDays: 'exclude',
+    },
+    reason: 'Reviewed company leave policy',
+  };
+  const key = randomUUID();
+  methods.createLeaveType.mockResolvedValue({
+    id: policyId,
+    leaveTypeId: branchId,
+    version: 1,
+    replayed: false,
+  });
+  await authenticated('post', `${base}/leave-types`)
+    .set('Origin', origin)
+    .set('X-CSRF-Token', csrf)
+    .set('Idempotency-Key', key)
+    .send(input)
+    .expect(201);
+  expect(methods.createLeaveType).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+    key,
+    input,
+  );
+  await authenticated('post', `${base}/leave-types`)
+    .set('Origin', origin)
+    .set('X-CSRF-Token', csrf)
+    .set('Idempotency-Key', key)
+    .send({ ...input, roles: ['owner'] })
+    .expect(400);
+  await authenticated('post', `${base}/leave-types`)
+    .set('Origin', origin)
+    .set('Idempotency-Key', key)
+    .send(input)
+    .expect(403);
+  await authenticated('get', `${base}/leave-types?limit=51`).expect(400);
+  getSession.mockResolvedValue({ ...session, authTime: 1 });
+  methods.listLeaveTypes.mockResolvedValue({ items: [] });
+  await authenticated('get', `${base}/leave-types`).expect(200);
+  expect(methods.listLeaveTypes).toHaveBeenCalledWith(
+    { identityId, mfaVerified: false },
+    tenantId,
+    { limit: 25 },
+  );
+  getSession.mockResolvedValue(session);
 });

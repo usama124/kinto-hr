@@ -1,4 +1,11 @@
 import {
+  leaveTypeCreateSchema,
+  leavePolicyDraftInputSchema,
+  leavePolicyPublishSchema,
+  leavePolicyQuerySchema,
+  leavePolicyRecordSchema,
+} from './leave-policies';
+import {
   attendanceTimingPolicySchema,
   attendanceTimingListSchema,
   attendanceTimingPreviewSchema,
@@ -2055,4 +2062,86 @@ it('validates timing policy snapshots, publication state, previews and keyed rec
       settings: timingSettings,
     }).success,
   ).toBe(false);
+});
+
+describe('persisted company leave policy contracts', () => {
+  const settings = {
+    scope: 'company',
+    timeZone: 'Asia/Karachi',
+    code: 'CASUAL',
+    name: 'Casual leave',
+    pay: 'paid',
+    grantMode: 'annual_upfront',
+    annualQuotaDays: 12,
+    monthlyQuotaDays: 2,
+    leaveYearStart: { month: 1, day: 1 },
+    nonWorkingDays: 'exclude',
+  };
+  const draft = {
+    expectedCurrentVersion: 0,
+    effectiveFrom: '2026-10-12',
+    settings,
+    reason: 'Employer-reviewed leave policy',
+  };
+  it('requires a new type base of zero and refuses persisted year-zero dates', () => {
+    expect(leaveTypeCreateSchema.parse(draft)).toEqual(draft);
+    expect(
+      leaveTypeCreateSchema.safeParse({ ...draft, expectedCurrentVersion: 1 })
+        .success,
+    ).toBe(false);
+    expect(
+      leavePolicyDraftInputSchema.safeParse({
+        ...draft,
+        effectiveFrom: '0000-01-01',
+      }).success,
+    ).toBe(false);
+    expect(
+      leavePolicyQuerySchema.safeParse({ asOf: '0000-01-01' }).success,
+    ).toBe(false);
+  });
+  it('rejects authority injection and bounds strict query/publication inputs', () => {
+    expect(
+      leaveTypeCreateSchema.safeParse({
+        ...draft,
+        employeeId: crypto.randomUUID(),
+      }).success,
+    ).toBe(false);
+    expect(
+      leavePolicyQuerySchema.safeParse({ identityId: crypto.randomUUID() })
+        .success,
+    ).toBe(false);
+    expect(leavePolicyQuerySchema.safeParse({ limit: 51 }).success).toBe(false);
+    expect(
+      leavePolicyPublishSchema.safeParse({
+        expectedVersion: 0,
+        reason: 'Review',
+      }).success,
+    ).toBe(false);
+  });
+  it('requires coherent publication metadata and positive effective intervals', () => {
+    const policy = {
+      id: crypto.randomUUID(),
+      tenantId: crypto.randomUUID(),
+      leaveTypeId: crypto.randomUUID(),
+      version: 1,
+      basedOnVersion: 0,
+      status: 'published',
+      effectiveFrom: draft.effectiveFrom,
+      effectiveUntil: null,
+      settings,
+      reason: draft.reason,
+      createdAt: '2026-10-12T00:00:00Z',
+      publishedAt: '2026-10-12T00:00:00Z',
+    };
+    expect(leavePolicyRecordSchema.safeParse(policy).success).toBe(true);
+    for (const change of [
+      { publishedAt: null },
+      { basedOnVersion: 1 },
+      { effectiveUntil: draft.effectiveFrom },
+      { status: 'draft', publishedAt: null, effectiveUntil: '2026-11-01' },
+    ])
+      expect(
+        leavePolicyRecordSchema.safeParse({ ...policy, ...change }).success,
+      ).toBe(false);
+  });
 });

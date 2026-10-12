@@ -330,8 +330,11 @@ describe('durable outbox worker with real PostgreSQL and Redis', () => {
     ).toBe(0);
   });
 
-  it('observes timing policy facts once without calculating attendance or editing policies', async () => {
+  it('observes timing and leave policy facts once without calculating attendance or editing policies', async () => {
     for (const type of [
+      'leave_policy.create_type.v1',
+      'leave_policy.draft.v1',
+      'leave_policy.publish.v1',
       'attendance_timing.create.v1',
       'attendance_timing.publish.v1',
     ]) {
@@ -352,6 +355,12 @@ describe('durable outbox worker with real PostgreSQL and Redis', () => {
       ).toBe(1);
     }
     await expect(worker.companyPolicyVersion.findMany()).rejects.toThrow(
+      'permission denied',
+    );
+    await expect(worker.leavePolicyVersion.findMany()).rejects.toThrow(
+      'permission denied',
+    );
+    await expect(worker.leavePolicyReceipt.findMany()).rejects.toThrow(
       'permission denied',
     );
     await expect(worker.attendanceTimingReceipt.findMany()).rejects.toThrow(

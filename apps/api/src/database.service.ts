@@ -5,6 +5,11 @@ import {
 } from '@nestjs/common';
 import {
   type OrganizationActor,
+  listCompanyLeaveTypes,
+  listCompanyLeavePolicies,
+  createCompanyLeaveType,
+  createCompanyLeavePolicyDraft,
+  publishCompanyLeavePolicy,
   listAttendanceTimingPolicies,
   previewAttendanceTimingPolicy,
   createAttendanceTimingPolicyDraft,
@@ -514,6 +519,59 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       tenantId,
       catalog,
       resourceId,
+      input,
+    );
+  }
+  listLeaveTypes(actor: OrganizationActor, tenant: string, query: unknown) {
+    return listCompanyLeaveTypes(this.db, actor, tenant, query);
+  }
+  listLeavePolicies(
+    actor: OrganizationActor,
+    tenant: string,
+    type: string,
+    query: unknown,
+  ) {
+    return listCompanyLeavePolicies(this.db, actor, tenant, type, query);
+  }
+  createLeaveType(
+    actor: OrganizationActor,
+    tenant: string,
+    key: string,
+    input: unknown,
+  ) {
+    return createCompanyLeaveType(this.db, actor, tenant, key, input);
+  }
+  createLeavePolicy(
+    actor: OrganizationActor,
+    tenant: string,
+    type: string,
+    key: string,
+    input: unknown,
+  ) {
+    return createCompanyLeavePolicyDraft(
+      this.db,
+      actor,
+      tenant,
+      type,
+      key,
+      input,
+    );
+  }
+  publishLeavePolicy(
+    actor: OrganizationActor,
+    tenant: string,
+    type: string,
+    policy: string,
+    key: string,
+    input: unknown,
+  ) {
+    return publishCompanyLeavePolicy(
+      this.db,
+      actor,
+      tenant,
+      type,
+      policy,
+      key,
       input,
     );
   }

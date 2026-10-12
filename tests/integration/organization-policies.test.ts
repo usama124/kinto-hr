@@ -9,6 +9,11 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  createCompanyLeaveType,
+  createCompanyLeavePolicyDraft,
+  publishCompanyLeavePolicy,
+  listCompanyLeaveTypes,
+  listCompanyLeavePolicies,
   createAttendanceTimingPolicyDraft,
   publishAttendanceTimingPolicy,
   listAttendanceTimingPolicies,
@@ -115,6 +120,13 @@ describe('tenant organization and effective policy boundary', () => {
       where: { tenantId: { in: tenants } },
     });
     await admin.auditEvent.deleteMany({ where: { tenantId: { in: tenants } } });
+    await admin.leavePolicyReceipt.deleteMany({
+      where: { tenantId: { in: tenants } },
+    });
+    await admin.leavePolicyVersion.deleteMany({
+      where: { tenantId: { in: tenants } },
+    });
+    await admin.leaveType.deleteMany({ where: { tenantId: { in: tenants } } });
     await admin.attendanceTimingReceipt.deleteMany({
       where: { tenantId: { in: tenants } },
     });
@@ -1134,6 +1146,440 @@ describe('tenant organization and effective policy boundary', () => {
       expect(list.body.attendanceProcessingAvailable).toBe(false);
     } finally {
       await application.close();
+    }
+  });
+  const leaveSettings = {
+    scope: 'company',
+    timeZone: 'Asia/Karachi',
+    code: 'CASUAL',
+    name: 'Casual leave',
+    pay: 'paid',
+    grantMode: 'annual_upfront',
+    annualQuotaDays: 12,
+    monthlyQuotaDays: 2,
+    leaveYearStart: { month: 1, day: 1 },
+    nonWorkingDays: 'exclude',
+  };
+  const leaveInput = (days = 0, version = 0, settings = leaveSettings) => ({
+    expectedCurrentVersion: version,
+    effectiveFrom: karachiDate(days),
+    settings,
+    reason: 'Employer-reviewed synthetic leave limits',
+  });
+  const createLeave = (key = randomUUID()) =>
+    createCompanyLeaveType(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      key,
+      leaveInput(),
+    );
+  const publishLeave = (
+    p: { leaveTypeId: string; id: string; version: number },
+    key = randomUUID(),
+  ) =>
+    publishCompanyLeavePolicy(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      p.leaveTypeId,
+      p.id,
+      key,
+      {
+        expectedVersion: p.version,
+        reason: 'Reviewed company-wide leave publication',
+      },
+    );
+  it('publishes leave limits by type and resolves full effective history independently of the displayed page', async () => {
+    const first = await createLeave();
+    const initial = await listCompanyLeavePolicies(
+      runtime,
+      actor(identities.hr),
+      tenantId,
+      first.leaveTypeId,
+    );
+    expect(initial.currentPolicy).toBeNull();
+    expect(initial.leaveReservationAvailable).toBe(false);
+    await publishLeave(first);
+    const future = await createCompanyLeavePolicyDraft(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      first.leaveTypeId,
+      randomUUID(),
+      leaveInput(10, first.version, {
+        ...leaveSettings,
+        monthlyQuotaDays: 1.5,
+      }),
+    );
+    await publishLeave(future);
+    const state = await listCompanyLeavePolicies(
+      runtime,
+      actor(identities.hr),
+      tenantId,
+      first.leaveTypeId,
+      { limit: 1 },
+    );
+    expect(state.items).toHaveLength(1);
+    expect(state.currentPolicy?.id).toBe(first.id);
+    expect(state.currentPolicy?.effectiveUntil).toBe(karachiDate(10));
+    expect(state.latestPublishedVersion).toBe(future.version);
+    expect(state.payrollEffectsAvailable).toBe(false);
+    const later = await listCompanyLeavePolicies(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      first.leaveTypeId,
+      { asOf: karachiDate(10), limit: 1, afterId: state.nextCursor! },
+    );
+    expect(later.currentPolicy?.id).toBe(future.id);
+    expect(later.currentPolicy?.settings.monthlyQuotaDays).toBe(1.5);
+    expect(later.currentPolicy?.effectiveUntil).toBeNull();
+    const unpaid = await createCompanyLeaveType(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      randomUUID(),
+      leaveInput(0, 0, {
+        ...leaveSettings,
+        code: 'UNPAID',
+        name: 'Unpaid leave',
+        pay: 'unpaid',
+      }),
+    );
+    await publishLeave(unpaid);
+    const catalog = await listCompanyLeaveTypes(
+      runtime,
+      actor(identities.hr),
+      tenantId,
+      { limit: 1 },
+    );
+    expect(catalog.items).toHaveLength(1);
+    expect(catalog.nextCursor).toBe(catalog.items[0].id);
+    const remaining = await listCompanyLeaveTypes(
+      runtime,
+      actor(identities.hr),
+      tenantId,
+      { limit: 1, afterId: catalog.nextCursor! },
+    );
+    expect(remaining.nextCursor).toBeNull();
+    expect(remaining.items[0].id).not.toBe(catalog.items[0].id);
+  });
+  it('rechecks leave owner authority before receipt replay and denies cross-company or employee access', async () => {
+    const key = randomUUID(),
+      first = await createLeave(key);
+    for (const caller of [
+      actor(identities.employee),
+      actor(identities.otherOwner),
+      actor(identities.owner, false),
+    ]) {
+      await expect(
+        listCompanyLeaveTypes(runtime, caller, tenantId),
+      ).rejects.toThrow('FORBIDDEN');
+      await expect(
+        listCompanyLeavePolicies(runtime, caller, tenantId, first.leaveTypeId),
+      ).rejects.toThrow('FORBIDDEN');
+      await expect(
+        createCompanyLeaveType(runtime, caller, tenantId, key, leaveInput()),
+      ).rejects.toThrow('FORBIDDEN');
+      await expect(
+        publishCompanyLeavePolicy(
+          runtime,
+          caller,
+          tenantId,
+          first.leaveTypeId,
+          first.id,
+          randomUUID(),
+          { expectedVersion: first.version, reason: 'Denied publication' },
+        ),
+      ).rejects.toThrow('FORBIDDEN');
+    }
+    await expect(
+      createCompanyLeavePolicyDraft(
+        runtime,
+        actor(identities.hr),
+        tenantId,
+        first.leaveTypeId,
+        randomUUID(),
+        leaveInput(),
+      ),
+    ).rejects.toThrow('FORBIDDEN');
+    await expect(
+      listCompanyLeavePolicies(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        randomUUID(),
+      ),
+    ).rejects.toThrow('NOT_FOUND');
+    await expect(
+      listCompanyLeavePolicies(
+        runtime,
+        actor(identities.otherOwner),
+        otherTenantId,
+        first.leaveTypeId,
+      ),
+    ).rejects.toThrow('NOT_FOUND');
+    await admin.membership.updateMany({
+      where: { tenantId, identityId: identities.owner },
+      data: { status: 'revoked' },
+    });
+    await expect(createLeave(key)).rejects.toThrow('FORBIDDEN');
+  });
+  it('serializes exact leave retries and competing publications without duplicate facts', async () => {
+    const key = randomUUID();
+    const replies = await Promise.all([createLeave(key), createLeave(key)]);
+    expect(replies[0].id).toBe(replies[1].id);
+    expect(replies.filter((r) => r.replayed)).toHaveLength(1);
+    await expect(
+      createCompanyLeaveType(runtime, actor(identities.owner), tenantId, key, {
+        ...leaveInput(),
+        reason: 'Changed retry payload',
+      }),
+    ).rejects.toThrow('CONFLICT');
+    await expect(createLeave()).rejects.toThrow('CONFLICT');
+    const second = await createCompanyLeavePolicyDraft(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      replies[0].leaveTypeId,
+      randomUUID(),
+      leaveInput(1),
+    );
+    const attempts = await Promise.allSettled([
+      publishLeave(replies[0]),
+      publishLeave(second),
+    ]);
+    expect(attempts.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    expect(
+      await admin.leavePolicyVersion.count({
+        where: { tenantId, status: 'published' },
+      }),
+    ).toBe(1);
+    expect(await admin.leavePolicyReceipt.count({ where: { tenantId } })).toBe(
+      3,
+    );
+    expect(
+      await admin.auditEvent.count({
+        where: { tenantId, action: { startsWith: 'leave_policy.' } },
+      }),
+    ).toBe(3);
+    expect(
+      await admin.outboxEvent.count({
+        where: { tenantId, type: { startsWith: 'leave_policy.' } },
+      }),
+    ).toBe(3);
+  });
+  it('refuses backdating, immutable type code and unreconciled leave-year changes', async () => {
+    const first = await createLeave();
+    await publishLeave(first);
+    for (const input of [
+      leaveInput(-1, first.version),
+      leaveInput(0, first.version),
+      leaveInput(1, 0),
+      leaveInput(1, first.version, { ...leaveSettings, code: 'ANNUAL' }),
+      leaveInput(1, first.version, {
+        ...leaveSettings,
+        leaveYearStart: { month: 4, day: 1 },
+      }),
+    ]) {
+      await expect(
+        createCompanyLeavePolicyDraft(
+          runtime,
+          actor(identities.owner),
+          tenantId,
+          first.leaveTypeId,
+          randomUUID(),
+          input,
+        ),
+      ).rejects.toThrow(/CONFLICT|STALE_VERSION/);
+    }
+    const staleDraft = await createCompanyLeavePolicyDraft(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      first.leaveTypeId,
+      randomUUID(),
+      leaveInput(1, first.version),
+    );
+    await admin.leavePolicyVersion.update({
+      where: { id: staleDraft.id },
+      data: { effectiveFrom: new Date(karachiDate(-1)) },
+    });
+    await expect(publishLeave(staleDraft)).rejects.toThrow('CONFLICT');
+    await expect(
+      admin.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(
+          'SET LOCAL SESSION AUTHORIZATION kinto_control_owner',
+        );
+        await tx.leavePolicyVersion.update({
+          where: { id: first.id },
+          data: { settings: { ...leaveSettings, monthlyQuotaDays: 10 } },
+        });
+      }),
+    ).rejects.toThrow('immutable');
+    await expect(
+      admin.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(
+          'SET LOCAL SESSION AUTHORIZATION kinto_control_owner',
+        );
+        await tx.leavePolicyVersion.update({
+          where: { id: staleDraft.id },
+          data: { reason: 'Changed draft' },
+        });
+      }),
+    ).rejects.toThrow('Only leave publication');
+    await expect(
+      admin.leavePolicyVersion.create({
+        data: {
+          id: randomUUID(),
+          tenantId: otherTenantId,
+          leaveTypeId: first.leaveTypeId,
+          policyVersion: 1,
+          basedOnVersion: 0,
+          effectiveFrom: new Date(karachiDate()),
+          settings: leaveSettings,
+          reason: 'Cross tenant FK attempt',
+          createdByIdentityId: identities.otherOwner,
+        },
+      }),
+    ).rejects.toThrow();
+  });
+  it('validates leave settings inside SQL and rolls back type, policy, receipt and outbox on audit failure', async () => {
+    for (const settings of [
+      { ...leaveSettings, name: '\t' },
+      { ...leaveSettings, name: '\u00a0Casual leave' },
+      { ...leaveSettings, annualQuotaDays: 1.25 },
+      { ...leaveSettings, monthlyQuotaDays: 32 },
+      { ...leaveSettings, monthlyQuotaDays: '2' },
+      { ...leaveSettings, leaveYearStart: { month: 2, day: 29 } },
+      { ...leaveSettings, scope: 'employee' },
+      { ...leaveSettings, employeeId: randomUUID() },
+      { ...leaveSettings, pay: null },
+      { ...leaveSettings, grantMode: 'monthly_accrual' },
+    ]) {
+      const rows = await runtime.$queryRaw<
+        { outcome: string }[]
+      >`SELECT * FROM public.mutate_company_leave_policy(${identities.owner}::uuid,true,${tenantId}::uuid,${randomUUID()}::uuid,'create_type'::varchar,NULL::uuid,NULL::uuid,0::integer,${karachiDate()}::date,${JSON.stringify(settings)}::jsonb,'SQL validation attempt'::varchar,${randomUUID()}::uuid,${randomUUID()}::uuid)`;
+      expect(rows[0].outcome).toBe('invalid_state');
+    }
+    const audit = await admin.auditEvent.create({
+      data: {
+        id: randomUUID(),
+        tenantId,
+        actorId: identities.owner,
+        action: 'fixture',
+        resourceId: randomUUID(),
+        reason: 'Duplicate audit rollback fixture',
+      },
+    });
+    await expect(
+      runtime.$queryRaw`SELECT * FROM public.mutate_company_leave_policy(${identities.owner}::uuid,true,${tenantId}::uuid,${randomUUID()}::uuid,'create_type'::varchar,NULL::uuid,NULL::uuid,0::integer,${karachiDate()}::date,${JSON.stringify(leaveSettings)}::jsonb,'Atomic rollback fixture'::varchar,${audit.id}::uuid,${randomUUID()}::uuid)`,
+    ).rejects.toThrow();
+    expect(await admin.leaveType.count({ where: { tenantId } })).toBe(0);
+    expect(await admin.leavePolicyVersion.count({ where: { tenantId } })).toBe(
+      0,
+    );
+    expect(await admin.leavePolicyReceipt.count({ where: { tenantId } })).toBe(
+      0,
+    );
+    expect(await admin.outboxEvent.count({ where: { tenantId } })).toBe(0);
+  });
+  it('keeps leave policies and receipts private behind constrained functions', async () => {
+    for (const table of [
+      'leave_types',
+      'leave_policy_versions',
+      'leave_policy_receipts',
+    ])
+      await expect(
+        runtime.$queryRawUnsafe(`SELECT * FROM public.${table}`),
+      ).rejects.toThrow('permission denied');
+    const rows = await admin.$queryRaw<
+      { safe: boolean }[]
+    >`SELECT bool_and(p.prosecdef AND r.rolname='kinto_control_owner' AND NOT has_function_privilege('kinto_worker',p.oid,'EXECUTE') AND NOT has_function_privilege('kinto_dispatcher',p.oid,'EXECUTE') AND NOT EXISTS(SELECT 1 FROM aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a WHERE a.grantee=0 AND a.privilege_type='EXECUTE')) AS safe FROM pg_proc p JOIN pg_roles r ON r.oid=p.proowner WHERE p.proname IN ('read_company_leave_policies','mutate_company_leave_policy')`;
+    expect(rows[0].safe).toBe(true);
+    await expect(
+      runtime.$queryRaw`SELECT public.valid_leave_policy_settings(${JSON.stringify(leaveSettings)}::jsonb)`,
+    ).rejects.toThrow('permission denied');
+  });
+  it('runs leave publication HTTP through strict inputs, selected-company CSRF and fresh session authority', async () => {
+    const csrf = 'c'.repeat(43),
+      origin = 'https://leave.synthetic.example';
+    let identityId = identities.owner,
+      selectedTenantId = tenantId,
+      authTime = Math.floor(Date.now() / 1000);
+    const module = await Test.createTestingModule({
+      controllers: [OrganizationController],
+      providers: [
+        DatabaseService,
+        {
+          provide: AuthService,
+          useValue: {
+            limit: async () => {},
+            origin: () => origin,
+            session: async () => ({
+              identityId,
+              selectedTenantId,
+              authTime,
+              csrf,
+              principal: { mfaVerified: true },
+            }),
+          },
+        },
+      ],
+    }).compile();
+    const app = module.createNestApplication();
+    configureHttp(app);
+    await app.init();
+    const base = `/api/v1/tenants/${tenantId}/organization/leave-types`;
+    const post = (path: string, key = randomUUID()) =>
+      request(app.getHttpServer())
+        .post(base + path)
+        .set('Cookie', `__Host-kinto-session=${'s'.repeat(43)}`)
+        .set('Origin', origin)
+        .set('X-CSRF-Token', csrf)
+        .set('Idempotency-Key', key);
+    const get = (path = '') =>
+      request(app.getHttpServer())
+        .get(base + path)
+        .set('Cookie', `__Host-kinto-session=${'s'.repeat(43)}`);
+    try {
+      await request(app.getHttpServer()).get(base).expect(401);
+      await get('?identityId=' + identities.owner).expect(400);
+      await get('?asOf=0000-01-01').expect(400);
+      await post('')
+        .send({ ...leaveInput(), identityId: identities.owner })
+        .expect(400);
+      await post('')
+        .set('Origin', 'https://wrong.example')
+        .send(leaveInput())
+        .expect(403);
+      const key = randomUUID(),
+        first = (await post('', key).send(leaveInput()).expect(201)).body;
+      expect((await post('', key).send(leaveInput()).expect(201)).body).toEqual(
+        { ...first, replayed: true },
+      );
+      const path = `/${first.leaveTypeId}/policies/${first.id}/publication`,
+        body = {
+          expectedVersion: first.version,
+          reason: 'HTTP reviewed publication',
+        };
+      identityId = identities.hr;
+      await post(path).send(body).expect(403);
+      identityId = identities.owner;
+      authTime = 1;
+      await post(path).send(body).expect(403);
+      authTime = Math.floor(Date.now() / 1000);
+      selectedTenantId = otherTenantId;
+      await get().expect(403);
+      selectedTenantId = tenantId;
+      await post(path).send(body).expect(201);
+      const state = await get(`/${first.leaveTypeId}/policies`).expect(200);
+      expect(state.body.currentPolicy.id).toBe(first.id);
+      expect(state.body.leaveReservationAvailable).toBe(false);
+      expect(state.headers['cache-control']).toBe('no-store');
+    } finally {
+      await app.close();
     }
   });
 });
