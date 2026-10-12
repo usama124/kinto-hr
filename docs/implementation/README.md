@@ -175,3 +175,7 @@ The [timing contract and pure schedule preview](../evidence/phase-02/attendance-
 ## Versioned company timing policy API — 10 October 2026
 
 The [timing policy SQL/API lifecycle](../evidence/phase-02/attendance-timing-policy-api.md) reuses company policy versions with owner-only keyed draft/publication commands, owner/HR full-history effective resolution and pure previews. Strict SQL settings, future/date/base guards, immutable published history, private receipts, fresh authority and atomic audit/outbox protect retries and concurrency. The observer records facts without attendance effects. No settings UI, normalization, absence or payroll calculation is enabled. P02-03 remains partial. Next: timing workspace; hardware/source/clock and finalized-period calculation/reprocessing gates remain open.
+
+## Company timing settings workspace — 12 October 2026
+
+The [owner/HR timing workspace](../evidence/phase-02/attendance-timing-workspace.md) exposes explicit company-wide drafts, bounded history, current/historical schedule previews and confirmed owner publication. Fresh session/scope checks, strict snapshot/arithmetic checks and in-memory exact-command reconciliation protect display and retries; HR remains read-only. No attendance or payroll effect is enabled. P02-03 remains partial. Next: verified-source normalization and pure day-calculation preparation, retaining hardware/clock, production connector and finalized-period gates.

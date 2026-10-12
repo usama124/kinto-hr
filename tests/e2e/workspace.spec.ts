@@ -1717,7 +1717,7 @@ test('HR reviews aggregate workforce movement and safely retries an audited expo
     page.getByRole('heading', { name: 'Synthetic Company' }),
   ).toBeVisible();
   const totals = page.getByRole('region', { name: 'Workforce totals' });
-  await expect(totals.getByText('12')).toBeVisible();
+  await expect(totals.getByText('12', { exact: true })).toBeVisible();
   await expect(page.getByRole('cell', { name: 'Engineering' })).toBeVisible();
 
   await page.getByLabel('Movement period start').fill('2025-01-01');
@@ -6374,4 +6374,539 @@ test('synthetic inbox workspace handles closed login, no company and unauthorize
     page.getByText(/Review is disabled, access denied or context changed/),
   ).toBeVisible();
   expect(state.reads).toEqual([]);
+});
+
+const timingSettings = {
+  scope: 'company',
+  timeZone: 'Asia/Karachi',
+  checkIn: '22:00',
+  checkOut: '06:00',
+  checkOutNextDay: true,
+  breakMode: 'fixed_duration',
+  unpaidBreakMinutes: 30,
+  fullDayTargetMinutes: 450,
+  halfDayTargetMinutes: 225,
+  minimumFullDayMinutes: 420,
+  minimumHalfDayMinutes: 180,
+  lateGraceMinutes: 10,
+  earlyGraceMinutes: 10,
+  associationBeforeMinutes: 30,
+  associationAfterMinutes: 60,
+  weeklyRestDays: [7],
+};
+const timingDate = () =>
+  new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Karachi',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+const timingPolicy = (version = 1, status = 'draft', basedOnVersion = 0) => ({
+  id: `00000000-0000-4000-8000-${String(900 + version).padStart(12, '0')}`,
+  version,
+  basedOnVersion,
+  status,
+  effectiveFrom: timingDate(),
+  settings: timingSettings,
+  reason: 'Reviewed timing fixture',
+  createdAt: '2026-10-12T04:00:00.000Z',
+  publishedAt: status === 'published' ? '2026-10-12T04:01:00.000Z' : null,
+});
+async function timingFixture(page: Page) {
+  const state = {
+    identity: connectorIdentity,
+    selected: deviceTenant as string | null,
+    roles: ['owner'],
+    csrf: 'c'.repeat(43),
+    sessionStatus: 200,
+    readStatus: 200,
+    policies: [timingPolicy()],
+    listOverride: undefined as unknown,
+    previewOverride: undefined as unknown,
+    drop: false,
+    writeStatus: 201,
+    changeDuringRead: '',
+    changeDuringWrite: '',
+    receipts: new Map<
+      string,
+      { id: string; version: number; replayed: boolean }
+    >(),
+    writes: [] as {
+      path: string;
+      key: string;
+      csrf: string;
+      body: Record<string, unknown>;
+    }[],
+    reads: [] as string[],
+  };
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({
+      status: state.sessionStatus,
+      json: {
+        identityId: state.identity,
+        selectedTenantId: state.selected,
+        csrfToken: state.csrf,
+        tenants: [
+          {
+            id: state.selected ?? deviceTenant,
+            name: 'Timing Fixture Company',
+            roles: state.roles,
+          },
+        ],
+      },
+    }),
+  );
+  const change = (kind: string) => {
+    if (kind === 'company') state.selected = mappingEmployeeId;
+    if (kind === 'identity') state.identity = mappingEmployeeId;
+    if (kind === 'role') state.roles = ['employee'];
+  };
+  await page.route(
+    '**/api/v1/tenants/**/organization/policies/attendance-timing**',
+    async (route) => {
+      const req = route.request(),
+        url = new URL(req.url());
+      if (req.method() === 'POST') {
+        const key = req.headers()['idempotency-key'];
+        state.writes.push({
+          path: url.pathname,
+          key,
+          csrf: req.headers()['x-csrf-token'],
+          body: req.postDataJSON(),
+        });
+        if (state.writeStatus !== 201)
+          return route.fulfill({ status: state.writeStatus, json: {} });
+        let receipt = state.receipts.get(key);
+        if (receipt) receipt = { ...receipt, replayed: true };
+        else {
+          const body = req.postDataJSON();
+          if (url.pathname.endsWith('/drafts')) {
+            const version =
+              Math.max(0, ...state.policies.map((v) => v.version)) + 1;
+            const row = {
+              ...timingPolicy(version),
+              settings: body.settings,
+              effectiveFrom: body.effectiveFrom,
+              reason: body.reason,
+              basedOnVersion: body.expectedCurrentVersion,
+            };
+            state.policies.push(row);
+            receipt = { id: row.id, version, replayed: false };
+          } else {
+            const row = state.policies.find((v) =>
+              url.pathname.includes(v.id),
+            )!;
+            row.status = 'published';
+            row.publishedAt = '2026-10-12T04:02:00.000Z';
+            receipt = { id: row.id, version: row.version, replayed: false };
+          }
+          state.receipts.set(key, receipt);
+        }
+        change(state.changeDuringWrite);
+        if (state.drop) {
+          state.drop = false;
+          return route.abort('failed');
+        }
+        return route.fulfill({ status: 201, json: receipt });
+      }
+      state.reads.push(url.pathname + url.search);
+      if (state.readStatus !== 200)
+        return route.fulfill({ status: state.readStatus, json: {} });
+      if (url.pathname.endsWith('/preview')) {
+        const policy = state.policies.find((v) => url.pathname.includes(v.id));
+        change(state.changeDuringRead);
+        return route.fulfill({
+          json: state.previewOverride ?? {
+            tenantId: deviceTenant,
+            policy,
+            dayAnchor: 'scheduled_check_in_local_date',
+            scheduledMinutes: 480,
+            netScheduledMinutes: 450,
+            associationWindow: {
+              fromLocalMinute: 1290,
+              untilLocalMinute: 1860,
+              endExclusive: true,
+            },
+            attendanceProcessingAvailable: false,
+            payrollEffectsAvailable: false,
+          },
+        });
+      }
+      const after = url.searchParams.get('afterId'),
+        ordered = state.policies
+          .filter((v) => !after || v.id > after)
+          .sort((a, b) => a.id.localeCompare(b.id));
+      const published = state.policies
+        .filter((v) => v.status === 'published')
+        .sort((a, b) => b.version - a.version);
+      return route.fulfill({
+        json: state.listOverride ?? {
+          tenantId: deviceTenant,
+          asOf: timingDate(),
+          latestPublishedVersion: published[0]?.version ?? 0,
+          currentPolicy:
+            published.find((v) => v.effectiveFrom <= timingDate()) ?? null,
+          items: ordered.slice(0, 25),
+          nextCursor: ordered.length > 25 ? ordered[24].id : null,
+          attendanceProcessingAvailable: false,
+          payrollEffectsAvailable: false,
+        },
+      });
+    },
+  );
+  return state;
+}
+async function fillTimingDraft(page: Page) {
+  await page.getByLabel('Check-in time', { exact: true }).fill('22:00');
+  await page.getByLabel('Check-out time', { exact: true }).fill('06:00');
+  await page.getByLabel('Check-out on next day', { exact: true }).check();
+  for (const [label, value] of [
+    ['Unpaid break minutes', '30'],
+    ['Full day target minutes', '450'],
+    ['Half day target minutes', '225'],
+    ['Minimum full day minutes', '420'],
+    ['Minimum half day minutes', '180'],
+    ['Late grace minutes', '10'],
+    ['Early grace minutes', '10'],
+    ['Association before minutes', '30'],
+    ['Association after minutes', '60'],
+  ])
+    await page.getByLabel(label, { exact: true }).fill(value);
+  await page.getByLabel('Sunday', { exact: true }).check();
+  await page
+    .getByLabel('Draft reason', { exact: true })
+    .fill('Reviewed overnight schedule');
+}
+for (const role of ['owner', 'hr_admin'])
+  test(`timing workspace allows ${role} history and complete schedule preview`, async ({
+    page,
+  }) => {
+    const fixture = await timingFixture(page);
+    fixture.roles = [role];
+    await page.goto('/attendance-timing');
+    await page
+      .getByRole('button', { name: 'Preview version 1', exact: true })
+      .click();
+    await expect(
+      page.getByRole('heading', { name: 'Preview timing version 1' }),
+    ).toBeVisible();
+    await expect(
+      page.getByText(/480 scheduled minutes; 450 net scheduled minutes/),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: 'Create timing draft', exact: true }),
+    ).toHaveCount(role === 'owner' ? 1 : 0);
+    await expect(
+      page.getByRole('button', { name: 'Publish timing policy', exact: true }),
+    ).toHaveCount(role === 'owner' ? 1 : 0);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    expect(fixture.writes).toEqual([]);
+  });
+test('timing workspace validates explicit inputs and confirms draft and publication separately', async ({
+  page,
+}) => {
+  const fixture = await timingFixture(page);
+  fixture.policies = [];
+  await page.goto('/attendance-timing');
+  await fillTimingDraft(page);
+  await page
+    .getByLabel('Minimum half day minutes', { exact: true })
+    .fill('500');
+  await page
+    .getByRole('button', { name: 'Create timing draft', exact: true })
+    .click();
+  await expect(page.getByText(/Invalid timing settings/)).toBeVisible();
+  expect(fixture.writes).toHaveLength(0);
+  await page
+    .getByLabel('Minimum half day minutes', { exact: true })
+    .fill('180');
+  page.once('dialog', (dialog) => dialog.dismiss());
+  await page
+    .getByRole('button', { name: 'Create timing draft', exact: true })
+    .click();
+  expect(fixture.writes).toHaveLength(0);
+  page.once('dialog', (dialog) => dialog.accept());
+  await page
+    .getByRole('button', { name: 'Create timing draft', exact: true })
+    .click();
+  await expect(page.getByText(/Timing change confirmed/)).toBeVisible();
+  expect(fixture.writes[0].body.settings).toEqual(timingSettings);
+  await expect(
+    page.getByRole('button', { name: 'Create timing draft', exact: true }),
+  ).toBeDisabled();
+  await page.getByRole('button', { name: 'Refresh timing history' }).click();
+  await page
+    .getByRole('button', { name: 'Preview version 1', exact: true })
+    .click();
+  await page
+    .getByLabel('Publication reason', { exact: true })
+    .fill('Approved timing schedule');
+  page.once('dialog', (dialog) => dialog.accept());
+  await page
+    .getByRole('button', { name: 'Publish timing policy', exact: true })
+    .click();
+  await expect(page.getByText(/Timing change confirmed/)).toBeVisible();
+  expect(fixture.writes[1].key).not.toBe(fixture.writes[0].key);
+  await page.getByRole('button', { name: 'Refresh timing history' }).click();
+  await expect(page.getByText(/Current policy as of.*Version 1/)).toBeVisible();
+});
+test('timing workspace reconciles uncertain publication using the same key and payload with fresh CSRF', async ({
+  page,
+}) => {
+  const fixture = await timingFixture(page);
+  await page.goto('/attendance-timing');
+  await page
+    .getByRole('button', { name: 'Preview version 1', exact: true })
+    .click();
+  await page
+    .getByLabel('Publication reason', { exact: true })
+    .fill('Approved policy');
+  fixture.drop = true;
+  page.once('dialog', (dialog) => dialog.accept());
+  await page
+    .getByRole('button', { name: 'Publish timing policy', exact: true })
+    .click();
+  await expect(page.getByText(/Outcome unknown/)).toBeVisible();
+  fixture.csrf = 'd'.repeat(43);
+  await page.getByRole('button', { name: 'Refresh timing history' }).click();
+  await expect(
+    page.getByRole('button', { name: 'Create timing draft', exact: true }),
+  ).toBeDisabled();
+  await page
+    .getByRole('button', { name: 'Retry exact timing request' })
+    .click();
+  await expect(page.getByText(/Exact timing request reconciled/)).toBeVisible();
+  expect(fixture.writes).toHaveLength(2);
+  expect(fixture.writes[1].key).toBe(fixture.writes[0].key);
+  expect(fixture.writes[1].body).toEqual(fixture.writes[0].body);
+  expect(fixture.writes[1].csrf).toBe('d'.repeat(43));
+  expect(fixture.receipts.size).toBe(1);
+});
+for (const change of ['company', 'identity', 'role'])
+  test(`timing workspace erases pending commands on ${change} changes`, async ({
+    page,
+  }) => {
+    const fixture = await timingFixture(page);
+    await page.goto('/attendance-timing');
+    await fillTimingDraft(page);
+    fixture.drop = true;
+    page.once('dialog', (dialog) => dialog.accept());
+    await page
+      .getByRole('button', { name: 'Create timing draft', exact: true })
+      .click();
+    await expect(
+      page.getByRole('button', { name: 'Retry exact timing request' }),
+    ).toBeVisible();
+    if (change === 'company') fixture.selected = mappingEmployeeId;
+    if (change === 'identity') fixture.identity = mappingEmployeeId;
+    if (change === 'role') fixture.roles = ['hr_admin'];
+    await page
+      .getByRole('button', { name: 'Retry exact timing request' })
+      .click();
+    await expect(
+      page.getByRole('button', { name: 'Retry exact timing request' }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole('heading', { name: 'Timing Fixture Company' }),
+    ).toHaveCount(0);
+    expect(fixture.writes).toHaveLength(1);
+  });
+for (const flaw of ['scope', 'cursor', 'duplicate', 'effects'])
+  test(`timing workspace rejects ${flaw} history corruption`, async ({
+    page,
+  }) => {
+    const fixture = await timingFixture(page);
+    fixture.listOverride = {
+      tenantId: flaw === 'scope' ? mappingEmployeeId : deviceTenant,
+      asOf: timingDate(),
+      latestPublishedVersion: 0,
+      currentPolicy: null,
+      items:
+        flaw === 'duplicate'
+          ? [timingPolicy(), timingPolicy()]
+          : [timingPolicy()],
+      nextCursor: flaw === 'cursor' ? timingPolicy().id : null,
+      attendanceProcessingAvailable: flaw === 'effects',
+      payrollEffectsAvailable: false,
+    };
+    await page.goto('/attendance-timing');
+    await expect(
+      page.getByText(/Timing data is unavailable or invalid/),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: 'Preview version 1', exact: true }),
+    ).toHaveCount(0);
+  });
+test('timing workspace paginates history and preserves current policy outside the page', async ({
+  page,
+}) => {
+  const fixture = await timingFixture(page);
+  fixture.policies = Array.from({ length: 26 }, (_, i) => timingPolicy(i + 1));
+  fixture.policies[0] = timingPolicy(1, 'published');
+  await page.goto('/attendance-timing');
+  await page.getByRole('button', { name: 'Next timing page' }).click();
+  await expect(
+    page.getByRole('button', { name: 'Preview version 26', exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Preview version 1', exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole('button', { name: 'Preview current timing' }).click();
+  await expect(
+    page.getByRole('heading', { name: 'Preview timing version 1' }),
+  ).toBeVisible();
+});
+for (const change of ['company', 'identity', 'role'])
+  test(`timing workspace rejects ${change} changes during preview`, async ({
+    page,
+  }) => {
+    const fixture = await timingFixture(page);
+    await page.goto('/attendance-timing');
+    fixture.changeDuringRead = change;
+    await page
+      .getByRole('button', { name: 'Preview version 1', exact: true })
+      .click();
+    await expect(
+      page.getByRole('heading', { name: 'Preview timing version 1' }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole('heading', { name: 'Timing Fixture Company' }),
+    ).toHaveCount(0);
+  });
+for (const status of [401, 403])
+  test(`timing workspace clears history on ${status}`, async ({ page }) => {
+    const fixture = await timingFixture(page);
+    await page.goto('/attendance-timing');
+    fixture.readStatus = status;
+    await page.getByRole('button', { name: 'Refresh timing history' }).click();
+    await expect(
+      page.getByRole('button', { name: 'Preview version 1', exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole('heading', { name: 'Timing Fixture Company' }),
+    ).toHaveCount(0);
+  });
+test('timing workspace rejects mismatched preview arithmetic and stale publication', async ({
+  page,
+}) => {
+  const fixture = await timingFixture(page);
+  fixture.policies = [timingPolicy(), timingPolicy(2, 'published')];
+  await page.goto('/attendance-timing');
+  await page
+    .getByRole('button', { name: 'Preview version 1', exact: true })
+    .click();
+  await expect(
+    page.getByRole('button', { name: 'Publish timing policy' }),
+  ).toBeDisabled();
+  fixture.previewOverride = {
+    tenantId: deviceTenant,
+    policy: timingPolicy(),
+    dayAnchor: 'scheduled_check_in_local_date',
+    scheduledMinutes: 480,
+    netScheduledMinutes: 449,
+    associationWindow: {
+      fromLocalMinute: 1290,
+      untilLocalMinute: 1860,
+      endExclusive: true,
+    },
+    attendanceProcessingAvailable: false,
+    payrollEffectsAvailable: false,
+  };
+  await page
+    .getByRole('button', { name: 'Preview version 1', exact: true })
+    .click();
+  await expect(
+    page.getByText(/Timing data is unavailable or invalid/),
+  ).toBeVisible();
+});
+
+test('timing workspace reconciles an uncertain draft without creating a duplicate', async ({
+  page,
+}) => {
+  const fixture = await timingFixture(page);
+  fixture.policies = [];
+  await page.goto('/attendance-timing');
+  await fillTimingDraft(page);
+  fixture.drop = true;
+  page.once('dialog', (dialog) => dialog.accept());
+  await page
+    .getByRole('button', { name: 'Create timing draft', exact: true })
+    .click();
+  await expect(page.getByText(/Outcome unknown/)).toBeVisible();
+  await page
+    .getByRole('button', { name: 'Retry exact timing request' })
+    .click();
+  await expect(page.getByText(/Exact timing request reconciled/)).toBeVisible();
+  expect(fixture.writes[1].key).toBe(fixture.writes[0].key);
+  expect(fixture.writes[1].body).toEqual(fixture.writes[0].body);
+  expect(fixture.policies).toHaveLength(1);
+});
+test('timing workspace rejects conflicts and requires a fresh history before another command', async ({
+  page,
+}) => {
+  const fixture = await timingFixture(page);
+  fixture.writeStatus = 409;
+  await page.goto('/attendance-timing');
+  await fillTimingDraft(page);
+  page.once('dialog', (dialog) => dialog.accept());
+  await page
+    .getByRole('button', { name: 'Create timing draft', exact: true })
+    .click();
+  await expect(page.getByText(/Change rejected/)).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Retry exact timing request' }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole('button', { name: 'Create timing draft', exact: true }),
+  ).toBeDisabled();
+  await page.getByRole('button', { name: 'Refresh timing history' }).click();
+  await expect(
+    page.getByRole('button', { name: 'Create timing draft', exact: true }),
+  ).toBeEnabled();
+  await expect(page.getByLabel('Draft reason', { exact: true })).toHaveValue(
+    '',
+  );
+});
+for (const context of ['signed-out', 'no-company', 'employee'])
+  test(`timing workspace avoids history calls for ${context}`, async ({
+    page,
+  }) => {
+    const fixture = await timingFixture(page);
+    if (context === 'signed-out') fixture.sessionStatus = 401;
+    if (context === 'no-company') fixture.selected = null;
+    if (context === 'employee') fixture.roles = ['employee'];
+    await page.goto('/attendance-timing');
+    await expect(
+      page.getByRole('button', { name: 'Refresh timing history' }),
+    ).toBeEnabled();
+    expect(fixture.reads).toEqual([]);
+    expect(fixture.writes).toEqual([]);
+  });
+test('timing workspace does not display a command result after access changes during publication', async ({
+  page,
+}) => {
+  const fixture = await timingFixture(page);
+  fixture.changeDuringWrite = 'company';
+  await page.goto('/attendance-timing');
+  await page
+    .getByRole('button', { name: 'Preview version 1', exact: true })
+    .click();
+  await page
+    .getByLabel('Publication reason', { exact: true })
+    .fill('Reviewed publication');
+  page.once('dialog', (dialog) => dialog.accept());
+  await page
+    .getByRole('button', { name: 'Publish timing policy', exact: true })
+    .click();
+  await expect(
+    page.getByText(/Displayed policies and pending commands were cleared/),
+  ).toBeVisible();
+  await expect(page.getByText(/Timing change confirmed/)).toHaveCount(0);
+  await expect(
+    page.getByRole('button', { name: 'Retry exact timing request' }),
+  ).toHaveCount(0);
 });
