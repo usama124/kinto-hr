@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { attendanceDayPreviewSchema } from '@kinto/contracts';
 import {
   previewAttendanceTiming,
+  previewAttendanceDay,
   previewAttendanceNormalization,
   previewAttendanceAssociation,
   PLANS,
@@ -546,5 +548,638 @@ describe('synthetic attendance normalization and schedule association', () => {
       ['2024-02-29T09:00:00', '2024-02-29T04:00:00.000Z'],
     ])
       expect(normalize(source).occurredAt).toBe(utc);
+  });
+});
+
+describe('standard workday qualification preview', () => {
+  const tenantId = '20000000-0000-4000-8000-000000000001',
+    deviceId = '20000000-0000-4000-8000-000000000002',
+    employeeId = '20000000-0000-4000-8000-000000000003';
+  const settings = {
+    scope: 'company',
+    timeZone: 'Asia/Karachi',
+    checkIn: '22:00',
+    checkOut: '06:00',
+    checkOutNextDay: true,
+    breakMode: 'fixed_duration',
+    unpaidBreakMinutes: 30,
+    fullDayTargetMinutes: 450,
+    halfDayTargetMinutes: 225,
+    minimumFullDayMinutes: 420,
+    minimumHalfDayMinutes: 180,
+    lateGraceMinutes: 10,
+    earlyGraceMinutes: 10,
+    associationBeforeMinutes: 30,
+    associationAfterMinutes: 60,
+    weeklyRestDays: [7],
+  };
+  const policy = {
+    id: '20000000-0000-4000-8000-000000000004',
+    version: 1,
+    basedOnVersion: 0,
+    status: 'published',
+    effectiveFrom: '2026-10-12',
+    settings,
+    reason: 'Reviewed synthetic day policy',
+    createdAt: '2026-10-11T00:00:00Z',
+    publishedAt: '2026-10-11T01:00:00Z',
+  };
+  const mapping = {
+    id: '20000000-0000-4000-8000-000000000005',
+    deviceId,
+    employeeId,
+    sourceUserId: '0007',
+    version: 1,
+    effectiveFrom: '2026-10-01T00:00:00Z',
+    effectiveUntil: null as string | null,
+    createdAt: '2026-10-01T00:00:00Z',
+    updatedAt: '2026-10-01T00:00:00Z',
+  };
+  const context = {
+    tenantId,
+    deviceId,
+    timeZone: 'Asia/Karachi',
+    receivedAt: '2026-10-14T12:00:00Z',
+    sourceIdentity: 'verified',
+    clock: {
+      status: 'verified',
+      observedDriftMilliseconds: 0,
+      maximumAbsoluteDriftMilliseconds: 1000,
+      maximumFutureLeadMilliseconds: 1000,
+    },
+  };
+  function punch(
+    timestamp: string,
+    direction: 'in' | 'out' | undefined,
+    n = 1,
+  ) {
+    return {
+      normalized: previewAttendanceNormalization(
+        {
+          connectorEventId: `20000000-0000-4000-8000-${String(10 + n).padStart(12, '0')}`,
+          sourceUserId: '0007',
+          sourceEventId: 'test:' + n,
+          sourceLocalTimestamp: timestamp,
+          ...(direction ? { direction } : {}),
+        },
+        context,
+      ),
+      mapping: { ...mapping } as typeof mapping | null,
+    };
+  }
+  const fixture = () => ({
+    tenantId,
+    deviceId,
+    employeeId,
+    workDate: '2026-10-12',
+    schedules: [
+      {
+        tenantId,
+        deviceId,
+        workDate: '2026-10-12',
+        policy: structuredClone(policy),
+      },
+    ],
+    coverageMapping: { ...mapping } as typeof mapping | null,
+    employment: 'employed',
+    calendar: 'working_day',
+    leave: 'none',
+    evidence: 'complete_closed',
+    periodState: 'open',
+    punchRule: 'verified_in_out',
+    punches: [
+      punch('2026-10-12T22:00:00', 'in', 1),
+      punch('2026-10-13T06:00:00', 'out', 2),
+    ],
+  });
+  it('calculates an overnight full day with one fixed break, exact references and disabled pay effects', () => {
+    const day = fixture(),
+      original = structuredClone(day);
+    const result = previewAttendanceDay(day);
+    expect(result).toMatchObject({
+      status: 'qualified_candidate',
+      qualification: 'full_day',
+      uncoveredAbsenceUnits: 0,
+      workedMinutes: 450,
+      eligibleWorkedMinutes: 450,
+      grossWorkedMilliseconds: 480 * 60000,
+      breakDeductedMilliseconds: 30 * 60000,
+      workedMilliseconds: 450 * 60000,
+      eligibleWorkedMilliseconds: 450 * 60000,
+      scheduledMinutes: 480,
+      netScheduledMinutes: 450,
+      policyId: policy.id,
+      policyVersion: 1,
+      workDate: '2026-10-12',
+      calculationVersion: 1,
+      firstPunchAt: '2026-10-12T17:00:00.000Z',
+      lastPunchAt: '2026-10-13T01:00:00.000Z',
+      uniquePunchCount: 2,
+      isLate: false,
+      isEarly: false,
+      overtimeCandidateMilliseconds: 0,
+      overtimePayable: false,
+      attendanceProcessingAvailable: false,
+      payrollEffectsAvailable: false,
+    });
+    if (result.status !== 'qualified_candidate')
+      throw new Error('Unexpected review');
+    expect(result.punchReferences).toEqual(
+      day.punches.map((v) => ({
+        connectorEventId: v.normalized.source.connectorEventId,
+        mappingId: mapping.id,
+        mappingVersion: 1,
+      })),
+    );
+    result.punchReferences[0].mappingVersion = 99;
+    expect(day).toEqual(original);
+  });
+  it.each([
+    [180 * 60000 - 1, 'insufficient', 1],
+    [180 * 60000, 'half_day', 0.5],
+    [180 * 60000 + 1, 'half_day', 0.5],
+    [420 * 60000 - 1, 'half_day', 0.5],
+    [420 * 60000, 'full_day', 0],
+    [420 * 60000 + 1, 'full_day', 0],
+  ])(
+    'qualifies exact eligible millisecond threshold %s',
+    (eligible, qualification, units) => {
+      const day = fixture();
+      const end = new Date(
+        Date.parse('2026-10-12T22:00:00Z') + eligible + 30 * 60000,
+      )
+        .toISOString()
+        .slice(0, -1);
+      day.punches[1] = punch(end, 'out', 2);
+      expect(previewAttendanceDay(day)).toMatchObject({
+        status: 'qualified_candidate',
+        qualification,
+        uncoveredAbsenceUnits: units,
+        eligibleWorkedMilliseconds: eligible,
+        workedMilliseconds: eligible,
+      });
+    },
+  );
+  it('does not confuse target minutes with minimums or let grace invent eligible work', () => {
+    const day = fixture();
+    day.punches[1] = punch('2026-10-13T05:30:00', 'out', 2);
+    day.schedules[0].policy.settings.earlyGraceMinutes = 60;
+    expect(previewAttendanceDay(day)).toMatchObject({
+      qualification: 'full_day',
+      workedMinutes: 420,
+      eligibleWorkedMinutes: 420,
+      netScheduledMinutes: 450,
+      isEarly: false,
+      earlyMilliseconds: 30 * 60000,
+    });
+  });
+  it.each([
+    [0, 480, 0],
+    [30, 450, 30],
+  ])(
+    'subtracts fixed break %s once',
+    (breakMinutes, workedMinutes, deducted) => {
+      const day = fixture();
+      day.schedules[0].policy.settings.unpaidBreakMinutes = breakMinutes;
+      expect(previewAttendanceDay(day)).toMatchObject({
+        workedMinutes,
+        breakDeductedMilliseconds: deducted * 60000,
+      });
+    },
+  );
+  it('clamps a short interval at zero without erasing the gross duration', () => {
+    const day = fixture();
+    day.punches[1] = punch('2026-10-12T22:10:00', 'out', 2);
+    expect(previewAttendanceDay(day)).toMatchObject({
+      qualification: 'insufficient',
+      grossWorkedMilliseconds: 10 * 60000,
+      breakDeductedMilliseconds: 10 * 60000,
+      workedMinutes: 0,
+      eligibleWorkedMinutes: 0,
+    });
+  });
+  it('preserves actual work outside the schedule but never uses candidate overtime to fill thresholds', () => {
+    const day = fixture();
+    day.punches = [
+      punch('2026-10-12T21:45:00', 'in', 1),
+      punch('2026-10-13T06:30:00', 'out', 2),
+    ];
+    expect(previewAttendanceDay(day)).toMatchObject({
+      workedMinutes: 495,
+      eligibleWorkedMinutes: 450,
+      overtimeCandidateMilliseconds: 45 * 60000,
+      overtimePayable: false,
+    });
+    day.punches = [
+      punch('2026-10-13T05:59:00', 'in', 1),
+      punch('2026-10-13T06:59:00', 'out', 2),
+    ];
+    expect(previewAttendanceDay(day)).toMatchObject({
+      qualification: 'insufficient',
+      workedMinutes: 30,
+      eligibleWorkedMinutes: 0,
+      overtimeCandidateMilliseconds: 30 * 60000,
+    });
+  });
+  it.each([0, 1])(
+    'uses inclusive grace boundaries without rounding %s',
+    (extra) => {
+      const day = fixture();
+      const suffix = extra ? '.001' : '';
+      day.punches = [
+        punch('2026-10-12T22:10:00' + suffix, 'in', 1),
+        punch('2026-10-13T05:50:00', 'out', 2),
+      ];
+      expect(previewAttendanceDay(day)).toMatchObject({
+        lateMilliseconds: 10 * 60000 + extra,
+        earlyMilliseconds: 10 * 60000,
+        isLate: !!extra,
+        isEarly: false,
+        eligibleWorkedMilliseconds: 430 * 60000 - extra,
+      });
+    },
+  );
+  it('uses independent company thresholds and does not mutate an earlier policy result', () => {
+    const day = fixture();
+    day.punches[1] = punch('2026-10-13T05:30:00', 'out', 2);
+    const original = previewAttendanceDay(day);
+    day.schedules[0].policy.version = 2;
+    day.schedules[0].policy.basedOnVersion = 1;
+    day.schedules[0].policy.settings.minimumFullDayMinutes = 450;
+    expect(previewAttendanceDay(day)).toMatchObject({
+      qualification: 'half_day',
+      policyVersion: 2,
+    });
+    expect(original).toMatchObject({
+      qualification: 'full_day',
+      policyVersion: 1,
+    });
+    day.tenantId = deviceId;
+    day.schedules[0].tenantId = deviceId;
+    for (const v of day.punches) v.normalized.tenantId = deviceId;
+    expect(previewAttendanceDay(day)).toMatchObject({
+      tenantId: deviceId,
+      qualification: 'half_day',
+    });
+    day.periodState = 'locked';
+    expect(previewAttendanceDay(day)).toMatchObject({
+      status: 'needs_review',
+      code: 'locked_period',
+      workedMinutes: null,
+      uncoveredAbsenceUnits: null,
+    });
+  });
+  it('sorts out-of-order evidence and deduplicates exact transport retries regardless of receipt time', () => {
+    const day = fixture(),
+      original = previewAttendanceDay(day);
+    const duplicate = structuredClone(day.punches[0]);
+    duplicate.normalized.receivedAt = '2026-10-13T13:00:00Z';
+    day.punches = [day.punches[1], duplicate, day.punches[0]];
+    expect(previewAttendanceDay(day)).toEqual(original);
+  });
+  it('refuses conflicting transport and unproven vendor duplicate identities', () => {
+    const day = fixture(),
+      duplicate = structuredClone(day.punches[0]);
+    duplicate.normalized.source.workCode = 'changed';
+    day.punches.push(duplicate);
+    expect(previewAttendanceDay(day)).toMatchObject({
+      status: 'needs_review',
+      code: 'conflicting_duplicate',
+    });
+    const other = fixture();
+    other.punches[1].normalized.source.sourceEventId =
+      other.punches[0].normalized.source.sourceEventId;
+    expect(previewAttendanceDay(other)).toMatchObject({
+      code: 'source_identity_conflict',
+      uncoveredAbsenceUnits: null,
+    });
+  });
+  it('requires complete closed evidence before a no-punch absence candidate and never deducts salary', () => {
+    const day = fixture();
+    day.punches = [];
+    expect(previewAttendanceDay(day)).toMatchObject({
+      status: 'qualified_candidate',
+      qualification: 'no_punch_absence',
+      uncoveredAbsenceUnits: 1,
+      workedMinutes: 0,
+      uniquePunchCount: 0,
+      firstPunchAt: null,
+      lastPunchAt: null,
+      isLate: false,
+      isEarly: false,
+      payrollEffectsAvailable: false,
+    });
+    day.coverageMapping = null;
+    expect(previewAttendanceDay(day)).toMatchObject({
+      code: 'mapping_unresolved',
+      uncoveredAbsenceUnits: null,
+    });
+    day.coverageMapping = {
+      ...mapping,
+      effectiveUntil: '2026-10-13T01:00:00Z',
+    };
+    expect(previewAttendanceDay(day)).toMatchObject({
+      code: 'mapping_outside_interval',
+      uncoveredAbsenceUnits: null,
+    });
+    day.coverageMapping = { ...mapping, effectiveFrom: '2026-10-12T18:00:00Z' };
+    expect(previewAttendanceDay(day)).toMatchObject({
+      code: 'mapping_outside_interval',
+      uncoveredAbsenceUnits: null,
+    });
+    day.evidence = 'incomplete';
+    expect(previewAttendanceDay(day)).toMatchObject({
+      code: 'incomplete_evidence',
+      workedMinutes: null,
+      uncoveredAbsenceUnits: null,
+    });
+  });
+  it.each(['holiday', 'rest_day'])(
+    'does not label %s as absence',
+    (calendar) => {
+      const day = fixture();
+      day.calendar = calendar;
+      day.punches = [];
+      expect(previewAttendanceDay(day)).toMatchObject({
+        status: calendar,
+        workedMinutes: null,
+        uncoveredAbsenceUnits: null,
+      });
+      day.punches = fixture().punches;
+      expect(previewAttendanceDay(day)).toMatchObject({
+        code: 'non_workday_punches',
+      });
+    },
+  );
+  it('handles non-employed and approved full-leave dates without guessed payable units', () => {
+    const day = fixture();
+    day.employment = 'not_employed';
+    day.punches = [];
+    day.schedules = [];
+    expect(previewAttendanceDay(day)).toMatchObject({
+      status: 'not_employed',
+      policyId: null,
+      uncoveredAbsenceUnits: null,
+    });
+    day.punches = fixture().punches;
+    expect(previewAttendanceDay(day)).toMatchObject({
+      code: 'non_workday_punches',
+    });
+    const leave = fixture();
+    leave.leave = 'approved_full_day';
+    leave.punches = [];
+    expect(previewAttendanceDay(leave)).toMatchObject({
+      status: 'leave',
+      uncoveredAbsenceUnits: null,
+    });
+    leave.punches = fixture().punches;
+    expect(previewAttendanceDay(leave)).toMatchObject({
+      code: 'non_workday_punches',
+    });
+  });
+  it('keeps partial/pending leave plus attendance unresolved rather than charging a half-day absence', () => {
+    const day = fixture();
+    day.leave = 'partial_or_pending';
+    day.punches[1] = punch('2026-10-13T02:15:00', 'out', 2);
+    expect(previewAttendanceDay(day)).toMatchObject({
+      status: 'needs_review',
+      code: 'leave_composition_required',
+      uncoveredAbsenceUnits: null,
+      workedMinutes: null,
+    });
+  });
+  it('keeps unknown employment, calendar, schedule and conflicting weekly rest policy unresolved', () => {
+    const day = fixture();
+    day.employment = 'unknown';
+    expect(previewAttendanceDay(day)).toMatchObject({
+      code: 'employment_unknown',
+    });
+    day.employment = 'employed';
+    day.calendar = 'unknown';
+    expect(previewAttendanceDay(day)).toMatchObject({
+      code: 'calendar_unknown',
+    });
+    day.calendar = 'working_day';
+    day.schedules = [];
+    expect(previewAttendanceDay(day)).toMatchObject({
+      code: 'unknown_schedule',
+    });
+    day.schedules = fixture().schedules;
+    day.schedules[0].policy.settings.weeklyRestDays = [1];
+    expect(previewAttendanceDay(day)).toMatchObject({
+      code: 'calendar_policy_conflict',
+    });
+  });
+  it('refuses unsupported historical schedule offsets even on a zero-punch day', () => {
+    const day = fixture();
+    day.workDate = '2009-07-01';
+    day.schedules[0].workDate = day.workDate;
+    day.schedules[0].policy.effectiveFrom = '2009-01-01';
+    day.punches = [];
+    expect(previewAttendanceDay(day)).toMatchObject({
+      code: 'association_unresolved',
+      uncoveredAbsenceUnits: null,
+    });
+  });
+  it('refuses single, tied, incomplete-direction and multiple-pair evidence', () => {
+    const day = fixture();
+    day.punches.pop();
+    expect(previewAttendanceDay(day)).toMatchObject({ code: 'missing_punch' });
+    day.punches = [
+      punch('2026-10-12T22:00:00', 'in', 1),
+      punch('2026-10-12T22:00:00', 'out', 2),
+    ];
+    expect(previewAttendanceDay(day)).toMatchObject({
+      code: 'ambiguous_punches',
+    });
+    day.punches = [
+      punch('2026-10-12T22:00:00', undefined, 1),
+      punch('2026-10-13T06:00:00', undefined, 2),
+    ];
+    expect(previewAttendanceDay(day)).toMatchObject({
+      code: 'ambiguous_punches',
+    });
+    day.punches = fixture().punches;
+    day.punches[0].normalized.source.direction = 'out';
+    day.punches[1].normalized.source.direction = 'in';
+    expect(previewAttendanceDay(day)).toMatchObject({
+      code: 'ambiguous_punches',
+    });
+    day.punches = fixture().punches;
+    day.punches.push(punch('2026-10-13T02:00:00', 'out', 3));
+    expect(previewAttendanceDay(day)).toMatchObject({
+      code: 'ambiguous_punches',
+    });
+  });
+  it('requires explicit approved first/last mode for directionless punches', () => {
+    const day = fixture();
+    day.punchRule = 'approved_first_last';
+    expect(previewAttendanceDay(day)).toMatchObject({
+      code: 'direction_rule_mismatch',
+    });
+    day.punches = [
+      punch('2026-10-13T02:00:00', undefined, 3),
+      punch('2026-10-13T06:00:00', undefined, 2),
+      punch('2026-10-12T22:00:00', undefined, 1),
+    ];
+    expect(previewAttendanceDay(day)).toMatchObject({
+      qualification: 'full_day',
+      workedMinutes: 450,
+      uniquePunchCount: 3,
+    });
+  });
+  it('refuses unverified normalization, unresolved mapping, source mismatches and mapping interval ends', () => {
+    const day = fixture();
+    day.punches[0].normalized = previewAttendanceNormalization(
+      day.punches[0].normalized.source,
+      { ...context, sourceIdentity: 'unverified' },
+    );
+    expect(previewAttendanceDay(day)).toMatchObject({
+      code: 'normalization_unverified',
+    });
+    day.punches = fixture().punches;
+    day.punches[0].mapping = null;
+    expect(previewAttendanceDay(day)).toMatchObject({
+      code: 'mapping_unresolved',
+    });
+    day.punches = fixture().punches;
+    day.punches[0].mapping!.sourceUserId = '7';
+    expect(previewAttendanceDay(day)).toMatchObject({
+      code: 'mapping_source_mismatch',
+    });
+    day.punches = fixture().punches;
+    day.punches[1].mapping!.effectiveUntil = '2026-10-13T01:00:00Z';
+    expect(previewAttendanceDay(day)).toMatchObject({
+      code: 'mapping_outside_interval',
+    });
+    day.punches = fixture().punches;
+    day.punches[0].mapping!.effectiveFrom = '2026-10-12T18:00:00Z';
+    expect(previewAttendanceDay(day)).toMatchObject({
+      code: 'mapping_outside_interval',
+    });
+  });
+  it('does not silently discard outside-window, different-workdate or ambiguously associated punches', () => {
+    const day = fixture();
+    day.punches[0] = punch('2026-10-12T21:29:59.999', 'in', 1);
+    expect(previewAttendanceDay(day)).toMatchObject({ code: 'outside_window' });
+    day.punches = fixture().punches;
+    day.schedules.push({
+      ...structuredClone(day.schedules[0]),
+      workDate: '2026-10-13',
+    });
+    day.punches[1] = punch('2026-10-13T22:00:00', 'out', 2);
+    expect(previewAttendanceDay(day)).toMatchObject({ code: 'wrong_workdate' });
+    day.punches = fixture().punches;
+    day.schedules[1].policy.settings.checkIn = '00:15';
+    day.schedules[1].policy.settings.checkOut = '08:15';
+    day.schedules[1].policy.settings.checkOutNextDay = false;
+    day.punches[1] = punch('2026-10-13T00:00:00', 'out', 2);
+    expect(previewAttendanceDay(day)).toMatchObject({
+      code: 'association_unresolved',
+    });
+  });
+  it('rejects contradictory qualification responses rather than expose false absence or work totals', () => {
+    const result = previewAttendanceDay(fixture());
+    if (result.status !== 'qualified_candidate')
+      throw new Error('Unexpected review');
+    for (const corrupted of [
+      { ...result, uncoveredAbsenceUnits: 1 },
+      { ...result, policyId: null },
+      { ...result, uniquePunchCount: 0 },
+      { ...result, firstPunchAt: null },
+      { ...result, lastPunchAt: result.firstPunchAt },
+      { ...result, punchReferences: [] },
+      {
+        ...result,
+        punchReferences: [result.punchReferences[0], result.punchReferences[0]],
+      },
+      { ...result, netScheduledMinutes: 481 },
+      {
+        ...result,
+        breakDeductedMilliseconds: result.grossWorkedMilliseconds + 1,
+      },
+      { ...result, workedMilliseconds: result.workedMilliseconds - 1 },
+      { ...result, eligibleWorkedMilliseconds: result.workedMilliseconds + 1 },
+      {
+        ...result,
+        eligibleBreakDeductedMilliseconds: result.breakDeductedMilliseconds + 1,
+      },
+      { ...result, workedMinutes: 451 },
+      { ...result, eligibleWorkedMinutes: 451 },
+      { ...result, overtimeCandidateMilliseconds: 1 },
+      {
+        ...result,
+        qualification: 'no_punch_absence',
+        uncoveredAbsenceUnits: 1,
+      },
+    ])
+      expect(attendanceDayPreviewSchema.safeParse(corrupted).success).toBe(
+        false,
+      );
+    const day = fixture();
+    day.punches = [];
+    const absent = previewAttendanceDay(day);
+    for (const corrupted of [
+      { ...absent, isLate: true },
+      { ...absent, isEarly: true },
+      { ...absent, lateMilliseconds: 1 },
+      { ...absent, earlyMilliseconds: 1 },
+    ])
+      expect(attendanceDayPreviewSchema.safeParse(corrupted).success).toBe(
+        false,
+      );
+  });
+  it('rejects corrupted settings, foreign scope, future/draft schedules and forged UTC instants', () => {
+    for (const field of ['tenantId', 'deviceId', 'employeeId'] as const) {
+      const day = fixture();
+      day[field] = policy.id;
+      expect(() => previewAttendanceDay(day)).toThrow(
+        'ATTENDANCE_SCOPE_MISMATCH',
+      );
+    }
+    const future = fixture();
+    future.schedules[0].policy.effectiveFrom = '2026-10-13';
+    expect(() => previewAttendanceDay(future)).toThrow(
+      'INVALID_ATTENDANCE_SCHEDULE',
+    );
+    const duplicate = fixture();
+    duplicate.schedules.push(structuredClone(duplicate.schedules[0]));
+    expect(() => previewAttendanceDay(duplicate)).toThrow(
+      'INVALID_ATTENDANCE_SCHEDULE',
+    );
+    const altered = fixture();
+    altered.punches[0].normalized.occurredAt = '2026-10-12T18:00:00Z';
+    expect(() => previewAttendanceDay(altered)).toThrow(
+      'INVALID_ATTENDANCE_INSTANT',
+    );
+    for (const input of [
+      null,
+      {},
+      { ...fixture(), evidence: 'guessed' },
+      { ...fixture(), payrollEffectsAvailable: true },
+      { ...fixture(), punches: Array(501).fill(fixture().punches[0]) },
+      {
+        ...fixture(),
+        schedules: [
+          {
+            ...fixture().schedules[0],
+            policy: { ...policy, status: 'draft', publishedAt: null },
+          },
+        ],
+      },
+      {
+        ...fixture(),
+        schedules: [
+          {
+            ...fixture().schedules[0],
+            policy: {
+              ...policy,
+              settings: { ...settings, minimumFullDayMinutes: 500 },
+            },
+          },
+        ],
+      },
+    ])
+      expect(() => previewAttendanceDay(input)).toThrow();
   });
 });

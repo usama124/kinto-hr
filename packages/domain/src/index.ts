@@ -146,3 +146,5 @@ export function assertDraftActivation(
 export * from './attendance-timing';
 
 export * from './attendance-normalization';
+
+export * from './attendance-day';
