@@ -13,6 +13,11 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import {
+  leaveTypeCreateSchema,
+  leavePolicyDraftInputSchema,
+  leavePolicyPublishSchema,
+  leavePolicyQuerySchema,
+  leaveTypeQuerySchema,
   attendanceTimingQuerySchema,
   attendanceTimingPolicyDraftSchema,
   attendanceTimingPublishSchema,
@@ -141,6 +146,97 @@ export class OrganizationController {
     );
   }
 
+  // Register static leave-type creation before the generic catalog POST.
+  @Get('leave-types') async listLeaveTypes(
+    @Req() req: AuthRequest,
+    @Param('tenantId') tenant: unknown,
+    @Query() query: unknown,
+  ) {
+    const value = leaveTypeQuerySchema.safeParse(query);
+    if (!value.success) throw new BadRequestException();
+    const c = await this.context(req, tenant);
+    return this.database.listLeaveTypes(c.actor, c.tenantId, value.data);
+  }
+  @Get('leave-types/:typeId/policies') async listLeavePolicies(
+    @Req() req: AuthRequest,
+    @Param('tenantId') tenant: unknown,
+    @Param('typeId') type: unknown,
+    @Query() query: unknown,
+  ) {
+    const value = leavePolicyQuerySchema.safeParse(query),
+      id = tenantIdSchema.safeParse(type);
+    if (!value.success || !id.success) throw new BadRequestException();
+    const c = await this.context(req, tenant);
+    return this.database.listLeavePolicies(
+      c.actor,
+      c.tenantId,
+      id.data,
+      value.data,
+    );
+  }
+  @Post('leave-types') async createLeaveType(
+    @Req() req: AuthRequest,
+    @Param('tenantId') tenant: unknown,
+    @Headers('idempotency-key') key: unknown,
+    @Body() body: unknown,
+  ) {
+    const value = leaveTypeCreateSchema.safeParse(body),
+      k = tenantIdSchema.safeParse(key);
+    if (!value.success || !k.success) throw new BadRequestException();
+    const c = await this.context(req, tenant, true);
+    return this.database.createLeaveType(
+      c.actor,
+      c.tenantId,
+      k.data,
+      value.data,
+    );
+  }
+  @Post('leave-types/:typeId/policies/drafts') async createLeavePolicy(
+    @Req() req: AuthRequest,
+    @Param('tenantId') tenant: unknown,
+    @Param('typeId') type: unknown,
+    @Headers('idempotency-key') key: unknown,
+    @Body() body: unknown,
+  ) {
+    const value = leavePolicyDraftInputSchema.safeParse(body),
+      k = tenantIdSchema.safeParse(key),
+      id = tenantIdSchema.safeParse(type);
+    if (!value.success || !k.success || !id.success)
+      throw new BadRequestException();
+    const c = await this.context(req, tenant, true);
+    return this.database.createLeavePolicy(
+      c.actor,
+      c.tenantId,
+      id.data,
+      k.data,
+      value.data,
+    );
+  }
+  @Post('leave-types/:typeId/policies/:policyId/publication')
+  async publishLeavePolicy(
+    @Req() req: AuthRequest,
+    @Param('tenantId') tenant: unknown,
+    @Param('typeId') type: unknown,
+    @Param('policyId') policy: unknown,
+    @Headers('idempotency-key') key: unknown,
+    @Body() body: unknown,
+  ) {
+    const value = leavePolicyPublishSchema.safeParse(body),
+      k = tenantIdSchema.safeParse(key),
+      id = tenantIdSchema.safeParse(type),
+      p = tenantIdSchema.safeParse(policy);
+    if (!value.success || !k.success || !id.success || !p.success)
+      throw new BadRequestException();
+    const c = await this.context(req, tenant, true);
+    return this.database.publishLeavePolicy(
+      c.actor,
+      c.tenantId,
+      id.data,
+      p.data,
+      k.data,
+      value.data,
+    );
+  }
   @Post(':catalog')
   async createCatalogEntry(
     @Req() req: AuthRequest,

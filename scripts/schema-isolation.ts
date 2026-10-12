@@ -253,6 +253,30 @@ export const schemaIsolationInventory: readonly Classification[] = [
     { kinto_control_owner: controlAppend },
   ),
   privateTenantTable(
+    'leave_types',
+    regression(
+      'organization-policies',
+      'keeps leave policies and receipts private behind constrained functions',
+    ),
+    { kinto_control_owner: controlAppend },
+  ),
+  privateTenantTable(
+    'leave_policy_versions',
+    regression(
+      'organization-policies',
+      'keeps leave policies and receipts private behind constrained functions',
+    ),
+    { kinto_control_owner: ['SELECT', 'INSERT', 'UPDATE'] },
+  ),
+  privateTenantTable(
+    'leave_policy_receipts',
+    regression(
+      'organization-policies',
+      'keeps leave policies and receipts private behind constrained functions',
+    ),
+    { kinto_control_owner: controlAppend },
+  ),
+  privateTenantTable(
     'attendance_timing_receipts',
     regression(
       'organization-policies',

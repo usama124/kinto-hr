@@ -45,6 +45,9 @@ model Tenant {
   attendanceAllocations        AttendanceAllocation[]
   attendanceDevices            AttendanceDevice[]
   deviceEmployeeMappings       DeviceEmployeeMapping[]
+  leaveTypes LeaveType[]
+  leavePolicyVersions LeavePolicyVersion[]
+  leavePolicyReceipts LeavePolicyReceipt[]
   attendanceTimingReceipts AttendanceTimingReceipt[]
   deviceMappingReceipts        DeviceMappingReceipt[]
   syntheticAttendanceEvents SyntheticAttendanceEvent[]
@@ -84,6 +87,9 @@ model Identity {
   employeeIdentityLinks        EmployeeIdentityLink[]
   administratorAccountRequests AdministratorAccountRequest[]
   administratorInvitations     AdministratorInvitation[]
+  createdLeavePolicies LeavePolicyVersion[] @relation("LeavePolicyCreatedBy")
+  publishedLeavePolicies LeavePolicyVersion[] @relation("LeavePolicyPublishedBy")
+  leavePolicyReceipts LeavePolicyReceipt[]
   createdCompanyPolicies       CompanyPolicyVersion[]        @relation("PolicyCreatedBy")
   publishedCompanyPolicies     CompanyPolicyVersion[]        @relation("PolicyPublishedBy")
   createdEntitlementGrants     EntitlementGrant[]             @relation("GrantCreatedBy")
@@ -1138,4 +1144,54 @@ model AttendanceTimingReceipt {
  policy CompanyPolicyVersion @relation(fields:[tenantId,policyId],references:[tenantId,id],onDelete:Restrict)
  @@id([tenantId,actorId,requestId])
  @@map("attendance_timing_receipts")
+}
+
+model LeaveType {
+  id String @id @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  code String @db.VarChar(32)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  tenant Tenant @relation(fields:[tenantId], references:[id], onDelete:Restrict)
+  policies LeavePolicyVersion[]
+  @@unique([tenantId,id])
+  @@unique([tenantId,code])
+  @@map("leave_types")
+}
+model LeavePolicyVersion {
+  id String @id @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  leaveTypeId String @map("leave_type_id") @db.Uuid
+  policyVersion Int @map("policy_version")
+  basedOnVersion Int @map("based_on_version")
+  status String @default("draft") @db.VarChar(20)
+  effectiveFrom DateTime @map("effective_from") @db.Date
+  settings Json @db.JsonB
+  reason String @db.VarChar(240)
+  createdByIdentityId String @map("created_by_identity_id") @db.Uuid
+  publishedByIdentityId String? @map("published_by_identity_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  publishedAt DateTime? @map("published_at") @db.Timestamptz()
+  tenant Tenant @relation(fields:[tenantId],references:[id],onDelete:Restrict)
+  leaveType LeaveType @relation(fields:[tenantId,leaveTypeId],references:[tenantId,id],onDelete:Restrict)
+  createdBy Identity @relation("LeavePolicyCreatedBy",fields:[createdByIdentityId],references:[id],onDelete:Restrict)
+  publishedBy Identity? @relation("LeavePolicyPublishedBy",fields:[publishedByIdentityId],references:[id],onDelete:Restrict)
+  receipts LeavePolicyReceipt[]
+  @@unique([tenantId,leaveTypeId,id])
+  @@unique([tenantId,leaveTypeId,policyVersion])
+  @@index([tenantId,leaveTypeId,status,effectiveFrom])
+  @@map("leave_policy_versions")
+}
+model LeavePolicyReceipt {
+  tenantId String @map("tenant_id") @db.Uuid
+  actorId String @map("actor_id") @db.Uuid
+  requestId String @map("request_id") @db.Uuid
+  input Json @db.JsonB
+  leaveTypeId String @map("leave_type_id") @db.Uuid
+  policyId String @map("policy_id") @db.Uuid
+  snapshot Json @db.JsonB
+  tenant Tenant @relation(fields:[tenantId],references:[id],onDelete:Restrict)
+  actor Identity @relation(fields:[actorId],references:[id],onDelete:Restrict)
+  policy LeavePolicyVersion @relation(fields:[tenantId,leaveTypeId,policyId],references:[tenantId,leaveTypeId,id],onDelete:Restrict)
+  @@id([tenantId,actorId,requestId])
+  @@map("leave_policy_receipts")
 }
