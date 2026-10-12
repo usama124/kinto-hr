@@ -90,6 +90,9 @@ export default function RootLayout({
               <Link className="nav-item" href="/attendance-review">
                 Inbox review <span>20</span>
               </Link>
+              <Link className="nav-item" href="/attendance-timing">
+                Attendance timing <span>21</span>
+              </Link>
             </nav>
             <div className="upcoming">
               <span className="nav-heading">UPCOMING MODULES</span>
