@@ -1491,3 +1491,5 @@ export * from './attendance-timing';
 export * from './attendance-normalization';
 
 export * from './attendance-day';
+
+export * from './attendance-leave-composition';
