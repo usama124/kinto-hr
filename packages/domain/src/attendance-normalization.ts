@@ -95,6 +95,45 @@ export function previewAttendanceNormalization(
   );
 }
 
+// Reuse the same IANA/transition guard for empty-day and punch calculations.
+export function previewAttendanceScheduleWindow(input: unknown) {
+  const schedule = attendanceScheduleCandidatesSchema.parse([input])[0];
+  if (schedule.policy.effectiveFrom > schedule.workDate)
+    throw new Error('INVALID_ATTENDANCE_SCHEDULE');
+  const midnight = localInstant(schedule.workDate + 'T00:00:00');
+  const preview = previewAttendanceTiming(schedule.policy.settings);
+  const flags = {
+    attendanceProcessingAvailable: false as const,
+    payrollEffectsAvailable: false as const,
+  };
+  const review = {
+    status: 'needs_review' as const,
+    code: 'unsupported_timezone_offset' as const,
+    ...flags,
+  };
+  if (midnight === null) return review;
+  const from = midnight + preview.associationWindow.fromLocalMinute * 60000;
+  const until = midnight + preview.associationWindow.untilLocalMinute * 60000;
+  for (const at of [from, until]) {
+    const local = new Date(at + offsetMilliseconds).toISOString().slice(0, 19);
+    if (localInstant(local) !== at) return review;
+  }
+  const minutes =
+    Number(schedule.policy.settings.checkIn.slice(0, 2)) * 60 +
+    Number(schedule.policy.settings.checkIn.slice(3));
+  const start = midnight + minutes * 60000;
+  return {
+    status: 'schedule_window_candidate' as const,
+    from: new Date(from).toISOString(),
+    until: new Date(until).toISOString(),
+    scheduledFrom: new Date(start).toISOString(),
+    scheduledUntil: new Date(
+      start + preview.scheduledMinutes * 60000,
+    ).toISOString(),
+    ...flags,
+  };
+}
+
 // Pure what-if association only. Inputs are independent trusted schedule snapshots;
 // this does not resolve employee mapping, calendar/leave, latest policy or locked periods.
 export function previewAttendanceAssociation(
@@ -123,19 +162,10 @@ export function previewAttendanceAssociation(
     )
       throw new Error('INVALID_ATTENDANCE_SCHEDULE');
     dates.add(schedule.workDate);
-    const midnight = localInstant(schedule.workDate + 'T00:00:00');
-    const preview = previewAttendanceTiming(schedule.policy.settings);
-    if (midnight === null) return null;
-    const from = midnight + preview.associationWindow.fromLocalMinute * 60000;
-    const until = midnight + preview.associationWindow.untilLocalMinute * 60000;
-    // Refuse a historical offset transition across the window rather than treat
-    // a variable-offset day as fixed-offset minute arithmetic.
-    for (const at of [from, until]) {
-      const local = new Date(at + offsetMilliseconds)
-        .toISOString()
-        .slice(0, 19);
-      if (localInstant(local) !== at) return null;
-    }
+    const window = previewAttendanceScheduleWindow(schedule);
+    if (window.status !== 'schedule_window_candidate') return null;
+    const from = Date.parse(window.from),
+      until = Date.parse(window.until);
     return { schedule, from, until };
   });
   if (normalized.status !== 'candidate')
