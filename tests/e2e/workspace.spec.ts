@@ -6910,3 +6910,734 @@ test('timing workspace does not display a command result after access changes du
     page.getByRole('button', { name: 'Retry exact timing request' }),
   ).toHaveCount(0);
 });
+
+const leaveTypeFixtureRow = (n = 1) => ({
+  id: `00000000-0000-4000-8000-${String(3000 + n).padStart(12, '0')}`,
+  code: n === 1 ? 'CASUAL' : `TYPE_${n}`,
+  createdAt: '2026-10-12T04:00:00.000Z',
+});
+const leaveSettingsFixture = {
+  scope: 'company',
+  timeZone: 'Asia/Karachi',
+  code: 'CASUAL',
+  name: 'Casual leave',
+  pay: 'paid',
+  grantMode: 'annual_upfront',
+  annualQuotaDays: 12,
+  monthlyQuotaDays: 2,
+  leaveYearStart: { month: 1, day: 1 },
+  nonWorkingDays: 'exclude',
+};
+const leavePolicyFixtureRow = (
+  version = 1,
+  status = 'draft',
+  basedOnVersion = 0,
+  type = leaveTypeFixtureRow(),
+) => ({
+  id: `00000000-0000-4000-8000-${String(4000 + version).padStart(12, '0')}`,
+  tenantId: deviceTenant,
+  leaveTypeId: type.id,
+  version,
+  basedOnVersion,
+  status,
+  effectiveFrom: timingDate(),
+  effectiveUntil: null as string | null,
+  settings: { ...leaveSettingsFixture, code: type.code },
+  reason: 'Employer-reviewed leave fixture',
+  createdAt: '2026-10-12T04:00:00.000Z',
+  publishedAt: status === 'published' ? '2026-10-12T04:01:00.000Z' : null,
+});
+async function leaveWorkspaceFixture(page: Page) {
+  const state = {
+    identity: connectorIdentity,
+    selected: deviceTenant as string | null,
+    roles: ['owner'],
+    csrf: 'c'.repeat(43),
+    sessionStatus: 200,
+    readStatus: 200,
+    writeStatus: 201,
+    types: [leaveTypeFixtureRow()],
+    policies: [leavePolicyFixtureRow()],
+    catalogOverride: undefined as unknown,
+    historyOverride: undefined as unknown,
+    receiptOverride: undefined as unknown,
+    drop: false,
+    changeDuringRead: '',
+    changeDuringWrite: '',
+    receipts: new Map<
+      string,
+      { leaveTypeId: string; id: string; version: number; replayed: boolean }
+    >(),
+    reads: [] as string[],
+    writes: [] as {
+      path: string;
+      key: string;
+      csrf: string;
+      body: Record<string, unknown>;
+    }[],
+  };
+  const change = (kind: string) => {
+    if (kind === 'company') state.selected = mappingEmployeeId;
+    if (kind === 'identity') state.identity = mappingEmployeeId;
+    if (kind === 'role') state.roles = ['hr_admin'];
+  };
+  await page.route('**/api/v1/auth/session', (route) =>
+    route.fulfill({
+      status: state.sessionStatus,
+      json: {
+        identityId: state.identity,
+        selectedTenantId: state.selected,
+        csrfToken: state.csrf,
+        tenants: [
+          {
+            id: state.selected ?? deviceTenant,
+            name: 'Leave Fixture Company',
+            roles: state.roles,
+          },
+        ],
+      },
+    }),
+  );
+  await page.route(
+    '**/api/v1/tenants/**/organization/leave-types**',
+    async (route) => {
+      const req = route.request(),
+        url = new URL(req.url());
+      if (req.method() === 'POST') {
+        const key = req.headers()['idempotency-key'],
+          body = req.postDataJSON();
+        state.writes.push({
+          path: url.pathname,
+          key,
+          csrf: req.headers()['x-csrf-token'],
+          body,
+        });
+        if (state.writeStatus !== 201)
+          return route.fulfill({ status: state.writeStatus, json: {} });
+        let receipt = state.receipts.get(key);
+        if (receipt) receipt = { ...receipt, replayed: true };
+        else {
+          const typeId = url.pathname.match(/leave-types\/([^/]+)/)?.[1];
+          if (url.pathname.endsWith('/publication')) {
+            const row = state.policies.find((p) =>
+              url.pathname.includes(p.id),
+            )!;
+            row.status = 'published';
+            row.publishedAt = '2026-10-12T04:02:00.000Z';
+            receipt = {
+              leaveTypeId: row.leaveTypeId,
+              id: row.id,
+              version: row.version,
+              replayed: false,
+            };
+          } else {
+            let type = state.types.find((t) => t.id === typeId);
+            if (!type) {
+              type = {
+                ...leaveTypeFixtureRow(state.types.length + 1),
+                code: body.settings.code,
+              };
+              state.types.push(type);
+            }
+            const version =
+              Math.max(
+                0,
+                ...state.policies
+                  .filter((p) => p.leaveTypeId === type!.id)
+                  .map((p) => p.version),
+              ) + 1;
+            const row = {
+              ...leavePolicyFixtureRow(
+                version,
+                'draft',
+                body.expectedCurrentVersion,
+                type,
+              ),
+              id: `00000000-0000-4000-8000-${String(5000 + state.policies.length).padStart(12, '0')}`,
+              effectiveFrom: body.effectiveFrom,
+              settings: body.settings,
+              reason: body.reason,
+            };
+            state.policies.push(row);
+            receipt = {
+              leaveTypeId: type.id,
+              id: row.id,
+              version,
+              replayed: false,
+            };
+          }
+          state.receipts.set(key, receipt);
+        }
+        change(state.changeDuringWrite);
+        if (state.drop) {
+          state.drop = false;
+          return route.abort('failed');
+        }
+        return route.fulfill({
+          status: 201,
+          json: state.receiptOverride ?? receipt,
+        });
+      }
+      state.reads.push(url.pathname + url.search);
+      if (state.readStatus !== 200)
+        return route.fulfill({ status: state.readStatus, json: {} });
+      const cursor = url.searchParams.get('afterId');
+      if (url.pathname.endsWith('/policies')) {
+        const typeId = url.pathname.match(/leave-types\/([^/]+)/)![1],
+          type = state.types.find((t) => t.id === typeId)!;
+        const all = state.policies.filter((p) => p.leaveTypeId === typeId),
+          published = all.filter((p) => p.status === 'published'),
+          asOf = url.searchParams.get('asOf')!;
+        const rows = all
+          .filter((p) => !cursor || p.id > cursor)
+          .sort((a, b) => a.id.localeCompare(b.id))
+          .slice(0, 26);
+        const current =
+          [...published]
+            .filter((p) => p.effectiveFrom <= asOf)
+            .sort(
+              (a, b) =>
+                b.effectiveFrom.localeCompare(a.effectiveFrom) ||
+                b.version - a.version,
+            )[0] ?? null;
+        const data = {
+          tenantId: deviceTenant,
+          leaveType: type,
+          asOf,
+          latestPublishedVersion: Math.max(
+            0,
+            ...published.map((p) => p.version),
+          ),
+          currentPolicy: current,
+          items: rows.slice(0, 25),
+          nextCursor: rows.length > 25 ? rows[24].id : null,
+          leaveReservationAvailable: false,
+          payrollEffectsAvailable: false,
+        };
+        change(state.changeDuringRead);
+        return route.fulfill({
+          status: 200,
+          json: state.historyOverride ?? data,
+        });
+      }
+      const rows = state.types
+        .filter((t) => !cursor || t.id > cursor)
+        .sort((a, b) => a.id.localeCompare(b.id))
+        .slice(0, 26);
+      return route.fulfill({
+        status: 200,
+        json: state.catalogOverride ?? {
+          tenantId: deviceTenant,
+          items: rows.slice(0, 25),
+          nextCursor: rows.length > 25 ? rows[24].id : null,
+          leaveReservationAvailable: false,
+          payrollEffectsAvailable: false,
+        },
+      });
+    },
+  );
+  return state;
+}
+async function fillLeavePolicyForm(page: Page) {
+  const code = page.getByLabel('Leave type code', { exact: true });
+  if (await code.isEditable()) await code.fill('NEW_CASUAL');
+  await page
+    .getByLabel('Leave type name', { exact: true })
+    .fill('Casual leave');
+  await page
+    .getByRole('combobox', { name: 'Paid or unpaid', exact: true })
+    .selectOption('paid');
+  await page.getByLabel('Annual quota days', { exact: true }).fill('12');
+  await page.getByLabel('Monthly cap days', { exact: true }).fill('2');
+  await page.getByLabel('Leave year start month', { exact: true }).fill('1');
+  await page.getByLabel('Leave year start day', { exact: true }).fill('1');
+  await page
+    .getByRole('combobox', { name: 'Rest days and holidays', exact: true })
+    .selectOption('exclude');
+  await page
+    .getByLabel('Draft reason', { exact: true })
+    .fill('Employer-reviewed leave quotas');
+}
+test('leave workspace creates a type, reviews explicit limits and publishes without reservations', async ({
+  page,
+}) => {
+  const fixture = await leaveWorkspaceFixture(page);
+  fixture.types = [];
+  fixture.policies = [];
+  await page.goto('/leave-policies');
+  await expect(
+    page.getByRole('heading', { name: 'Leave Fixture Company' }),
+  ).toBeVisible();
+  await expect(
+    page.getByLabel('Annual quota days', { exact: true }),
+  ).toHaveValue('');
+  await fillLeavePolicyForm(page);
+  page.once('dialog', (d) => d.accept());
+  await page
+    .getByRole('button', { name: 'Create leave type', exact: true })
+    .click();
+  await expect(page.getByText(/Leave policy change confirmed/)).toBeVisible();
+  expect(fixture.writes[0].body.settings).toMatchObject({
+    annualQuotaDays: 12,
+    monthlyQuotaDays: 2,
+    scope: 'company',
+  });
+  await page.getByRole('button', { name: 'Refresh leave policies' }).click();
+  await expect(
+    page.getByText('No applicable published leave policy.'),
+  ).toBeVisible();
+  await page
+    .getByRole('button', { name: 'Review leave version 1', exact: true })
+    .click();
+  await expect(
+    page.getByRole('region', { name: 'Reviewed leave policy' }),
+  ).toContainText('Monthly usage cap');
+  await page
+    .getByLabel('Publication reason', { exact: true })
+    .fill('Company policy approved');
+  page.once('dialog', (d) => d.accept());
+  await page.getByRole('button', { name: 'Publish leave policy' }).click();
+  await expect(page.getByText(/Leave policy change confirmed/)).toBeVisible();
+  await page.getByRole('button', { name: 'Refresh leave policies' }).click();
+  await expect(
+    page.getByText('Current Casual leave', { exact: true }),
+  ).toBeVisible();
+  expect(fixture.writes).toHaveLength(2);
+  expect(fixture.writes[0].key).not.toBe(fixture.writes[1].key);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+});
+test('leave workspace gives HR read-only access and no write controls', async ({
+  page,
+}) => {
+  const fixture = await leaveWorkspaceFixture(page);
+  fixture.roles = ['hr_admin'];
+  await page.goto('/leave-policies');
+  await page.getByRole('button', { name: 'View CASUAL policies' }).click();
+  await page
+    .getByRole('button', { name: 'Review leave version 1', exact: true })
+    .click();
+  await expect(
+    page.getByText('HR · read-only access', { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Publish leave policy' }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByLabel('Annual quota days', { exact: true }),
+  ).toHaveCount(0);
+  expect(fixture.writes).toEqual([]);
+});
+test('leave workspace rejects fractional quarters and invalid recurring leave years before writing', async ({
+  page,
+}) => {
+  const fixture = await leaveWorkspaceFixture(page);
+  await page.goto('/leave-policies');
+  await fillLeavePolicyForm(page);
+  await page.getByLabel('Monthly cap days', { exact: true }).fill('2.25');
+  await page
+    .getByRole('button', { name: 'Create leave type', exact: true })
+    .click();
+  expect(fixture.writes).toEqual([]);
+  await page.getByLabel('Monthly cap days', { exact: true }).fill('2');
+  await page.getByLabel('Leave year start month', { exact: true }).fill('2');
+  await page.getByLabel('Leave year start day', { exact: true }).fill('29');
+  await page
+    .getByRole('button', { name: 'Create leave type', exact: true })
+    .click();
+  await expect(page.getByText(/Invalid leave settings/)).toBeVisible();
+  expect(fixture.writes).toEqual([]);
+});
+test('leave workspace retains an uncertain type request through refresh and retries with fresh CSRF', async ({
+  page,
+}) => {
+  const fixture = await leaveWorkspaceFixture(page);
+  fixture.types = [];
+  fixture.policies = [];
+  await page.goto('/leave-policies');
+  await fillLeavePolicyForm(page);
+  fixture.drop = true;
+  page.once('dialog', (d) => d.accept());
+  await page
+    .getByRole('button', { name: 'Create leave type', exact: true })
+    .click();
+  await expect(page.getByText(/Outcome unknown/)).toBeVisible();
+  fixture.csrf = 'd'.repeat(43);
+  await page.getByRole('button', { name: 'Refresh leave policies' }).click();
+  await expect(
+    page.getByRole('button', { name: 'Create leave type', exact: true }),
+  ).toBeDisabled();
+  await page.getByRole('button', { name: 'Retry exact leave request' }).click();
+  await expect(page.getByText(/Exact leave request reconciled/)).toBeVisible();
+  expect(fixture.writes[1].key).toBe(fixture.writes[0].key);
+  expect(fixture.writes[1].body).toEqual(fixture.writes[0].body);
+  expect(fixture.writes[1].csrf).toBe('d'.repeat(43));
+  expect(fixture.types).toHaveLength(1);
+});
+for (const change of ['company', 'identity', 'role'])
+  test(`leave workspace clears data after ${change} changes during a read`, async ({
+    page,
+  }) => {
+    const fixture = await leaveWorkspaceFixture(page);
+    await page.goto('/leave-policies');
+    fixture.changeDuringRead = change;
+    await page.getByRole('button', { name: 'View CASUAL policies' }).click();
+    await expect(
+      page.getByText(/Displayed policies and pending commands were cleared/),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('heading', { name: 'Leave Fixture Company' }),
+    ).toHaveCount(0);
+  });
+for (const status of [401, 403])
+  test(`leave workspace clears history on ${status}`, async ({ page }) => {
+    const fixture = await leaveWorkspaceFixture(page);
+    await page.goto('/leave-policies');
+    await page.getByRole('button', { name: 'View CASUAL policies' }).click();
+    fixture.readStatus = status;
+    await page.getByRole('button', { name: 'Refresh leave policies' }).click();
+    await expect(
+      page.getByRole('region', { name: 'Leave policy history' }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole('heading', { name: 'Leave Fixture Company' }),
+    ).toHaveCount(0);
+  });
+for (const context of ['signed-out', 'no-company', 'employee'])
+  test(`leave workspace avoids policy calls for ${context}`, async ({
+    page,
+  }) => {
+    const fixture = await leaveWorkspaceFixture(page);
+    if (context === 'signed-out') fixture.sessionStatus = 401;
+    if (context === 'no-company') fixture.selected = null;
+    if (context === 'employee') fixture.roles = ['employee'];
+    await page.goto('/leave-policies');
+    await expect(
+      page.getByRole('button', { name: 'Refresh leave policies' }),
+    ).toBeEnabled();
+    expect(fixture.reads).toEqual([]);
+    expect(fixture.writes).toEqual([]);
+  });
+test('leave workspace paginates types and policies independently and resolves current policy off-page', async ({
+  page,
+}) => {
+  const fixture = await leaveWorkspaceFixture(page);
+  fixture.types = Array.from({ length: 26 }, (_, i) =>
+    leaveTypeFixtureRow(i + 1),
+  );
+  fixture.policies = Array.from({ length: 26 }, (_, i) =>
+    leavePolicyFixtureRow(
+      i + 1,
+      i === 0 ? 'published' : 'draft',
+      i === 0 ? 0 : 1,
+    ),
+  );
+  await page.goto('/leave-policies');
+  await page.getByRole('button', { name: 'View CASUAL policies' }).click();
+  await page.getByRole('button', { name: 'Next leave policy page' }).click();
+  await expect(
+    page.getByRole('button', { name: 'Review leave version 26', exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Review leave version 1', exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole('button', { name: 'Next leave types page' }).click();
+  await expect(
+    page.getByRole('button', { name: 'View TYPE_26 policies' }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Review leave version 26', exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole('button', { name: 'Review current leave policy' })
+    .click();
+  await expect(
+    page.getByRole('heading', { name: 'Review leave version 1', exact: true }),
+  ).toBeVisible();
+});
+test('leave workspace refuses wrong-company or invalid quota history and erases old data', async ({
+  page,
+}) => {
+  const fixture = await leaveWorkspaceFixture(page);
+  await page.goto('/leave-policies');
+  fixture.historyOverride = {
+    tenantId: deviceTenant,
+    leaveType: leaveTypeFixtureRow(),
+    asOf: timingDate(),
+    latestPublishedVersion: 0,
+    currentPolicy: null,
+    items: [{ ...leavePolicyFixtureRow(), tenantId: mappingEmployeeId }],
+    nextCursor: null,
+    leaveReservationAvailable: false,
+    payrollEffectsAvailable: false,
+  };
+  await page.getByRole('button', { name: 'View CASUAL policies' }).click();
+  await expect(
+    page.getByText(/Leave policy data is unavailable or invalid/),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'Leave Fixture Company' }),
+  ).toHaveCount(0);
+  fixture.historyOverride = undefined;
+  fixture.catalogOverride = {
+    tenantId: deviceTenant,
+    items: [leaveTypeFixtureRow()],
+    nextCursor: mappingEmployeeId,
+    leaveReservationAvailable: false,
+    payrollEffectsAvailable: false,
+  };
+  await page.getByRole('button', { name: 'Refresh leave policies' }).click();
+  await expect(
+    page.getByText(/Leave policy data is unavailable or invalid/),
+  ).toBeVisible();
+});
+test('leave workspace blocks stale publication and reconciles an uncertain publication', async ({
+  page,
+}) => {
+  const fixture = await leaveWorkspaceFixture(page);
+  fixture.policies.push(leavePolicyFixtureRow(2, 'published', 0));
+  await page.goto('/leave-policies');
+  await page.getByRole('button', { name: 'View CASUAL policies' }).click();
+  await page
+    .getByRole('button', { name: 'Review leave version 1', exact: true })
+    .click();
+  await expect(
+    page.getByRole('button', { name: 'Publish leave policy' }),
+  ).toBeDisabled();
+  fixture.policies = [leavePolicyFixtureRow()];
+  await page.getByRole('button', { name: 'Refresh leave policies' }).click();
+  await page
+    .getByRole('button', { name: 'Review leave version 1', exact: true })
+    .click();
+  await page
+    .getByLabel('Publication reason', { exact: true })
+    .fill('Reviewed owner publication');
+  fixture.drop = true;
+  page.once('dialog', (d) => d.accept());
+  await page.getByRole('button', { name: 'Publish leave policy' }).click();
+  await expect(page.getByText(/Outcome unknown/)).toBeVisible();
+  await page.getByRole('button', { name: 'Retry exact leave request' }).click();
+  await expect(page.getByText(/Exact leave request reconciled/)).toBeVisible();
+  expect(fixture.writes[0].body).toEqual(fixture.writes[1].body);
+  expect(fixture.writes[0].key).toBe(fixture.writes[1].key);
+});
+test('leave workspace rejects a wrong-type receipt and keeps the original command for retry', async ({
+  page,
+}) => {
+  const fixture = await leaveWorkspaceFixture(page);
+  await page.goto('/leave-policies');
+  await page.getByRole('button', { name: 'View CASUAL policies' }).click();
+  await page
+    .getByRole('button', { name: 'Review leave version 1', exact: true })
+    .click();
+  await page
+    .getByLabel('Publication reason', { exact: true })
+    .fill('Reviewed owner publication');
+  fixture.receiptOverride = {
+    leaveTypeId: mappingEmployeeId,
+    id: leavePolicyFixtureRow().id,
+    version: 1,
+    replayed: false,
+  };
+  page.once('dialog', (d) => d.accept());
+  await page.getByRole('button', { name: 'Publish leave policy' }).click();
+  await expect(page.getByText(/Outcome unknown/)).toBeVisible();
+  fixture.receiptOverride = undefined;
+  await page.getByRole('button', { name: 'Retry exact leave request' }).click();
+  await expect(page.getByText(/Exact leave request reconciled/)).toBeVisible();
+  expect(fixture.writes[0].key).toBe(fixture.writes[1].key);
+});
+test('leave workspace denies a post-write owner change and forgets the pending command', async ({
+  page,
+}) => {
+  const fixture = await leaveWorkspaceFixture(page);
+  fixture.changeDuringWrite = 'role';
+  await page.goto('/leave-policies');
+  await fillLeavePolicyForm(page);
+  page.once('dialog', (d) => d.accept());
+  await page
+    .getByRole('button', { name: 'Create leave type', exact: true })
+    .click();
+  await expect(
+    page.getByText(/Displayed policies and pending commands were cleared/),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Retry exact leave request' }),
+  ).toHaveCount(0);
+  await expect(page.getByText(/Leave policy change confirmed/)).toHaveCount(0);
+});
+test('leave workspace requires refresh after a conflict and does not offer a receipt retry', async ({
+  page,
+}) => {
+  const fixture = await leaveWorkspaceFixture(page);
+  fixture.writeStatus = 409;
+  await page.goto('/leave-policies');
+  await fillLeavePolicyForm(page);
+  page.once('dialog', (d) => d.accept());
+  await page
+    .getByRole('button', { name: 'Create leave type', exact: true })
+    .click();
+  await expect(page.getByText(/Change rejected/)).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Create leave type', exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole('button', { name: 'Retry exact leave request' }),
+  ).toHaveCount(0);
+  await page.getByRole('button', { name: 'Refresh leave policies' }).click();
+  await expect(
+    page.getByRole('button', { name: 'Create leave type', exact: true }),
+  ).toBeEnabled();
+  await expect(
+    page.getByLabel('Annual quota days', { exact: true }),
+  ).toHaveValue('');
+});
+
+test('leave workspace drafts an existing type using the latest future publication without overriding its code', async ({
+  page,
+}) => {
+  const fixture = await leaveWorkspaceFixture(page);
+  const tomorrow = new Date(Date.now() + 29 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10),
+    later = new Date(Date.now() + 53 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10);
+  const first = leavePolicyFixtureRow(1, 'published'),
+    future = leavePolicyFixtureRow(2, 'published', 1);
+  first.effectiveUntil = tomorrow;
+  future.effectiveFrom = tomorrow;
+  fixture.policies = [first, future];
+  await page.goto('/leave-policies');
+  await page.getByRole('button', { name: 'View CASUAL policies' }).click();
+  await expect(
+    page.getByLabel('Leave type code', { exact: true }),
+  ).not.toBeEditable();
+  await fillLeavePolicyForm(page);
+  await page.getByLabel('Effective from', { exact: true }).fill(later);
+  await page.getByLabel('Monthly cap days', { exact: true }).fill('1.5');
+  await page
+    .getByRole('combobox', { name: 'Paid or unpaid', exact: true })
+    .selectOption('unpaid');
+  page.once('dialog', (d) => d.accept());
+  await page
+    .getByRole('button', { name: 'Create leave draft', exact: true })
+    .click();
+  await expect(page.getByText(/Leave policy change confirmed/)).toBeVisible();
+  expect(fixture.writes[0].body).toMatchObject({
+    expectedCurrentVersion: 2,
+    settings: { code: 'CASUAL', monthlyQuotaDays: 1.5, pay: 'unpaid' },
+  });
+  expect(fixture.types).toHaveLength(1);
+  expect(fixture.writes[0].path).toContain(
+    `/${first.leaveTypeId}/policies/drafts`,
+  );
+});
+
+test('leave workspace rejects malformed caps and advertised reservation effects', async ({
+  page,
+}) => {
+  const fixture = await leaveWorkspaceFixture(page);
+  await page.goto('/leave-policies');
+  for (const bad of [
+    {
+      ...leavePolicyFixtureRow(),
+      settings: { ...leaveSettingsFixture, monthlyQuotaDays: 32 },
+    },
+    {
+      ...leavePolicyFixtureRow(),
+      settings: { ...leaveSettingsFixture, annualQuotaDays: 1.25 },
+    },
+  ]) {
+    fixture.historyOverride = {
+      tenantId: deviceTenant,
+      leaveType: leaveTypeFixtureRow(),
+      asOf: timingDate(),
+      latestPublishedVersion: 0,
+      currentPolicy: null,
+      items: [bad],
+      nextCursor: null,
+      leaveReservationAvailable: false,
+      payrollEffectsAvailable: false,
+    };
+    await page.getByRole('button', { name: 'View CASUAL policies' }).click();
+    await expect(
+      page.getByText(/Leave policy data is unavailable or invalid/),
+    ).toBeVisible();
+    fixture.historyOverride = undefined;
+    await page.getByRole('button', { name: 'Refresh leave policies' }).click();
+  }
+  fixture.historyOverride = {
+    tenantId: deviceTenant,
+    leaveType: leaveTypeFixtureRow(),
+    asOf: timingDate(),
+    latestPublishedVersion: 0,
+    currentPolicy: null,
+    items: [leavePolicyFixtureRow()],
+    nextCursor: null,
+    leaveReservationAvailable: true,
+    payrollEffectsAvailable: false,
+  };
+  await page.getByRole('button', { name: 'View CASUAL policies' }).click();
+  await expect(
+    page.getByText(/Leave policy data is unavailable or invalid/),
+  ).toBeVisible();
+  expect(fixture.writes).toEqual([]);
+});
+
+test('leave workspace wraps maximum-length type codes and names without horizontal overflow', async ({
+  page,
+}) => {
+  const fixture = await leaveWorkspaceFixture(page);
+  fixture.types[0].code = 'A'.repeat(32);
+  fixture.policies[0].settings.code = fixture.types[0].code;
+  fixture.policies[0].settings.name = 'N'.repeat(120);
+  await page.goto('/leave-policies');
+  await page
+    .getByRole('button', {
+      name: `View ${fixture.types[0].code} policies`,
+      exact: true,
+    })
+    .click();
+  await page
+    .getByRole('button', { name: 'Review leave version 1', exact: true })
+    .click();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+});
+
+for (const change of ['company', 'identity', 'role'])
+  test(`leave workspace never retries an uncertain command under another ${change}`, async ({
+    page,
+  }) => {
+    const fixture = await leaveWorkspaceFixture(page);
+    fixture.types = [];
+    fixture.policies = [];
+    await page.goto('/leave-policies');
+    await fillLeavePolicyForm(page);
+    fixture.drop = true;
+    page.once('dialog', (d) => d.accept());
+    await page
+      .getByRole('button', { name: 'Create leave type', exact: true })
+      .click();
+    await expect(page.getByText(/Outcome unknown/)).toBeVisible();
+    if (change === 'company') fixture.selected = mappingEmployeeId;
+    if (change === 'identity') fixture.identity = mappingEmployeeId;
+    if (change === 'role') fixture.roles = ['hr_admin'];
+    await page
+      .getByRole('button', { name: 'Retry exact leave request' })
+      .click();
+    await expect(
+      page.getByText(/Displayed policies and pending commands were cleared/),
+    ).toBeVisible();
+    expect(fixture.writes).toHaveLength(1);
+    await expect(
+      page.getByRole('button', { name: 'Retry exact leave request' }),
+    ).toHaveCount(0);
+  });

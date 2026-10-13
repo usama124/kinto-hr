@@ -1498,3 +1498,13 @@ footer span:last-child {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+.leave-workspace {
+  overflow-wrap: anywhere;
+}
+.leave-workspace .secondary-button {
+  white-space: normal;
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
