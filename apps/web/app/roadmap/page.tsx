@@ -16,7 +16,7 @@ const phases = [
     '2',
     'Attendance & leave',
     'Preparation in progress',
-    'Draft device inventory and synthetic ingestion contracts are implemented. Connectivity, shifts, leave and locked attendance inputs remain pending.',
+    'Device/mapping and synthetic ingestion boundaries, timing and leave-policy configuration are implemented. Real K50 capture, operational attendance, leave reservations and finalized-period safeguards remain pending.',
   ],
   [
     '3',

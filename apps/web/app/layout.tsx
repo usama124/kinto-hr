@@ -93,6 +93,9 @@ export default function RootLayout({
               <Link className="nav-item" href="/attendance-timing">
                 Attendance timing <span>21</span>
               </Link>
+              <Link className="nav-item" href="/leave-policies">
+                Leave policies <span>22</span>
+              </Link>
             </nav>
             <div className="upcoming">
               <span className="nav-heading">UPCOMING MODULES</span>
