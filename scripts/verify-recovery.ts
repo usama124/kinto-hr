@@ -25,6 +25,10 @@ import {
   createCompanyLeaveType,
   publishCompanyLeavePolicy,
   listCompanyLeavePolicies,
+  createCompanyCalendarPolicyDraft,
+  publishCompanyCalendarPolicy,
+  listCompanyCalendarPolicies,
+  resolveCompanyCalendarDays,
   createAttendanceTimingPolicyDraft,
   publishAttendanceTimingPolicy,
   listAttendanceTimingPolicies,
@@ -96,6 +100,7 @@ async function snapshot(db: PrismaClient) {
       'auth_provider_logout_events',
       'branches',
       'checklist_tasks',
+      'company_calendar_receipts',
       'company_policy_versions',
       'company_provisioning_requests',
       'compensation_agreements',
@@ -285,6 +290,9 @@ async function snapshot(db: PrismaClient) {
     leaveReceipts: await db.leavePolicyReceipt.findMany({
       orderBy: [{ tenantId: 'asc' }, { actorId: 'asc' }, { requestId: 'asc' }],
     }),
+    companyCalendarReceipts: await db.companyCalendarReceipt.findMany({
+      orderBy: [{ tenantId: 'asc' }, { actorId: 'asc' }, { requestId: 'asc' }],
+    }),
     attendanceTimingReceipts: await db.attendanceTimingReceipt.findMany({
       orderBy: [{ tenantId: 'asc' }, { actorId: 'asc' }, { requestId: 'asc' }],
     }),
@@ -433,6 +441,15 @@ async function main() {
       version: number;
     }[] = [];
     const timingRefs: {
+      tenantId: string;
+      identityId: string;
+      createKey: string;
+      publishKey: string;
+      input: unknown;
+      id: string;
+      version: number;
+    }[] = [];
+    const calendarRefs: {
       tenantId: string;
       identityId: string;
       createKey: string;
@@ -806,6 +823,48 @@ async function main() {
         input: timingInput,
         id: timingDraft.id,
         version: timingDraft.version,
+      });
+      const calendarInput = {
+        expectedCurrentVersion: 0,
+        effectiveFrom,
+        settings: {
+          scope: 'company',
+          timeZone: 'Asia/Karachi',
+          coverageUntil: effectiveFrom,
+          holidays: [
+            { date: effectiveFrom, name: 'Synthetic reviewed holiday' },
+          ],
+        },
+        reason: 'Recovery calendar fixture',
+      };
+      const calendarCreateKey = randomUUID(),
+        calendarPublishKey = randomUUID();
+      const calendarDraft = await createCompanyCalendarPolicyDraft(
+        sourceApp,
+        principal,
+        tenantId,
+        calendarCreateKey,
+        calendarInput,
+      );
+      await publishCompanyCalendarPolicy(
+        sourceApp,
+        principal,
+        tenantId,
+        calendarDraft.id,
+        calendarPublishKey,
+        {
+          expectedVersion: calendarDraft.version,
+          reason: 'Recovery calendar publication',
+        },
+      );
+      calendarRefs.push({
+        tenantId,
+        identityId: principal.identityId,
+        createKey: calendarCreateKey,
+        publishKey: calendarPublishKey,
+        input: calendarInput,
+        id: calendarDraft.id,
+        version: calendarDraft.version,
       });
       const completeEmployee = await createTenantEmployee(
         sourceApp,
@@ -1510,6 +1569,55 @@ async function main() {
       /permission denied/,
     );
     assert.deepEqual(await snapshot(restored), expected);
+    stage = 'restored calendar policies and keyed retries';
+    for (const ref of calendarRefs) {
+      const actor = { identityId: ref.identityId, mfaVerified: true };
+      const state = await listCompanyCalendarPolicies(
+        restoredApp,
+        actor,
+        ref.tenantId,
+      );
+      assert.equal(state.currentPolicy?.id, ref.id);
+      assert.deepEqual(
+        await createCompanyCalendarPolicyDraft(
+          restoredApp,
+          actor,
+          ref.tenantId,
+          ref.createKey,
+          ref.input,
+        ),
+        { id: ref.id, version: ref.version, replayed: true },
+      );
+      assert.deepEqual(
+        await publishCompanyCalendarPolicy(
+          restoredApp,
+          actor,
+          ref.tenantId,
+          ref.id,
+          ref.publishKey,
+          {
+            expectedVersion: ref.version,
+            reason: 'Recovery calendar publication',
+          },
+        ),
+        { id: ref.id, version: ref.version, replayed: true },
+      );
+    }
+    await assert.rejects(
+      restoredApp.companyCalendarReceipt.findMany(),
+      /permission denied/,
+    );
+    for (const ref of calendarRefs) {
+      const from = (ref.input as { effectiveFrom: string }).effectiveFrom;
+      const resolved = await resolveCompanyCalendarDays(
+        restoredApp,
+        { identityId: ref.identityId, mfaVerified: true },
+        ref.tenantId,
+        { from, until: from },
+      );
+      assert.equal(resolved.days[0].calendar, 'holiday');
+    }
+    assert.deepEqual(await snapshot(restored), expected);
     stage = 'restored private logout monitoring';
     const logoutHealth = await providerLogoutHealth(
       restoredApp,
@@ -1666,7 +1774,7 @@ async function main() {
     const policies = await restored.$queryRaw<
       { enabled: boolean; forced: boolean }[]
     >`SELECT relrowsecurity AS enabled, relforcerowsecurity AS forced FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND relkind='r' AND relname <> '_prisma_migrations'`;
-    assert.equal(policies.length, 56);
+    assert.equal(policies.length, 57);
     assert.ok(policies.every((row) => row.enabled && row.forced));
     assert.deepEqual(await restoredApp.employee.findMany(), []);
     stage = 'restored tenant lifecycle visibility';
@@ -2017,6 +2125,7 @@ async function main() {
       activeEmployeeIdentityLinkPreserved: true,
       membershipAdministrationAuditPreserved: true,
       leavePolicyHistoryAndRetryPreserved: true,
+      companyCalendarHistoryAndRetryPreserved: true,
       organizationPolicyHistoryPreserved: true,
       organizationCatalogsPreserved: true,
       connectorCredentialRevocationSurvivesDatabaseRestore: true,

@@ -46,6 +46,8 @@ const handleCommittedEvent: Handler = async (tx, event) => {
       'leave_policy.create_type.v1',
       'leave_policy.draft.v1',
       'leave_policy.publish.v1',
+      'company_calendar.create.v1',
+      'company_calendar.publish.v1',
       'attendance_timing.create.v1',
       'attendance_timing.publish.v1',
       'device.mapping_changed.v1',

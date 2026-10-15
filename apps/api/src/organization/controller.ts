@@ -13,6 +13,10 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import {
+  companyCalendarQuerySchema,
+  companyCalendarDaysQuerySchema,
+  companyCalendarPolicyDraftSchema,
+  companyCalendarPublishSchema,
   leaveTypeCreateSchema,
   leavePolicyDraftInputSchema,
   leavePolicyPublishSchema,
@@ -285,6 +289,64 @@ export class OrganizationController {
     );
   }
 
+  @Get('policies/work-calendar') async listCalendar(
+    @Req() req: AuthRequest,
+    @Param('tenantId') tenant: unknown,
+    @Query() query: unknown,
+  ) {
+    const value = companyCalendarQuerySchema.safeParse(query);
+    if (!value.success) throw new BadRequestException();
+    const c = await this.context(req, tenant);
+    return this.database.listCalendarPolicies(c.actor, c.tenantId, value.data);
+  }
+  @Get('policies/work-calendar/days') async calendarDays(
+    @Req() req: AuthRequest,
+    @Param('tenantId') tenant: unknown,
+    @Query() query: unknown,
+  ) {
+    const value = companyCalendarDaysQuerySchema.safeParse(query);
+    if (!value.success) throw new BadRequestException();
+    const c = await this.context(req, tenant);
+    return this.database.resolveCalendarDays(c.actor, c.tenantId, value.data);
+  }
+  @Post('policies/work-calendar/drafts') async createCalendar(
+    @Req() req: AuthRequest,
+    @Param('tenantId') tenant: unknown,
+    @Headers('idempotency-key') key: unknown,
+    @Body() body: unknown,
+  ) {
+    const value = companyCalendarPolicyDraftSchema.safeParse(body),
+      request = tenantIdSchema.safeParse(key);
+    if (!value.success || !request.success) throw new BadRequestException();
+    const c = await this.context(req, tenant, true);
+    return this.database.createCalendarPolicy(
+      c.actor,
+      c.tenantId,
+      request.data,
+      value.data,
+    );
+  }
+  @Post('policies/work-calendar/:policyId/publication') async publishCalendar(
+    @Req() req: AuthRequest,
+    @Param('tenantId') tenant: unknown,
+    @Param('policyId') id: unknown,
+    @Headers('idempotency-key') key: unknown,
+    @Body() body: unknown,
+  ) {
+    const value = companyCalendarPublishSchema.safeParse(body),
+      request = tenantIdSchema.safeParse(key),
+      policy = tenantIdSchema.safeParse(id);
+    if (!value.success || !request.success || !policy.success)
+      throw new BadRequestException();
+    const c = await this.context(req, tenant, true);
+    return this.database.publishCalendarPolicy(
+      c.actor,
+      c.tenantId,
+      policy.data,
+      request.data,
+      value.data,
+    );
+  }
   @Get('policies/attendance-timing') async listTiming(
     @Req() req: AuthRequest,
     @Param('tenantId') tenant: unknown,

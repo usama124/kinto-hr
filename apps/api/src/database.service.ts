@@ -5,6 +5,10 @@ import {
 } from '@nestjs/common';
 import {
   type OrganizationActor,
+  listCompanyCalendarPolicies,
+  resolveCompanyCalendarDays,
+  createCompanyCalendarPolicyDraft,
+  publishCompanyCalendarPolicy,
   listCompanyLeaveTypes,
   listCompanyLeavePolicies,
   createCompanyLeaveType,
@@ -574,6 +578,37 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       key,
       input,
     );
+  }
+  listCalendarPolicies(
+    actor: OrganizationActor,
+    tenant: string,
+    query: unknown,
+  ) {
+    return listCompanyCalendarPolicies(this.db, actor, tenant, query);
+  }
+  resolveCalendarDays(
+    actor: OrganizationActor,
+    tenant: string,
+    query: unknown,
+  ) {
+    return resolveCompanyCalendarDays(this.db, actor, tenant, query);
+  }
+  createCalendarPolicy(
+    actor: OrganizationActor,
+    tenant: string,
+    key: string,
+    input: unknown,
+  ) {
+    return createCompanyCalendarPolicyDraft(this.db, actor, tenant, key, input);
+  }
+  publishCalendarPolicy(
+    actor: OrganizationActor,
+    tenant: string,
+    id: string,
+    key: string,
+    input: unknown,
+  ) {
+    return publishCompanyCalendarPolicy(this.db, actor, tenant, id, key, input);
   }
   listTimingPolicies(actor: OrganizationActor, tenant: string, query: unknown) {
     return listAttendanceTimingPolicies(this.db, actor, tenant, query);

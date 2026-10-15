@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import { processEvent } from '../../apps/worker/src/processor';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { OrganizationController } from '../../apps/api/src/organization/controller';
@@ -9,6 +10,10 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  createCompanyCalendarPolicyDraft,
+  publishCompanyCalendarPolicy,
+  listCompanyCalendarPolicies,
+  resolveCompanyCalendarDays,
   createCompanyLeaveType,
   createCompanyLeavePolicyDraft,
   publishCompanyLeavePolicy,
@@ -127,6 +132,9 @@ describe('tenant organization and effective policy boundary', () => {
       where: { tenantId: { in: tenants } },
     });
     await admin.leaveType.deleteMany({ where: { tenantId: { in: tenants } } });
+    await admin.companyCalendarReceipt.deleteMany({
+      where: { tenantId: { in: tenants } },
+    });
     await admin.attendanceTimingReceipt.deleteMany({
       where: { tenantId: { in: tenants } },
     });
@@ -1581,5 +1589,428 @@ describe('tenant organization and effective policy boundary', () => {
     } finally {
       await app.close();
     }
+  });
+  const calendarInput = (days = 0, version = 0, coverage = 14) => ({
+    expectedCurrentVersion: version,
+    effectiveFrom: karachiDate(days),
+    settings: {
+      scope: 'company',
+      timeZone: 'Asia/Karachi',
+      coverageUntil: karachiDate(days + coverage),
+      holidays: [
+        { date: karachiDate(days), name: 'Reviewed synthetic holiday' },
+      ],
+    },
+    reason: 'Reviewed synthetic calendar',
+  });
+  const draftCalendar = (
+    days = 0,
+    version = 0,
+    key = randomUUID(),
+    coverage = 14,
+  ) =>
+    createCompanyCalendarPolicyDraft(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      key,
+      calendarInput(days, version, coverage),
+    );
+  const publishCalendar = (
+    p: { id: string; version: number },
+    key = randomUUID(),
+  ) =>
+    publishCompanyCalendarPolicy(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      p.id,
+      key,
+      { expectedVersion: p.version, reason: 'Reviewed calendar publication' },
+    );
+  const daysCalendar = (from = 0, until = from) =>
+    resolveCompanyCalendarDays(runtime, actor(identities.hr), tenantId, {
+      from: karachiDate(from),
+      until: karachiDate(until),
+    });
+  it('publishes versioned calendars and resolves full-history rest days and holiday precedence', async () => {
+    const p = await draftCalendar();
+    expect((await daysCalendar()).days[0]).toMatchObject({
+      calendar: 'unknown',
+      code: 'CALENDAR_UNRESOLVED',
+    });
+    await publishCalendar(p);
+    expect((await daysCalendar()).days[0]).toMatchObject({
+      calendar: 'unknown',
+      code: 'TIMING_UNRESOLVED',
+    });
+    const t = await draftTiming();
+    await publishTiming(t);
+    const days = await daysCalendar(0, 14);
+    expect(days.days[0]).toMatchObject({
+      calendar: 'holiday',
+      calendarPolicy: { id: p.id, version: p.version },
+      timingPolicy: { id: t.id, version: t.version },
+      holidayName: 'Reviewed synthetic holiday',
+    });
+    for (const d of days.days.slice(1))
+      expect(d.calendar).toBe(
+        new Date(d.date + 'T00:00:00Z').getUTCDay() === 0
+          ? 'rest_day'
+          : 'working_day',
+      );
+    expect(days.leaveReservationAvailable).toBe(false);
+    expect(days.attendanceProcessingAvailable).toBe(false);
+    const state = await listCompanyCalendarPolicies(
+      runtime,
+      actor(identities.hr),
+      tenantId,
+      { limit: 1, asOf: karachiDate() },
+    );
+    expect(state.currentPolicy?.id).toBe(p.id);
+    expect(state.currentPolicy?.effectiveUntil).toBe(karachiDate(15));
+  });
+  it('does not revive superseded calendar coverage after a newer short calendar expires', async () => {
+    await publishTiming(await draftTiming());
+    const first = await draftCalendar(0, 0, randomUUID(), 30);
+    await publishCalendar(first);
+    const next = await draftCalendar(2, first.version, randomUUID(), 0);
+    await publishCalendar(next);
+    expect((await daysCalendar(1)).days[0].calendar).not.toBe('unknown');
+    expect((await daysCalendar(2)).days[0]).toMatchObject({
+      calendar: 'holiday',
+      calendarPolicy: { id: next.id },
+    });
+    expect((await daysCalendar(3)).days[0]).toMatchObject({
+      calendar: 'unknown',
+      code: 'CALENDAR_UNRESOLVED',
+    });
+    const expired = await listCompanyCalendarPolicies(
+      runtime,
+      actor(identities.hr),
+      tenantId,
+      { asOf: karachiDate(3), limit: 1 },
+    );
+    expect(expired.currentPolicy).toBeNull();
+    const current = await listCompanyCalendarPolicies(
+      runtime,
+      actor(identities.hr),
+      tenantId,
+      { asOf: karachiDate(1), afterId: 'ffffffff-ffff-4fff-bfff-ffffffffffff' },
+    );
+    expect(current.items).toEqual([]);
+    expect(current.currentPolicy?.id).toBe(first.id);
+    expect(current.currentPolicy?.effectiveUntil).toBe(karachiDate(2));
+  });
+  it('serializes exact calendar command retries without duplicate policies, receipts or facts', async () => {
+    const key = randomUUID();
+    const results = await Promise.all(
+      Array.from({ length: 5 }, () => draftCalendar(0, 0, key)),
+    );
+    expect(new Set(results.map((p) => p.id)).size).toBe(1);
+    expect(results.filter((p) => !p.replayed)).toHaveLength(1);
+    const p = results[0],
+      publishKey = randomUUID();
+    const pubs = await Promise.all(
+      Array.from({ length: 5 }, () => publishCalendar(p, publishKey)),
+    );
+    expect(pubs.filter((p) => !p.replayed)).toHaveLength(1);
+    await expect(
+      createCompanyCalendarPolicyDraft(
+        runtime,
+        actor(identities.owner),
+        tenantId,
+        key,
+        { ...calendarInput(), reason: 'Changed input for same key' },
+      ),
+    ).rejects.toThrow('CONFLICT');
+    expect(
+      await admin.companyCalendarReceipt.count({ where: { tenantId } }),
+    ).toBe(2);
+    expect(
+      await admin.outboxEvent.count({
+        where: { tenantId, type: { startsWith: 'company_calendar.' } },
+      }),
+    ).toBe(2);
+    expect(
+      await admin.auditEvent.count({
+        where: { tenantId, action: { startsWith: 'company_calendar.' } },
+      }),
+    ).toBe(2);
+    const worker = createDatabase(process.env.WORKER_DATABASE_URL!);
+    try {
+      for (const event of await admin.outboxEvent.findMany({
+        where: { tenantId, type: { startsWith: 'company_calendar.' } },
+      })) {
+        const ref = { tenantId, eventId: event.id };
+        expect(await processEvent(worker, ref)).toBe('completed');
+        expect(await processEvent(worker, ref)).toBe('completed');
+        expect(
+          await admin.consumerReceipt.count({
+            where: { tenantId, eventId: event.id },
+          }),
+        ).toBe(1);
+      }
+    } finally {
+      await worker.$disconnect();
+    }
+  });
+  it('invalidates competing calendar drafts and rejects backdated or out-of-order publication', async () => {
+    const a = await draftCalendar(),
+      b = await draftCalendar(1);
+    await publishCalendar(a);
+    await expect(publishCalendar(b)).rejects.toThrow('STALE_VERSION');
+    await expect(draftCalendar(-1, a.version)).rejects.toThrow('CONFLICT');
+    await expect(draftCalendar(0, a.version)).rejects.toThrow('CONFLICT');
+    const future = await draftCalendar(2, a.version);
+    await publishCalendar(future);
+    await expect(draftCalendar(1, future.version)).rejects.toThrow('CONFLICT');
+  });
+  it('requires current owner authority for calendar commands and HR/owner for reads and replay', async () => {
+    const key = randomUUID();
+    await draftCalendar(0, 0, key);
+    for (const identityId of [
+      identities.hr,
+      identities.employee,
+      identities.otherOwner,
+    ])
+      await expect(
+        createCompanyCalendarPolicyDraft(
+          runtime,
+          actor(identityId),
+          tenantId,
+          randomUUID(),
+          calendarInput(),
+        ),
+      ).rejects.toThrow('FORBIDDEN');
+    for (const a of [
+      actor(identities.employee),
+      actor(identities.otherOwner),
+      actor(identities.hr, false),
+    ]) {
+      await expect(
+        listCompanyCalendarPolicies(runtime, a, tenantId),
+      ).rejects.toThrow('FORBIDDEN');
+      await expect(
+        resolveCompanyCalendarDays(runtime, a, tenantId, {
+          from: karachiDate(),
+          until: karachiDate(),
+        }),
+      ).rejects.toThrow('FORBIDDEN');
+    }
+    await admin.membership.update({
+      where: {
+        tenantId_identityId: { tenantId, identityId: identities.owner },
+      },
+      data: { roles: ['employee'] },
+    });
+    await expect(draftCalendar(0, 0, key)).rejects.toThrow('FORBIDDEN');
+  });
+  it('validates constrained SQL calendars and table checks without trusting contract validation', async () => {
+    const good = calendarInput().settings;
+    const invalid = [
+      { ...good, scope: 'employee' },
+      { ...good, weeklyRestDays: [7] },
+      { ...good, coverageUntil: karachiDate(366) },
+      { ...good, coverageUntil: '2026-02-30' },
+      { ...good, holidays: [{ date: karachiDate(-1), name: 'Past holiday' }] },
+      { ...good, holidays: [...good.holidays, ...good.holidays] },
+      { ...good, holidays: [{ date: karachiDate(), name: '\t' }] },
+      { ...good, holidays: [{ date: karachiDate(), name: ' padded ' }] },
+      {
+        ...good,
+        holidays: [{ date: karachiDate(), name: 'Holiday', paid: true }],
+      },
+      { ...good, holidays: null },
+    ];
+    for (const settings of invalid) {
+      const [row] = await runtime.$queryRaw<
+        { outcome: string }[]
+      >`SELECT * FROM public.mutate_company_calendar_policy(${identities.owner}::uuid,true,${tenantId}::uuid,${randomUUID()}::uuid,'create'::varchar,NULL::uuid,0::integer,${karachiDate()}::date,${JSON.stringify(settings)}::jsonb,'SQL validation fixture'::varchar,${randomUUID()}::uuid,${randomUUID()}::uuid)`;
+      expect(row.outcome).toBe('invalid_state');
+      await expect(
+        admin.companyPolicyVersion.create({
+          data: {
+            id: randomUUID(),
+            tenantId,
+            domain: 'company_calendar',
+            policyVersion: 1,
+            basedOnVersion: 0,
+            effectiveFrom: new Date(karachiDate()),
+            settings,
+            reason: 'Direct invalid calendar',
+            createdByIdentityId: identities.owner,
+          },
+        }),
+      ).rejects.toThrow();
+    }
+    expect(
+      await admin.companyCalendarReceipt.count({ where: { tenantId } }),
+    ).toBe(0);
+  });
+  it('keeps calendar receipts private and calendar functions constrained', async () => {
+    await draftCalendar();
+    await expect(runtime.companyCalendarReceipt.findMany()).rejects.toThrow(
+      'permission denied',
+    );
+    const [r] = await admin.$queryRaw<
+      { safe: boolean }[]
+    >`SELECT count(*)=3 AND bool_and(p.prosecdef AND r.rolname='kinto_control_owner' AND NOT has_function_privilege('kinto_worker',p.oid,'EXECUTE') AND NOT has_function_privilege('kinto_dispatcher',p.oid,'EXECUTE') AND NOT EXISTS(SELECT 1 FROM aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a WHERE a.grantee=0 AND a.privilege_type='EXECUTE')) AS safe FROM pg_proc p JOIN pg_roles r ON r.oid=p.proowner WHERE p.proname IN ('read_company_calendar_policies','resolve_company_calendar_days','mutate_company_calendar_policy')`;
+    expect(r.safe).toBe(true);
+  });
+  it('preserves immutable published calendar history and rolls back failed atomic audit writes', async () => {
+    const p = await draftCalendar();
+    await publishCalendar(p);
+    await expect(
+      admin.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(
+          'SET LOCAL SESSION AUTHORIZATION kinto_control_owner',
+        );
+        await tx.$executeRaw`UPDATE public.company_policy_versions SET reason='changed history' WHERE id=${p.id}::uuid`;
+      }),
+    ).rejects.toThrow('immutable');
+    const audit = await admin.auditEvent.findFirstOrThrow({
+      where: { tenantId },
+    });
+    const key = randomUUID();
+    await expect(
+      runtime.$queryRaw`SELECT * FROM public.mutate_company_calendar_policy(${identities.owner}::uuid,true,${tenantId}::uuid,${key}::uuid,'create'::varchar,NULL::uuid,${p.version}::integer,${karachiDate(1)}::date,${JSON.stringify(calendarInput(1).settings)}::jsonb,'Rollback audit fixture'::varchar,${audit.id}::uuid,${randomUUID()}::uuid)`,
+    ).rejects.toThrow();
+    expect(
+      await admin.companyCalendarReceipt.count({
+        where: { tenantId, requestId: key },
+      }),
+    ).toBe(0);
+    expect(
+      await admin.companyPolicyVersion.count({
+        where: { tenantId, domain: 'company_calendar' },
+      }),
+    ).toBe(1);
+  });
+  it('runs calendar policy HTTP publication through real SQL and fresh server session boundaries', async () => {
+    const csrf = 'c'.repeat(43),
+      origin = 'https://calendar.synthetic.example';
+    let identityId = identities.owner,
+      selectedTenantId = tenantId,
+      authTime = Math.floor(Date.now() / 1000);
+    const module = await Test.createTestingModule({
+      controllers: [OrganizationController],
+      providers: [
+        DatabaseService,
+        {
+          provide: AuthService,
+          useValue: {
+            limit: async () => {},
+            origin: () => origin,
+            session: async () => ({
+              identityId,
+              selectedTenantId,
+              authTime,
+              csrf,
+              principal: { mfaVerified: true },
+            }),
+          },
+        },
+      ],
+    }).compile();
+    const application = module.createNestApplication();
+    configureHttp(application);
+    try {
+      await application.listen(0, '127.0.0.1');
+      const base = `/api/v1/tenants/${tenantId}/organization/policies/work-calendar`,
+        key = randomUUID();
+      const post = (path: string, requestId: string) =>
+        request(application.getHttpServer())
+          .post(base + path)
+          .set('Cookie', '__Host-kinto-session=' + 's'.repeat(43))
+          .set('Origin', origin)
+          .set('X-CSRF-Token', csrf)
+          .set('Idempotency-Key', requestId);
+      const get = (path = '') =>
+        request(application.getHttpServer())
+          .get(base + path)
+          .set('Cookie', '__Host-kinto-session=' + 's'.repeat(43));
+      const created = await post('/drafts', key)
+        .send(calendarInput())
+        .expect(201);
+      expect(
+        (await post('/drafts', key).send(calendarInput()).expect(201)).body,
+      ).toEqual({ ...created.body, replayed: true });
+      identityId = identities.hr;
+      await get(
+        '/days?from=' + karachiDate() + '&until=' + karachiDate(),
+      ).expect(200);
+      const publicationKey = randomUUID(),
+        body = {
+          expectedVersion: created.body.version,
+          reason: 'HTTP reviewed publication',
+        };
+      await post('/' + created.body.id + '/publication', publicationKey)
+        .send(body)
+        .expect(403);
+      identityId = identities.owner;
+      authTime = 1;
+      await post('/' + created.body.id + '/publication', publicationKey)
+        .send(body)
+        .expect(403);
+      authTime = Math.floor(Date.now() / 1000);
+      selectedTenantId = otherTenantId;
+      await get().expect(403);
+      selectedTenantId = tenantId;
+      await post('/' + created.body.id + '/publication', publicationKey)
+        .send(body)
+        .expect(201);
+      const list = await get().expect(200);
+      expect(list.headers['cache-control']).toBe('no-store');
+      expect(list.body.currentPolicy.id).toBe(created.body.id);
+      expect(list.body.attendanceProcessingAvailable).toBe(false);
+    } finally {
+      await application.close();
+    }
+  });
+  it('resolves changed timing versions by local workdate without overriding calendar holidays', async () => {
+    const c = await draftCalendar();
+    await publishCalendar(c);
+    const first = await draftTiming();
+    await publishTiming(first);
+    const weekday = new Date(karachiDate(2) + 'T00:00:00Z').getUTCDay() || 7;
+    const second = await createAttendanceTimingPolicyDraft(
+      runtime,
+      actor(identities.owner),
+      tenantId,
+      randomUUID(),
+      {
+        ...timingInput(2, first.version),
+        settings: { ...timing, weeklyRestDays: weekday === 7 ? [] : [weekday] },
+      },
+    );
+    await publishTiming(second);
+    expect((await daysCalendar()).days[0]).toMatchObject({
+      calendar: 'holiday',
+      timingPolicy: { id: first.id },
+    });
+    expect((await daysCalendar(1)).days[0]).toMatchObject({
+      timingPolicy: { id: first.id },
+    });
+    expect((await daysCalendar(2)).days[0]).toMatchObject({
+      calendar: weekday === 7 ? 'working_day' : 'rest_day',
+      timingPolicy: { id: second.id },
+    });
+  });
+  it('normalizes calendar command reasons and refuses blank/overlong direct SQL reasons', async () => {
+    for (const reason of ['\t\t\t', '\u00a0\u00a0\u00a0', '😀'.repeat(121)]) {
+      const [row] = await runtime.$queryRaw<
+        { outcome: string }[]
+      >`SELECT * FROM public.mutate_company_calendar_policy(${identities.owner}::uuid,true,${tenantId}::uuid,${randomUUID()}::uuid,'create'::varchar,NULL::uuid,0::integer,${karachiDate()}::date,${JSON.stringify(calendarInput().settings)}::jsonb,${reason}::varchar,${randomUUID()}::uuid,${randomUUID()}::uuid)`;
+      expect(row.outcome).toBe('invalid_state');
+    }
+    const p = await draftCalendar();
+    expect(
+      (
+        await admin.companyPolicyVersion.findUniqueOrThrow({
+          where: { id: p.id },
+        })
+      ).reason,
+    ).toBe('Reviewed synthetic calendar');
   });
 });
