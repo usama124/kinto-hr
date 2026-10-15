@@ -3,11 +3,14 @@ import {
   leavePolicySettingsSchema,
   leavePolicyDraftSchema,
   leaveQuotaPreviewSchema,
+  leaveLifecyclePreviewSchema,
+  leaveLifecycleInputSchema,
   attendanceDayPreviewSchema,
   attendanceLeaveCompositionPreviewSchema,
 } from '@kinto/contracts';
 import {
   previewLeaveQuota,
+  previewLeaveDecision,
   previewAttendanceTiming,
   previewAttendanceDay,
   previewAttendanceLeaveComposition,
@@ -2087,5 +2090,424 @@ describe('company leave policy and all-bucket quota preview', () => {
       },
     ])
       expect(leaveQuotaPreviewSchema.safeParse(bad).success).toBe(false);
+  });
+});
+
+describe('pure leave decision and ledger-delta preparation', () => {
+  const tenantId = '40000000-0000-4000-8000-000000000001',
+    employeeId = '40000000-0000-4000-8000-000000000002',
+    employeeIdentityId = '40000000-0000-4000-8000-000000000003',
+    manager = '40000000-0000-4000-8000-000000000004',
+    hr = '40000000-0000-4000-8000-000000000005',
+    other = '40000000-0000-4000-8000-000000000006';
+  function fixture() {
+    return leaveLifecycleInputSchema.parse({
+      request: {
+        tenantId,
+        employeeId,
+        employeeIdentityId,
+        submittedBy: employeeIdentityId,
+        requestId: '40000000-0000-4000-8000-000000000007',
+        leaveTypeId: '40000000-0000-4000-8000-000000000008',
+        policyId: '40000000-0000-4000-8000-000000000009',
+        policyVersion: 2,
+        version: 3,
+        status: 'pending',
+        pay: 'paid',
+        leaveYearStart: { month: 1, day: 1 },
+        dates: [
+          { date: '2026-12-31', part: 'full_day', chargeable: true },
+          { date: '2027-01-01', part: 'first_half', chargeable: true },
+          { date: '2027-01-02', part: 'full_day', chargeable: false },
+        ],
+      },
+      command: {
+        tenantId,
+        employeeId,
+        requestId: '40000000-0000-4000-8000-000000000007',
+        actorId: manager,
+        expectedVersion: 3,
+        expectedRoutingVersion: 5,
+        action: 'approve',
+      },
+      context: {
+        tenantId,
+        employeeId,
+        routingVersion: 5,
+        eligibleManagerId: manager,
+        eligibleHrIds: [hr],
+        periods: ['2026-12-31', '2027-01-01', '2027-01-02'].map((date) => ({
+          date,
+          state: 'open',
+        })),
+      },
+    });
+  }
+  it('converts reservations to consumption once per month/year without another debit', () => {
+    const input = fixture(),
+      before = structuredClone(input);
+    const result = previewLeaveDecision(input);
+    expect(result).toMatchObject({
+      status: 'transition_candidate',
+      expectedVersion: 3,
+      nextVersion: 4,
+      expectedRoutingVersion: 5,
+      nextStatus: 'approved',
+      occupancy: 'retain',
+      policyVersion: 2,
+      pay: 'paid',
+      leaveReservationAvailable: false,
+      payrollEffectsAvailable: false,
+      deltas: [
+        {
+          bucket: 'annual',
+          period: '2026-01-01',
+          reservedHalfUnits: -2,
+          usedHalfUnits: 2,
+        },
+        {
+          bucket: 'annual',
+          period: '2027-01-01',
+          reservedHalfUnits: -1,
+          usedHalfUnits: 1,
+        },
+        {
+          bucket: 'monthly',
+          period: '2026-12',
+          reservedHalfUnits: -2,
+          usedHalfUnits: 2,
+        },
+        {
+          bucket: 'monthly',
+          period: '2027-01',
+          reservedHalfUnits: -1,
+          usedHalfUnits: 1,
+        },
+      ],
+    });
+    expect(input).toEqual(before);
+    expect(previewLeaveDecision(input)).toEqual(result);
+    // Determinism is NOT receipt replay: a second committed decision must be stale.
+    input.request.version = 4;
+    input.request.status = 'approved';
+    expect(previewLeaveDecision(input)).toMatchObject({
+      code: 'LEAVE_REQUEST_STALE',
+    });
+    input.command.expectedVersion = 4;
+    expect(previewLeaveDecision(input)).toMatchObject({
+      code: 'LEAVE_INVALID_TRANSITION',
+    });
+  });
+  it.each(['reject', 'cancel'] as const)(
+    '%s releases pending units without consuming and releases occupancy',
+    (action) => {
+      const input = fixture();
+      input.command.action = action;
+      if (action === 'cancel') input.command.actorId = employeeIdentityId;
+      const result = previewLeaveDecision(input);
+      expect(result).toMatchObject({
+        status: 'transition_candidate',
+        nextStatus: action === 'reject' ? 'rejected' : 'cancelled',
+        occupancy: 'release',
+      });
+      if (result.status !== 'transition_candidate')
+        throw new Error('Missing plan');
+      expect(
+        result.deltas.every(
+          (d) => d.usedHalfUnits === 0 && d.reservedHalfUnits < 0,
+        ),
+      ).toBe(true);
+    },
+  );
+  it('allows HR fallback only when there is no eligible reporting manager', () => {
+    const input = fixture();
+    input.command.actorId = hr;
+    expect(previewLeaveDecision(input)).toMatchObject({
+      code: 'LEAVE_DECISION_FORBIDDEN',
+    });
+    input.context.eligibleManagerId = null;
+    expect(previewLeaveDecision(input)).toMatchObject({
+      nextStatus: 'approved',
+    });
+    input.command.actorId = manager;
+    expect(previewLeaveDecision(input)).toMatchObject({
+      code: 'LEAVE_DECISION_FORBIDDEN',
+    });
+  });
+  it.each(['approve', 'reject'] as const)(
+    'prevents self-%s even with manager/HR authority',
+    (action) => {
+      const input = fixture();
+      input.command.action = action;
+      input.command.actorId = employeeIdentityId;
+      input.context.eligibleManagerId = employeeIdentityId;
+      expect(previewLeaveDecision(input)).toMatchObject({
+        code: 'LEAVE_DECISION_FORBIDDEN',
+      });
+      input.context.eligibleManagerId = null;
+      input.context.eligibleHrIds.push(employeeIdentityId);
+      expect(previewLeaveDecision(input)).toMatchObject({
+        code: 'LEAVE_DECISION_FORBIDDEN',
+      });
+      input.command.actorId = hr;
+      input.request.submittedBy = hr;
+      expect(previewLeaveDecision(input)).toMatchObject({
+        code: 'LEAVE_DECISION_FORBIDDEN',
+      });
+    },
+  );
+  it('allows pending cancellation by original submitter or eligible HR, not manager alone', () => {
+    const input = fixture();
+    input.command.action = 'cancel';
+    expect(previewLeaveDecision(input)).toMatchObject({
+      code: 'LEAVE_DECISION_FORBIDDEN',
+    });
+    input.command.actorId = hr;
+    expect(previewLeaveDecision(input)).toMatchObject({
+      nextStatus: 'cancelled',
+    });
+    input.request.submittedBy = other;
+    input.command.actorId = other;
+    expect(previewLeaveDecision(input)).toMatchObject({
+      nextStatus: 'cancelled',
+    });
+  });
+  it('denies unauthorized callers before disclosing versions or terminal states', () => {
+    const input = fixture();
+    input.command.actorId = other;
+    input.request.version = 4;
+    input.request.status = 'approved';
+    expect(previewLeaveDecision(input)).toMatchObject({
+      code: 'LEAVE_DECISION_FORBIDDEN',
+    });
+  });
+  it('requires a separately approved reversal for approved cancellation', () => {
+    const input = fixture();
+    input.request.status = 'approved';
+    input.command.action = 'cancel';
+    input.command.actorId = employeeIdentityId;
+    expect(previewLeaveDecision(input)).toMatchObject({
+      code: 'LEAVE_APPROVED_REVERSAL_REQUIRED',
+    });
+  });
+  it.each(['rejected', 'cancelled'] as const)(
+    'does not reopen or release terminal %s requests',
+    (status) => {
+      const input = fixture();
+      input.request.status = status;
+      expect(previewLeaveDecision(input)).toMatchObject({
+        code: 'LEAVE_INVALID_TRANSITION',
+      });
+    },
+  );
+  it('fails closed on stale routing and version exhaustion', () => {
+    const input = fixture();
+    input.context.routingVersion++;
+    expect(previewLeaveDecision(input)).toMatchObject({
+      code: 'LEAVE_ROUTING_STALE',
+    });
+    input.command.expectedRoutingVersion++;
+    input.request.version = input.command.expectedVersion = 2147483647;
+    expect(previewLeaveDecision(input)).toMatchObject({
+      code: 'LEAVE_VERSION_EXHAUSTED',
+    });
+  });
+  it.each(['approve', 'reject', 'cancel'] as const)(
+    'blocks %s across any locked date, including nonchargeable dates',
+    (action) => {
+      const input = fixture();
+      input.command.action = action;
+      if (action === 'cancel') input.command.actorId = hr;
+      input.context.periods[2].state = 'locked';
+      const result = previewLeaveDecision(input);
+      expect(result).toMatchObject({
+        status: 'needs_review',
+        code: 'LEAVE_PERIOD_LOCKED',
+      });
+      expect(result).not.toHaveProperty('deltas');
+    },
+  );
+  it('refuses missing, unknown, extra or mismatched period evidence', () => {
+    for (const mode of ['missing', 'unknown', 'extra', 'wrong']) {
+      const input = fixture();
+      if (mode === 'missing') input.context.periods.pop();
+      if (mode === 'unknown') input.context.periods[0].state = 'unknown';
+      if (mode === 'extra')
+        input.context.periods.push({ date: '2027-01-03', state: 'open' });
+      if (mode === 'wrong') input.context.periods[0].date = '2026-12-30';
+      expect(previewLeaveDecision(input)).toMatchObject({
+        code: 'LEAVE_PERIOD_UNRESOLVED',
+      });
+    }
+  });
+  it('groups historical custom leave years and leap-day halves deterministically', () => {
+    const input = fixture();
+    input.request.pay = 'unpaid';
+    input.request.leaveYearStart = { month: 3, day: 15 };
+    input.request.dates = [
+      { date: '2028-03-15', part: 'second_half', chargeable: true },
+      { date: '2028-02-29', part: 'first_half', chargeable: true },
+      { date: '2028-03-14', part: 'full_day', chargeable: true },
+    ];
+    input.context.periods = input.request.dates.map(({ date }) => ({
+      date,
+      state: 'open',
+    }));
+    const result = previewLeaveDecision(input);
+    expect(result).toMatchObject({
+      pay: 'unpaid',
+      deltas: [
+        {
+          bucket: 'annual',
+          period: '2027-03-15',
+          reservedHalfUnits: -3,
+          usedHalfUnits: 3,
+        },
+        {
+          bucket: 'annual',
+          period: '2028-03-15',
+          reservedHalfUnits: -1,
+          usedHalfUnits: 1,
+        },
+        {
+          bucket: 'monthly',
+          period: '2028-02',
+          reservedHalfUnits: -1,
+          usedHalfUnits: 1,
+        },
+        {
+          bucket: 'monthly',
+          period: '2028-03',
+          reservedHalfUnits: -3,
+          usedHalfUnits: 3,
+        },
+      ],
+    });
+  });
+  it.each(['0001-01-01', '9999-12-31'])(
+    'withholds unsupported leave-year allocation at %s',
+    (date) => {
+      const input = fixture();
+      input.request.leaveYearStart = { month: 4, day: 1 };
+      input.request.dates = [{ date, part: 'full_day', chargeable: true }];
+      input.context.periods = [{ date, state: 'open' }];
+      expect(previewLeaveDecision(input)).toMatchObject({
+        code: 'LEAVE_ALLOCATION_UNRESOLVED',
+      });
+    },
+  );
+  it('rejects cross-company/employee/request snapshots', () => {
+    for (const target of ['command', 'context'] as const) {
+      for (const key of ['tenantId', 'employeeId'] as const) {
+        const input = fixture();
+        input[target][key] = other;
+        expect(() => previewLeaveDecision(input)).toThrow(
+          'LEAVE_SCOPE_MISMATCH',
+        );
+      }
+    }
+    const input = fixture();
+    input.command.requestId = other;
+    expect(() => previewLeaveDecision(input)).toThrow('LEAVE_SCOPE_MISMATCH');
+  });
+  it('rejects ambiguous snapshots and undeclared bypass/authority fields', () => {
+    const before = fixture();
+    const corruptions = [
+      { ...before, trusted: true },
+      { ...before, command: { ...before.command, override: true } },
+      { ...before, context: { ...before.context, eligibleHrIds: [hr, hr] } },
+      {
+        ...before,
+        context: {
+          ...before.context,
+          periods: [...before.context.periods, before.context.periods[0]],
+        },
+      },
+      {
+        ...before,
+        request: {
+          ...before.request,
+          dates: [before.request.dates[0], before.request.dates[0]],
+        },
+      },
+      {
+        ...before,
+        request: {
+          ...before.request,
+          dates: before.request.dates.map((d) => ({ ...d, chargeable: false })),
+        },
+      },
+      {
+        ...before,
+        request: {
+          ...before.request,
+          dates: [{ date: '0000-01-01', part: 'full_day', chargeable: true }],
+        },
+      },
+      {
+        ...before,
+        request: {
+          ...before.request,
+          dates: [
+            { date: '2026-01-01', part: 'full_day', chargeable: true },
+            { date: '2027-01-02', part: 'full_day', chargeable: true },
+          ],
+        },
+      },
+      {
+        ...before,
+        request: { ...before.request, leaveYearStart: { month: 2, day: 29 } },
+      },
+      { ...before, command: { ...before.command, expectedVersion: 0 } },
+      { ...before, request: { ...before.request, status: 'draft' } },
+    ];
+    for (const bad of corruptions)
+      expect(() => previewLeaveDecision(bad)).toThrow();
+    expect(fixture()).toEqual(before);
+  });
+  it('validates transition arithmetic, occupancy and disabled effects', () => {
+    const result = previewLeaveDecision(fixture());
+    if (result.status !== 'transition_candidate')
+      throw new Error('Missing plan');
+    for (const bad of [
+      { ...result, nextVersion: 3 },
+      ...['2026-13', '0000-01', '2026-01-01'].map((period) => ({
+        ...result,
+        deltas: result.deltas.map((d) =>
+          d.bucket === 'monthly' ? { ...d, period } : d,
+        ),
+      })),
+      {
+        ...result,
+        deltas: result.deltas.map((d) => ({
+          ...d,
+          reservedHalfUnits: -64,
+          usedHalfUnits: 64,
+        })),
+      },
+      { ...result, occupancy: 'release' },
+      { ...result, leaveReservationAvailable: true },
+      { ...result, payrollEffectsAvailable: true },
+      { ...result, deltas: [result.deltas[0]] },
+      {
+        ...result,
+        deltas: result.deltas.map((d) => ({ ...d, usedHalfUnits: 0 })),
+      },
+      {
+        ...result,
+        deltas: result.deltas.map((d) => ({ ...d, usedHalfUnits: 1 })),
+      },
+      { ...result, deltas: [...result.deltas, result.deltas[0]] },
+      { ...result, deltas: result.deltas.filter((d) => d.bucket === 'annual') },
+      {
+        ...result,
+        deltas: result.deltas.map((d) =>
+          d.bucket === 'monthly'
+            ? { ...d, reservedHalfUnits: -4, usedHalfUnits: 4 }
+            : d,
+        ),
+      },
+    ])
+      expect(leaveLifecyclePreviewSchema.safeParse(bad).success).toBe(false);
   });
 });
