@@ -203,3 +203,7 @@ The [versioned leave-policy backend](../evidence/phase-02/leave-policy-api.md) a
 ## Company leave policy workspace — 13 October 2026
 
 The [owner/HR leave settings workspace](../evidence/phase-02/leave-policy-workspace.md) adds explicit type/draft/publication forms, independent catalog/history pagination and full-history current policy display. Owner confirmation, strict company/type/snapshot validation, fresh authority/CSRF and in-memory exact-command reconciliation protect reads and writes; HR stays read-only. No employee balances, request reservations, approvals, attendance or pay effects are enabled. Next: atomic reservation/ledger and approvals with authoritative employment/calendar/policy inputs and period locks, then absence settlement. P02-04 remains partial; physical and production gates remain open.
+
+### Leave decision and ledger-delta preparation — 15 October 2026
+
+The [pure decision planner](../evidence/phase-02/leave-decision-preparation.md) adds effective manager/HR fallback rules, self-approval refusal, pending cancellation and exact half-unit reservation-to-consumption/release plans. Request/routing versions, complete period evidence, terminal states and approved-reversal requirements withhold unsafe candidates. No request endpoint, durable ledger/locks, live approval or salary effect is enabled. Next: authoritative employment/calendar/applicability and period-lock inputs before atomic reservation/decision persistence and workspaces. P02-04 remains partial; production/hardware gates remain open.
