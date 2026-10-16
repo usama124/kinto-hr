@@ -48,6 +48,7 @@ model Tenant {
   leaveTypes LeaveType[]
   leavePolicyVersions LeavePolicyVersion[]
   leavePolicyReceipts LeavePolicyReceipt[]
+  companyCalendarReceipts CompanyCalendarReceipt[]
   attendanceTimingReceipts AttendanceTimingReceipt[]
   deviceMappingReceipts        DeviceMappingReceipt[]
   syntheticAttendanceEvents SyntheticAttendanceEvent[]
@@ -110,6 +111,7 @@ model Identity {
   decidedProfileChangeRequests   EmployeeProfileChangeRequest[]      @relation("ProfileChangeDecidedBy")
   createdWorkforceReportExports  WorkforceReportExport[]              @relation("WorkforceReportExportCreatedBy")
 
+  companyCalendarReceipts CompanyCalendarReceipt[]
   attendanceTimingReceipts AttendanceTimingReceipt[]
   deviceMappingReceipts DeviceMappingReceipt[]
 
@@ -216,6 +218,7 @@ model CompanyPolicyVersion {
   @@unique([tenantId, id])
   @@unique([tenantId, domain, policyVersion])
   @@index([tenantId, domain, status, effectiveFrom])
+  calendarReceipts CompanyCalendarReceipt[]
   timingReceipts AttendanceTimingReceipt[]
   @@map("company_policy_versions")
 }
@@ -1194,4 +1197,18 @@ model LeavePolicyReceipt {
   policy LeavePolicyVersion @relation(fields:[tenantId,leaveTypeId,policyId],references:[tenantId,leaveTypeId,id],onDelete:Restrict)
   @@id([tenantId,actorId,requestId])
   @@map("leave_policy_receipts")
+}
+
+model CompanyCalendarReceipt {
+ tenantId String @map("tenant_id") @db.Uuid
+ actorId String @map("actor_id") @db.Uuid
+ requestId String @map("request_id") @db.Uuid
+ input Json @db.JsonB
+ policyId String @map("policy_id") @db.Uuid
+ snapshot Json @db.JsonB
+ tenant Tenant @relation(fields:[tenantId],references:[id],onDelete:Restrict)
+ actor Identity @relation(fields:[actorId],references:[id],onDelete:Restrict)
+ policy CompanyPolicyVersion @relation(fields:[tenantId,policyId],references:[tenantId,id],onDelete:Restrict)
+ @@id([tenantId,actorId,requestId])
+ @@map("company_calendar_receipts")
 }

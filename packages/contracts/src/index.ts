@@ -1497,3 +1497,5 @@ export * from './attendance-leave-composition';
 export * from './leave-quota';
 export * from './leave-policies';
 export * from './leave-lifecycle';
+
+export * from './company-calendar';

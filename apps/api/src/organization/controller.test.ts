@@ -31,6 +31,10 @@ const session = {
   },
 };
 const methods = {
+  listCalendarPolicies: vi.fn(),
+  resolveCalendarDays: vi.fn(),
+  createCalendarPolicy: vi.fn(),
+  publishCalendarPolicy: vi.fn(),
   listLeaveTypes: vi.fn(),
   listLeavePolicies: vi.fn(),
   createLeaveType: vi.fn(),
@@ -429,4 +433,118 @@ it('derives leave policy command scope, fresh MFA and exact key from the selecte
     { limit: 25 },
   );
   getSession.mockResolvedValue(session);
+});
+
+const calendarBase = base + '/policies/work-calendar';
+const calendarBody = {
+  expectedCurrentVersion: 0,
+  effectiveFrom: '2028-01-01',
+  settings: {
+    scope: 'company',
+    timeZone: 'Asia/Karachi',
+    coverageUntil: '2028-12-31',
+    holidays: [],
+  },
+  reason: 'Reviewed calendar',
+};
+it('calendar routes derive selected scope, fresh MFA and exact command keys', async () => {
+  const key = randomUUID();
+  methods.createCalendarPolicy.mockResolvedValue({
+    id: policyId,
+    version: 1,
+    replayed: false,
+  });
+  await authenticated('post', calendarBase + '/drafts')
+    .set('Origin', origin)
+    .set('X-CSRF-Token', csrf)
+    .set('Idempotency-Key', key)
+    .send(calendarBody)
+    .expect(201);
+  expect(methods.createCalendarPolicy).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+    key,
+    calendarBody,
+  );
+  methods.publishCalendarPolicy.mockResolvedValue({
+    id: policyId,
+    version: 1,
+    replayed: false,
+  });
+  const publication = { expectedVersion: 1, reason: 'Reviewed publication' };
+  await authenticated('post', calendarBase + '/' + policyId + '/publication')
+    .set('Origin', origin)
+    .set('X-CSRF-Token', csrf)
+    .set('Idempotency-Key', key)
+    .send(publication)
+    .expect(201);
+  expect(methods.publishCalendarPolicy).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+    policyId,
+    key,
+    publication,
+  );
+  methods.listCalendarPolicies.mockResolvedValue({ items: [] });
+  await authenticated('get', calendarBase + '?limit=1&asOf=2028-02-29').expect(
+    200,
+  );
+  expect(methods.listCalendarPolicies).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+    { limit: 1, asOf: '2028-02-29' },
+  );
+  methods.resolveCalendarDays.mockResolvedValue({ days: [] });
+  await authenticated(
+    'get',
+    calendarBase + '/days?from=2028-02-29&until=2028-03-01',
+  ).expect(200);
+  expect(methods.resolveCalendarDays).toHaveBeenCalledWith(
+    { identityId, mfaVerified: true },
+    tenantId,
+    { from: '2028-02-29', until: '2028-03-01' },
+  );
+});
+it('calendar routes refuse missing keys, forged authority, CSRF and malformed periods', async () => {
+  for (const [path, body, key] of [
+    ['/drafts', calendarBody, null],
+    ['/drafts', { ...calendarBody, identityId }, randomUUID()],
+    [
+      '/bad/publication',
+      { expectedVersion: 1, reason: 'Publication' },
+      randomUUID(),
+    ],
+  ] as const) {
+    const call = authenticated('post', calendarBase + path)
+      .set('Origin', origin)
+      .set('X-CSRF-Token', csrf);
+    if (key) call.set('Idempotency-Key', key);
+    await call.send(body).expect(400);
+  }
+  await authenticated('post', calendarBase + '/drafts')
+    .set('Origin', origin)
+    .set('Idempotency-Key', randomUUID())
+    .send(calendarBody)
+    .expect(403);
+  for (const path of [
+    '?limit=51',
+    '?asOf=0000-01-01',
+    '/days?from=2028-02-29&until=2028-02-28',
+    '/days?from=2028-02-29&until=2028-03-01&calendar=working_day',
+  ])
+    await authenticated('get', calendarBase + path).expect(400);
+  getSession.mockResolvedValueOnce({
+    ...session,
+    selectedTenantId: randomUUID(),
+  });
+  await authenticated('get', calendarBase).expect(403);
+  getSession.mockResolvedValueOnce({ ...session, authTime: 1 });
+  methods.listCalendarPolicies.mockResolvedValue({ items: [] });
+  await authenticated('get', calendarBase).expect(200);
+  expect(methods.listCalendarPolicies).toHaveBeenLastCalledWith(
+    { identityId, mfaVerified: false },
+    tenantId,
+    { limit: 25 },
+  );
+  await request(app.getHttpServer()).get(calendarBase).expect(401);
 });

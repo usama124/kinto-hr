@@ -1,4 +1,10 @@
 import {
+  companyCalendarPolicyDraftSchema,
+  companyCalendarPolicySchema,
+  companyCalendarDaysQuerySchema,
+  companyCalendarDaysSchema,
+} from './company-calendar';
+import {
   leaveTypeCreateSchema,
   leavePolicyDraftInputSchema,
   leavePolicyPublishSchema,
@@ -2143,5 +2149,176 @@ describe('persisted company leave policy contracts', () => {
       expect(
         leavePolicyRecordSchema.safeParse({ ...policy, ...change }).success,
       ).toBe(false);
+  });
+});
+
+describe('company calendar contracts', () => {
+  const input = () => ({
+    expectedCurrentVersion: 0,
+    effectiveFrom: '2028-02-28',
+    settings: {
+      scope: 'company',
+      timeZone: 'Asia/Karachi',
+      coverageUntil: '2028-03-01',
+      holidays: [{ date: '2028-02-29', name: ' Reviewed holiday ' }],
+    },
+    reason: ' Reviewed calendar ',
+  });
+  it('requires explicit bounded coverage and holidays without inventing national holidays or rest rules', () => {
+    const value = companyCalendarPolicyDraftSchema.parse(input());
+    expect(value.settings.holidays[0].name).toBe('Reviewed holiday');
+    expect(value.reason).toBe('Reviewed calendar');
+    expect(
+      companyCalendarPolicyDraftSchema.parse({
+        ...input(),
+        settings: { ...input().settings, holidays: [] },
+      }).settings.holidays,
+    ).toEqual([]);
+  });
+  it('rejects duplicate/out-of-window holidays, invalid dates and bypass fields', () => {
+    const v = input();
+    for (const bad of [
+      { ...v, employeeId: 'not-company-wide' },
+      { ...v, effectiveFrom: '0000-01-01' },
+      { ...v, effectiveFrom: '9999-12-31' },
+      { ...v, settings: { ...v.settings, coverageUntil: '2028-02-27' } },
+      { ...v, settings: { ...v.settings, coverageUntil: '2029-03-01' } },
+      {
+        ...v,
+        settings: {
+          ...v.settings,
+          holidays: [...v.settings.holidays, ...v.settings.holidays],
+        },
+      },
+      {
+        ...v,
+        settings: {
+          ...v.settings,
+          holidays: [{ date: '2028-03-02', name: 'Outside' }],
+        },
+      },
+      {
+        ...v,
+        settings: {
+          ...v.settings,
+          holidays: [{ date: '2028-02-30', name: 'Invalid' }],
+        },
+      },
+      {
+        ...v,
+        settings: {
+          ...v.settings,
+          holidays: [{ date: '2028-02-29', name: '\t' }],
+        },
+      },
+      {
+        ...v,
+        settings: {
+          ...v.settings,
+          holidays: [{ date: '2028-02-29', name: '😀'.repeat(61) }],
+        },
+      },
+      { ...v, settings: { ...v.settings, weeklyRestDays: [7] } },
+    ])
+      expect(companyCalendarPolicyDraftSchema.safeParse(bad).success).toBe(
+        false,
+      );
+  });
+  it('validates publication state, coverage end and inherited version relationships', () => {
+    const v = companyCalendarPolicyDraftSchema.parse(input());
+    const record = {
+      id: '50000000-0000-4000-8000-000000000001',
+      version: 1,
+      basedOnVersion: 0,
+      status: 'published',
+      effectiveFrom: v.effectiveFrom,
+      effectiveUntil: '2028-03-02',
+      settings: v.settings,
+      reason: v.reason,
+      createdAt: '2028-02-20T00:00:00Z',
+      publishedAt: '2028-02-21T00:00:00Z',
+    };
+    expect(companyCalendarPolicySchema.safeParse(record).success).toBe(true);
+    for (const bad of [
+      { ...record, effectiveUntil: null },
+      { ...record, effectiveUntil: '2028-03-03' },
+      { ...record, basedOnVersion: 1 },
+      { ...record, publishedAt: null },
+      { ...record, status: 'draft' },
+    ])
+      expect(companyCalendarPolicySchema.safeParse(bad).success).toBe(false);
+    expect(
+      companyCalendarPolicySchema.safeParse({
+        ...record,
+        status: 'draft',
+        publishedAt: null,
+        effectiveUntil: null,
+      }).success,
+    ).toBe(true);
+  });
+  it('bounds inclusive resolution dates and rejects arbitrary authority or date coercion', () => {
+    expect(
+      companyCalendarDaysQuerySchema.parse({
+        from: '2028-01-01',
+        until: '2028-12-31',
+      }),
+    ).toEqual({ from: '2028-01-01', until: '2028-12-31' });
+    for (const bad of [
+      { from: '2028-01-01', until: '2029-01-01' },
+      { from: '2028-01-02', until: '2028-01-01' },
+      { from: '2028-02-30', until: '2028-03-01' },
+      { from: '2028-01-01', until: '2028-01-01', calendar: 'working_day' },
+    ])
+      expect(companyCalendarDaysQuerySchema.safeParse(bad).success).toBe(false);
+  });
+  it('refuses unknown/known classifications with contradictory policy or holiday evidence', () => {
+    const id = '50000000-0000-4000-8000-000000000001',
+      ref = { id, version: 1 };
+    const v = {
+      tenantId: id,
+      from: '2028-02-29',
+      until: '2028-02-29',
+      days: [
+        {
+          date: '2028-02-29',
+          calendar: 'holiday',
+          holidayName: 'Reviewed',
+          calendarPolicy: ref,
+          timingPolicy: ref,
+        },
+      ],
+      leaveReservationAvailable: false,
+      attendanceProcessingAvailable: false,
+      payrollEffectsAvailable: false,
+    };
+    expect(companyCalendarDaysSchema.safeParse(v).success).toBe(true);
+    for (const d of [
+      { ...v.days[0], holidayName: null },
+      { ...v.days[0], calendar: 'working_day' },
+      { ...v.days[0], timingPolicy: null },
+      {
+        date: '2028-02-29',
+        calendar: 'unknown',
+        code: 'TIMING_UNRESOLVED',
+        calendarPolicy: null,
+        timingPolicy: null,
+      },
+      {
+        date: '2028-02-29',
+        calendar: 'unknown',
+        code: 'CALENDAR_UNRESOLVED',
+        calendarPolicy: ref,
+        timingPolicy: null,
+      },
+    ])
+      expect(
+        companyCalendarDaysSchema.safeParse({ ...v, days: [d] }).success,
+      ).toBe(false);
+    expect(
+      companyCalendarDaysSchema.safeParse({
+        ...v,
+        payrollEffectsAvailable: true,
+      }).success,
+    ).toBe(false);
   });
 });
